@@ -291,28 +291,29 @@ export async function renderTrail(c: CompiledShot, bake: Bake, series: MotionSer
     if (mine.length === 0) return;
     const colour = MARKS[ni % MARKS.length]!;
     const pt = (g: Ghost): [number, number] => [(g.at![0] - x0) * k, (g.at![1] - y0) * k];
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = 1.5;
+    // A dark line under a light one, and dots with a dark and a white ring: they read on any ghost and any background.
     ctx.lineJoin = 'round';
-    ctx.beginPath();
-    mine.forEach((g, i) => {
-      const [x, y] = pt(g);
-      // A node that is hidden between two ghosts leaves a break in the line.
-      const joined = i > 0 && order.get(g.frame)! - order.get(mine[i - 1]!.frame)! === 1;
-      if (joined) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-    });
-    ctx.stroke();
+    for (const [style, width] of [['rgba(7,7,12,0.7)', 4], ['rgba(255,255,255,0.9)', 1.5]] as const) {
+      ctx.strokeStyle = style;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      mine.forEach((g, i) => {
+        const [x, y] = pt(g);
+        // A node that is hidden between two ghosts leaves a break in the line.
+        const joined = i > 0 && order.get(g.frame)! - order.get(mine[i - 1]!.frame)! === 1;
+        if (joined) ctx.lineTo(x, y);
+        else ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+    }
     for (const g of mine) {
       const [x, y] = pt(g);
-      ctx.fillStyle = '#07070c';
-      ctx.beginPath();
-      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = colour;
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fill();
+      for (const [style, r] of [['#07070c', 6], ['#ffffff', 4.6], [colour, 3]] as const) {
+        ctx.fillStyle = style;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     // The first and the last ghost come first, so that they keep their numbers.
     const want = Math.min(mine.length, 7);
@@ -349,7 +350,7 @@ export async function renderTrail(c: CompiledShot, bake: Bake, series: MotionSer
       const th = size * 1.5;
       if (taken.some(([ax, ay, aw, ah]) => sx < ax + aw + 3 && ax < sx + tw + 3 && sy < ay + ah + 3 && ay < sy + th + 3)) continue;
       taken.push([sx, sy, tw, th]);
-      ctx.strokeStyle = colour;
+      ctx.strokeStyle = 'rgba(255,225,77,0.8)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x, y);
