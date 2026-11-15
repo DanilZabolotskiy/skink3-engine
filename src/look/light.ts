@@ -58,6 +58,9 @@ export const LIGHT_PROPORTIONS = {
   highlightWidth: 0.075,
   /** Sharpness of the soft maximum that places the stroke (higher = closer to the single farthest point). */
   highlightFocus: 10,
+  /** On large shapes the stroke stops growing: its inset and width are capped at these many units. */
+  highlightMaxInset: 30,
+  highlightMaxWidth: 10,
 } as const;
 
 export interface LitParts {
@@ -110,7 +113,7 @@ function highlightStroke(spec: ShapeSpec, lightLocal: Vec2): Path2D {
   // the shape is thick, so that it does not wrap around the end of a long shape.
   const halfLength = Math.min(P.highlightSpan * perimeter, P.highlightMaxSpan * inner);
   const half = (halfLength / perimeter) * n;
-  const inset = inner * P.highlightInset;
+  const inset = Math.min(inner * P.highlightInset, P.highlightMaxInset);
   const steps = 14;
   const out: Vec2[] = [];
   for (let k = 0; k <= steps; k++) {
@@ -148,7 +151,7 @@ export function litParts(spec: ShapeSpec, lightLocal: Vec2): LitParts {
     rim: subtractPath(base, shiftPath(base, -lx * size * P.rimShift, -ly * size * P.rimShift)),
     rimLight: subtractPath(base, shiftPath(base, lx * size * P.rimLightShift, ly * size * P.rimLightShift)),
     highlight: highlightStroke(spec, lightLocal),
-    highlightWidth: Math.max(1.5, size * P.highlightWidth),
+    highlightWidth: Math.min(P.highlightMaxWidth, Math.max(1.5, size * P.highlightWidth)),
   };
   partsCache.set(spec, { lx, ly, parts });
   return parts;
