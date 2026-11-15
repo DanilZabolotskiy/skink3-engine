@@ -6,7 +6,12 @@ This is the **public** engine repository. Read `README.md` and `docs/PRINCIPLES.
 
 - **General code only.** No channel names, series, episodes, video topics, scripts, characters of a specific production, or decisions of a specific production. Those live in the private production repository that depends on this engine. Examples and test scenes use neutral content.
 - **English only:** code, comments, docs, commit messages. The one exception is test fixtures that check non-Latin script rendering, which must say so in the file name.
-- **Agents run on Fable 5.2 at effort xhigh:** every Agent call uses `model: "fable"`, `effort: "xhigh"`, and definitions in `.claude/agents/` use `model: fable`, `effort: xhigh`.
+- **Engine development is delegated to agents on Opus 5.5 at effort xhigh.** The main session orchestrates:
+  1. It delegates each engine task to a worker (Agent with `model: "opus"`, `effort: "xhigh"`). The definition in `.claude/agents/worker.md` uses `model: claude-opus-5-5`, `effort: xhigh`.
+  2. It reviews the worker's result itself: it reads the diff, runs the checks, and looks at stills or strips.
+  3. It delegates any fixes back to a worker, then reviews again.
+
+  The main session does not write engine code itself. Agents for anything other than engine code (research, analysis) run on Fable 5.2 at effort xhigh.
 - **Principles are binding** (`docs/PRINCIPLES.md`):
   - simple forms (no hands, fingers or feet; no human limb mechanics; the API has no such parts);
   - determinism (frame *n* is a pure function of scene, bake cache and *n*; fixed seeds; pinned versions);
