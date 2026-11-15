@@ -7,7 +7,7 @@ import { Noise } from '../core/noise.ts';
 import { Rng } from '../core/rng.ts';
 import { FPS, SIM_DT, SUBSTEPS } from '../core/time.ts';
 import type { EmitterNode } from '../scene/types.ts';
-import { PARTICLE_STRIDE, type ContactEvent } from './cache.ts';
+import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type ContactEvent } from './cache.ts';
 
 /** Radius of a particle over its life (0..1): a quick swell, then a slow shrink to nothing. */
 export function sizeOverLife(a: number): number {
@@ -22,6 +22,8 @@ export interface EmitterResult {
   readonly index: Uint32Array;
   /** x, y, radius, colour index per particle. */
   readonly data: Float32Array;
+  /** vx, vy per particle in units per second, in the order of `data`. Nothing is drawn from it; the motion review reads it. */
+  readonly velocity: Float32Array;
 }
 
 /**
@@ -126,11 +128,13 @@ export function simulateEmitter(
 
   const index = new Uint32Array(frames + 1);
   const chunks: Float32Array[] = [];
+  const velocityChunks: Float32Array[] = [];
   let total = 0;
   for (let f = 0; f < frames; f++) {
     // Record the state at the start of the frame.
     const n = px.length;
     const rec = new Float32Array(n * PARTICLE_STRIDE);
+    const vel = new Float32Array(n * PARTICLE_VELOCITY_STRIDE);
     let m = 0;
     for (let i = 0; i < n; i++) {
       const r = size[i]! * sizeOverLife(age[i]! / life[i]!);
@@ -139,9 +143,12 @@ export function simulateEmitter(
       rec[m * PARTICLE_STRIDE + 1] = py[i]!;
       rec[m * PARTICLE_STRIDE + 2] = r;
       rec[m * PARTICLE_STRIDE + 3] = colour[i]!;
+      vel[m * PARTICLE_VELOCITY_STRIDE] = vx[i]!;
+      vel[m * PARTICLE_VELOCITY_STRIDE + 1] = vy[i]!;
       m++;
     }
     chunks.push(rec.subarray(0, m * PARTICLE_STRIDE));
+    velocityChunks.push(vel.subarray(0, m * PARTICLE_VELOCITY_STRIDE));
     index[f] = total;
     total += m;
 
@@ -158,10 +165,16 @@ export function simulateEmitter(
   index[frames] = total;
 
   const data = new Float32Array(total * PARTICLE_STRIDE);
+  const velocity = new Float32Array(total * PARTICLE_VELOCITY_STRIDE);
   let o = 0;
   for (const c of chunks) {
     data.set(c, o);
     o += c.length;
   }
-  return { index, data };
+  o = 0;
+  for (const c of velocityChunks) {
+    velocity.set(c, o);
+    o += c.length;
+  }
+  return { index, data, velocity };
 }

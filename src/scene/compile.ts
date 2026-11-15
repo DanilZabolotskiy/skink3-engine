@@ -27,7 +27,7 @@ import {
   type ScaleTrack,
 } from '../motion/tracks.ts';
 import { resolveString } from '../text/strings.ts';
-import type { LayerSpec, SceneNode, ShotSpec } from './types.ts';
+import { CAMERA_SUBJECT, FRAME_REGIONS, FRAME_SUBJECT, MOTION_FINDING_KINDS, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
 export class CompileError extends Error {}
 
@@ -458,9 +458,24 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const byId = new Map<string, CNode>();
   for (const n of nodes) byId.set(n.id, n);
 
+  // 5. Intended exceptions to the motion review must name things that exist,
+  // so that an exception does not outlive the node it was written for.
+  const subjects = new Set<string>([CAMERA_SUBJECT, FRAME_SUBJECT, ...FRAME_REGIONS.map((r) => `(frame:${r})`)]);
+  for (const x of spec.intended ?? []) {
+    if (!x || typeof x !== 'object' || !Array.isArray(x.nodes) || !MOTION_FINDING_KINDS.includes(x.kind)) {
+      fail(`${where}: intended holds something that was not made with intended()`);
+    }
+    for (const id of x.nodes) {
+      if (!byId.has(id) && !subjects.has(id)) {
+        fail(`${where}: intended(..., "${x.kind}") names "${id}", which does not exist (nodes: ${known()}; or ${[...subjects].join(', ')})`);
+      }
+    }
+  }
+
   // Text does not influence the bake, so the tables stay out of the hash; a
-  // translation re-renders without re-baking.
-  const sceneHash = hashOf({ ...spec, palette: spec.palette.spec, strings: null });
+  // translation re-renders without re-baking. The same holds for the intended
+  // exceptions of the motion review, which only change a report.
+  const sceneHash = hashOf({ ...spec, palette: spec.palette.spec, strings: null, intended: undefined });
 
   return {
     spec,

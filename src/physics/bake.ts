@@ -16,9 +16,12 @@ import { computeWorld, posesFromBake, type PoseSource } from '../scene/evaluate.
 import { engineVersion, physicsVersion } from '../version.ts';
 import {
   Bake,
+  BAKE_FORMAT,
   bakeFile,
   BODY_STRIDE,
   matchesKey,
+  PARTICLE_STRIDE,
+  PARTICLE_VELOCITY_STRIDE,
   readBake,
   SPRING_STRIDE,
   writeBake,
@@ -30,6 +33,30 @@ import { simulateRigid, type RigidBodyDef } from './rigid.ts';
 
 export function bakeKey(c: CompiledShot): BakeKey {
   return { engine: engineVersion(), physics: physicsVersion(), sceneHash: c.sceneHash, seed: c.spec.seed };
+}
+
+/**
+ * Where every emitter is at every frame, by emitter slot: its own place, or
+ * the place of the node it rides on plus its offset.
+ */
+export function emitterPlaces(c: CompiledShot, poses: PoseSource): Vec2[][] {
+  const places: Vec2[][] = c.emitters.map(() => []);
+  const anyAttached = c.emitters.some((i) => c.nodes[i]!.attachIndex >= 0);
+  for (let f = 0; f < c.frames; f++) {
+    const world = anyAttached ? computeWorld(c, f, poses) : null;
+    c.emitters.forEach((index, slot) => {
+      const n = c.nodes[index]!;
+      const node = n.node;
+      if (node.type !== 'emitter') throw new Error(`"${n.id}" is not an emitter`);
+      if (n.attachIndex >= 0 && world) {
+        const xf = world[n.attachIndex]!;
+        places[slot]!.push([xf.x + node.at[0], xf.y + node.at[1]]);
+      } else {
+        places[slot]!.push(node.at);
+      }
+    });
+  }
+  return places;
 }
 
 /** Runs the whole bake in memory. */
@@ -89,7 +116,7 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
 
   // 3. Particles.
   const header = (events: BakeHeader['events'], particleCount: number): BakeHeader => ({
-    format: 1,
+    format: BAKE_FORMAT,
     engine: key.engine,
     physics: key.physics,
     sceneHash: key.sceneHash,
@@ -105,31 +132,17 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
       springs: springs.length,
       particleIndex: c.emitters.length * (frames + 1),
       particles: particleCount,
+      particleVelocities: (particleCount / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE,
     },
   });
   const nEmitters = c.emitters.length;
   const particleIndex = new Uint32Array(nEmitters * (frames + 1));
   let particles = new Float32Array(0);
+  let velocities = new Float32Array(0);
   if (nEmitters > 0) {
     // Where every emitter is at every frame, from the state baked so far.
-    const partial = new Bake(header(rigid.events, 0), rigid.poses, springs, particleIndex, particles);
-    const poses = posesFromBake(partial);
-    const places: Vec2[][] = c.emitters.map(() => []);
-    const anyAttached = c.emitters.some((i) => c.nodes[i]!.attachIndex >= 0);
-    for (let f = 0; f < frames; f++) {
-      const world = anyAttached ? computeWorld(c, f, poses) : null;
-      c.emitters.forEach((index, slot) => {
-        const n = c.nodes[index]!;
-        const node = n.node;
-        if (node.type !== 'emitter') throw new Error(`"${n.id}" is not an emitter`);
-        if (n.attachIndex >= 0 && world) {
-          const xf = world[n.attachIndex]!;
-          places[slot]!.push([xf.x + node.at[0], xf.y + node.at[1]]);
-        } else {
-          places[slot]!.push(node.at);
-        }
-      });
-    }
+    const partial = new Bake(header(rigid.events, 0), rigid.poses, springs, particleIndex, particles, velocities);
+    const places = emitterPlaces(c, posesFromBake(partial));
     const results = c.emitters.map((index, slot) => {
       const node = c.nodes[index]!.node;
       if (node.type !== 'emitter') throw new Error('not an emitter');
@@ -137,16 +150,18 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
     });
     const total = results.reduce((a, r) => a + r.data.length, 0);
     particles = new Float32Array(total);
+    velocities = new Float32Array((total / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE);
     let offset = 0;
     results.forEach((r, slot) => {
       particles.set(r.data, offset);
-      const base = offset / 4;
+      const base = offset / PARTICLE_STRIDE;
+      velocities.set(r.velocity, base * PARTICLE_VELOCITY_STRIDE);
       for (let f = 0; f <= frames; f++) particleIndex[slot * (frames + 1) + f] = base + r.index[f]!;
       offset += r.data.length;
     });
   }
 
-  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles);
+  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles, velocities);
 }
 
 export interface EnsureBakeResult {

@@ -7,7 +7,11 @@
 //   8 bytes   magic "SK3BAKE1"
 //   4 bytes   header length in bytes (u32)
 //   header    UTF-8 JSON, padded with spaces to a multiple of 8 bytes
-//   sections  bodies (f32), springs (f32), particleIndex (u32), particles (f32)
+//   sections  bodies (f32), springs (f32), particleIndex (u32), particles (f32),
+//             particle velocities (f32)
+//
+// The evaluator draws from the first four. The particle velocities are kept
+// for the motion review, which has to know how fast a particle travels.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -29,8 +33,11 @@ export interface ContactEvent {
   readonly impulse: number;
 }
 
+/** Version of the file layout. */
+export const BAKE_FORMAT = 2;
+
 export interface BakeHeader {
-  readonly format: 1;
+  readonly format: typeof BAKE_FORMAT;
   /** Engine version and source fingerprint. */
   readonly engine: string;
   /** Physics library and version. */
@@ -45,7 +52,13 @@ export interface BakeHeader {
   readonly emitters: readonly string[];
   readonly events: readonly ContactEvent[];
   /** Element counts of the binary sections. */
-  readonly sizes: { readonly bodies: number; readonly springs: number; readonly particleIndex: number; readonly particles: number };
+  readonly sizes: {
+    readonly bodies: number;
+    readonly springs: number;
+    readonly particleIndex: number;
+    readonly particles: number;
+    readonly particleVelocities: number;
+  };
 }
 
 /** Floats per rigid body per frame: x, y, rotation (radians). */
@@ -54,6 +67,8 @@ export const BODY_STRIDE = 3;
 export const SPRING_STRIDE = 2;
 /** Floats per particle: x, y, radius, colour index. */
 export const PARTICLE_STRIDE = 4;
+/** Floats per particle velocity: vx, vy in units per second. */
+export const PARTICLE_VELOCITY_STRIDE = 2;
 
 export class Bake {
   readonly header: BakeHeader;
@@ -62,13 +77,23 @@ export class Bake {
   /** For emitter e and frame f, particles [index[e * (frames + 1) + f], index[e * (frames + 1) + f + 1]). */
   readonly particleIndex: Uint32Array;
   readonly particles: Float32Array;
+  /** vx, vy of every stored particle, in the order of `particles`. */
+  readonly particleVelocities: Float32Array;
 
-  constructor(header: BakeHeader, bodies: Float32Array, springs: Float32Array, particleIndex: Uint32Array, particles: Float32Array) {
+  constructor(
+    header: BakeHeader,
+    bodies: Float32Array,
+    springs: Float32Array,
+    particleIndex: Uint32Array,
+    particles: Float32Array,
+    particleVelocities: Float32Array,
+  ) {
     this.header = header;
     this.bodies = bodies;
     this.springs = springs;
     this.particleIndex = particleIndex;
     this.particles = particles;
+    this.particleVelocities = particleVelocities;
   }
 
   private frameOf(frame: number): number {
@@ -104,6 +129,14 @@ export class Bake {
     const end = this.particleIndex[base + 1]!;
     return this.particles.subarray(start * PARTICLE_STRIDE, end * PARTICLE_STRIDE);
   }
+
+  /** The velocities of those particles, in the same order: vx, vy in units per second. */
+  velocitiesAt(slot: number, frame: number): Float32Array {
+    const base = slot * (this.header.frames + 1) + this.frameOf(frame);
+    const start = this.particleIndex[base]!;
+    const end = this.particleIndex[base + 1]!;
+    return this.particleVelocities.subarray(start * PARTICLE_VELOCITY_STRIDE, end * PARTICLE_VELOCITY_STRIDE);
+  }
 }
 
 const MAGIC = 'SK3BAKE1';
@@ -116,7 +149,7 @@ export function serializeBake(bake: Bake): Uint8Array {
     json += ' '.repeat(pad);
     headerBytes = Buffer.from(json, 'utf8');
   }
-  const sections = [bake.bodies, bake.springs, bake.particleIndex, bake.particles];
+  const sections = [bake.bodies, bake.springs, bake.particleIndex, bake.particles, bake.particleVelocities];
   const total = 8 + 4 + 4 + headerBytes.length + sections.reduce((a, s) => a + s.byteLength, 0);
   const out = Buffer.alloc(total);
   out.write(MAGIC, 0, 'ascii');
@@ -136,7 +169,7 @@ export function parseBake(bytes: Uint8Array): Bake {
   if (buf.length < 16 || buf.toString('ascii', 0, 8) !== MAGIC) throw new Error('not a bake cache file');
   const headerLen = buf.readUInt32LE(8);
   const header = JSON.parse(buf.toString('utf8', 16, 16 + headerLen)) as BakeHeader;
-  if (header.format !== 1) throw new Error(`unsupported bake format ${String(header.format)}`);
+  if (header.format !== BAKE_FORMAT) throw new Error(`unsupported bake format ${String(header.format)}`);
   let offset = 16 + headerLen;
   // Copy each section into its own aligned buffer.
   const take = (count: number, bytesPer: number): ArrayBuffer => {
@@ -151,7 +184,8 @@ export function parseBake(bytes: Uint8Array): Bake {
   const springs = new Float32Array(take(header.sizes.springs, 4));
   const particleIndex = new Uint32Array(take(header.sizes.particleIndex, 4));
   const particles = new Float32Array(take(header.sizes.particles, 4));
-  return new Bake(header, bodies, springs, particleIndex, particles);
+  const particleVelocities = new Float32Array(take(header.sizes.particleVelocities, 4));
+  return new Bake(header, bodies, springs, particleIndex, particles, particleVelocities);
 }
 
 /** Hash of a bake exactly as it is stored. */

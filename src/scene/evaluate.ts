@@ -223,11 +223,11 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
 }
 
 /** Scale below which a node is treated as hidden. */
-const HIDDEN = 1e-3;
+export const HIDDEN = 1e-3;
 /** Lid opening below which an eye is shut and not drawn. */
-const SHUT = 0.02;
+export const SHUT = 0.02;
 /** Opacity below which a node is not drawn, and above which it is drawn without a group. */
-const FAINT = 0.002;
+export const FAINT = 0.002;
 const OPAQUE = 0.998;
 
 /** Drops groups that ended up with nothing to draw. */
@@ -243,13 +243,33 @@ function prune(items: readonly Item[]): Item[] {
   return out;
 }
 
-function eyeOpen(blinks: readonly number[], t: number): number {
+/** How far a blink leaves an eye open at time t: 1 between blinks. */
+export function eyeOpen(blinks: readonly number[], t: number): number {
   for (const b of blinks) {
     if (b > t) break;
     const tau = t - b;
     if (tau < BLINK.seconds) return Math.max(0.06, 1 - Math.sin((Math.PI * tau) / BLINK.seconds));
   }
   return 1;
+}
+
+/**
+ * Opacity of every node at time t: its own (`own`), and the product down the
+ * tree (`alpha`). A link also takes the fainter of the two nodes it joins.
+ */
+export function opacities(c: CompiledShot, t: number): { own: Float64Array; alpha: Float64Array } {
+  const own = new Float64Array(c.nodes.length).fill(1);
+  const alpha = new Float64Array(c.nodes.length).fill(1);
+  for (const n of c.nodes) {
+    own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
+    alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
+  }
+  for (const n of c.nodes) {
+    if (n.node.type !== 'link') continue;
+    own[n.index] = own[n.index]! * Math.min(alpha[n.fromIndex]!, alpha[n.toIndex]!);
+    alpha[n.index] = own[n.index]!;
+  }
+  return { own, alpha };
 }
 
 /** The display list of a shot at a frame. */
@@ -264,19 +284,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const world = computeWorld(c, frame, posesFromBake(bake));
   const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames);
 
-  // Opacity of every node: its own, and the product down the tree. A link also
-  // takes the fainter of the two nodes it joins.
-  const own = new Float64Array(c.nodes.length).fill(1);
-  const alpha = new Float64Array(c.nodes.length).fill(1);
-  for (const n of c.nodes) {
-    own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
-    alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
-  }
-  for (const n of c.nodes) {
-    if (n.node.type !== 'link') continue;
-    own[n.index] = own[n.index]! * Math.min(alpha[n.fromIndex]!, alpha[n.toIndex]!);
-    alpha[n.index] = own[n.index]!;
-  }
+  const { own, alpha } = opacities(c, t);
 
   const layers = c.layers.map((layer): LayerState => {
     const root: Item[] = [];

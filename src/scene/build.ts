@@ -18,6 +18,7 @@ import {
 } from '../shape/geometry.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
+import { MOTION_FINDING_KINDS } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -26,10 +27,12 @@ import type {
   EyeNode,
   GroupNode,
   IdleSpec,
+  IntendedSpec,
   LabelNode,
   LabelSide,
   LayerSpec,
   LinkNode,
+  MotionFindingKind,
   PhysicsSpec,
   SceneNode,
   ShapeNode,
@@ -543,6 +546,36 @@ export const PHYSICS_DEFAULTS: PhysicsSpec = {
   prewarm: 0,
 };
 
+/**
+ * Marks a finding of the motion review as intended: `skink3 motion` and
+ * `skink3 check` then leave it out of their warnings and list it as honoured,
+ * with the reason. `nodes` is one id or several; for the camera use
+ * "(camera)", for a hold of the whole frame "(frame)", for a region
+ * "(frame:top-left)". `window` limits it to findings between two moments.
+ *
+ *   intended('door', 'abrupt-start', 'it is kicked open')
+ *   intended(sparkIds, 'too-fast', 'sparks are meant to streak', { from: 4, to: 6 })
+ */
+export function intended(
+  nodes: string | readonly string[],
+  kind: MotionFindingKind,
+  reason: string,
+  window: { from?: number; to?: number } = {},
+): IntendedSpec {
+  const where = `intended(${JSON.stringify(nodes)}, ${JSON.stringify(kind)})`;
+  const list = typeof nodes === 'string' ? [nodes] : nodes;
+  if (!Array.isArray(list) || list.length === 0 || !list.every((n) => typeof n === 'string' && n.length > 0)) {
+    fail(where, 'the first argument is a node id or a non-empty array of node ids');
+  }
+  if (!MOTION_FINDING_KINDS.includes(kind)) fail(where, `unknown kind of finding (use one of: ${MOTION_FINDING_KINDS.join(', ')})`);
+  if (typeof reason !== 'string' || reason.trim().length < 3) fail(where, 'give the reason as the third argument: one line that says why this is intended');
+  checkKeys(`${where} window`, window, ['from', 'to']);
+  const from = window.from === undefined ? null : num(where, 'from', window.from, 0, 3600);
+  const to = window.to === undefined ? null : num(where, 'to', window.to, 0, 3600);
+  if (from !== null && to !== null && to < from) fail(where, `the window ends (${to} s) before it starts (${from} s)`);
+  return { nodes: [...list], kind, reason: reason.trim(), from, to };
+}
+
 type Nested<T> = T | readonly Nested<T>[];
 
 function flatten<T>(items: Nested<T>, out: T[] = []): T[] {
@@ -581,10 +614,12 @@ export function shot(o: {
     focus?: { far?: number; near?: number };
   };
   physics?: Partial<PhysicsSpec>;
+  /** Intended exceptions to the motion review, made with intended(); nested arrays are flattened. */
+  intended?: Nested<IntendedSpec>;
 }): ShotSpec {
   const where = `shot("${o?.id}")`;
   checkKeys(where, o, [
-    'id', 'seconds', 'seed', 'palette', 'strings', 'background', 'atmosphere', 'layers', 'timeline', 'light', 'vignette', 'camera', 'physics',
+    'id', 'seconds', 'seed', 'palette', 'strings', 'background', 'atmosphere', 'layers', 'timeline', 'light', 'vignette', 'camera', 'physics', 'intended',
   ]);
   if (!o.palette || !(o.palette.colors instanceof Map)) fail(where, 'palette must be made with definePalette()');
   if (!o.strings || typeof o.strings !== 'object' || Object.keys(o.strings).length === 0) {
@@ -652,6 +687,7 @@ export function shot(o: {
     physics,
     layers: o.layers,
     timeline: flatten<Key>(o.timeline ?? []),
+    intended: flatten<IntendedSpec>(o.intended ?? []),
   };
   // Validate the shot as a whole now, so that mistakes surface where it is defined.
   compileShot(spec);

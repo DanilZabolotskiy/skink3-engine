@@ -278,6 +278,46 @@ export interface PhysicsSpec {
   readonly prewarm: number;
 }
 
+/**
+ * Kinds of findings of the motion review (src/review). The list is open at the
+ * end: physics checks will add their own kinds.
+ */
+export const MOTION_FINDING_KINDS = [
+  'jump',
+  'abrupt-start',
+  'abrupt-stop',
+  'mechanical',
+  'too-fast',
+  'spring-ringing',
+  'spring-no-overshoot',
+  'dead-area',
+] as const;
+
+export type MotionFindingKind = (typeof MOTION_FINDING_KINDS)[number];
+
+/** The camera as the subject of a motion finding. Node ids cannot hold parentheses, so these never collide with one. */
+export const CAMERA_SUBJECT = '(camera)';
+/** The whole frame as the subject of a dead-area finding; a region is "(frame:top-left)" and so on. */
+export const FRAME_SUBJECT = '(frame)';
+/** The regions of the frame a dead-area finding can name, row by row. */
+export const FRAME_REGIONS = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const;
+
+/**
+ * An intended exception to the motion review: findings of this kind on these
+ * subjects are what the author wants. The review leaves them out of its
+ * warnings and lists them as honoured. It never influences the picture.
+ */
+export interface IntendedSpec {
+  /** Node ids, or the camera or frame subjects above. */
+  readonly nodes: readonly string[];
+  readonly kind: MotionFindingKind;
+  /** Why it is intended: one line for the reviewer. */
+  readonly reason: string;
+  /** Seconds: only findings that overlap this window are covered; null leaves that side open. */
+  readonly from: number | null;
+  readonly to: number | null;
+}
+
 export interface ShotSpec {
   readonly id: string;
   readonly seconds: number;
@@ -294,4 +334,6 @@ export interface ShotSpec {
   readonly physics: PhysicsSpec;
   readonly layers: readonly LayerSpec[];
   readonly timeline: readonly Key[];
+  /** Intended exceptions to the motion review. */
+  readonly intended: readonly IntendedSpec[];
 }
