@@ -13,7 +13,7 @@
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { FRAME_REGIONS, FRAME_SUBJECT } from '../scene/types.ts';
-import type { Finding } from './detect.ts';
+import { finding, type Finding } from './detect.ts';
 import { DRAWN, REGION_COLS, REGION_ROWS, regionsOf, visibleAt, type MotionSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
@@ -85,18 +85,7 @@ export function detectDead(series: MotionSeries): Finding[] {
   const whole = holds((1 << REGIONS) - 1, T.holdSeconds);
   for (const [a, b] of whole) {
     const seconds = (b - a + 1) / FPS;
-    out.push({
-      kind: 'dead-area',
-      subject: FRAME_SUBJECT,
-      channel: 'hold',
-      from: a,
-      to: b,
-      value: Math.round(seconds * 100) / 100,
-      threshold: T.holdSeconds,
-      unit: 's',
-      severity: Math.round((seconds / T.holdSeconds) * 1000) / 1000,
-      detail: `nothing in the whole frame moves on its own for ${seconds.toFixed(1)} s`,
-    });
+    out.push(finding('dead-area', FRAME_SUBJECT, 'hold', a, b, seconds, T.holdSeconds, 's', `nothing in the whole frame moves on its own for ${seconds.toFixed(1)} s`));
   }
   for (let r = 0; r < REGIONS; r++) {
     for (const [a, b] of holds(1 << r, T.regionHoldSeconds)) {
@@ -104,18 +93,10 @@ export function detectDead(series: MotionSeries): Finding[] {
       const covered = whole.some(([wa, wb]) => Math.min(b, wb) - Math.max(a, wa) + 1 >= 0.8 * (b - a + 1));
       if (covered) continue;
       const seconds = (b - a + 1) / FPS;
-      out.push({
-        kind: 'dead-area',
-        subject: `(frame:${FRAME_REGIONS[r]!})`,
-        channel: 'hold',
-        from: a,
-        to: b,
-        value: Math.round(seconds * 100) / 100,
-        threshold: T.regionHoldSeconds,
-        unit: 's',
-        severity: Math.round((seconds / T.regionHoldSeconds) * 1000) / 1000,
-        detail: `nothing in the ${FRAME_REGIONS[r]!.replace('-', ' ')} part of the frame moves on its own for ${seconds.toFixed(1)} s`,
-      });
+      out.push(
+        finding('dead-area', `(frame:${FRAME_REGIONS[r]!})`, 'hold', a, b, seconds, T.regionHoldSeconds, 's',
+          `nothing in the ${FRAME_REGIONS[r]!.replace('-', ' ')} part of the frame moves on its own for ${seconds.toFixed(1)} s`),
+      );
     }
   }
   return out;

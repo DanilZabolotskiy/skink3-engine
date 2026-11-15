@@ -194,7 +194,7 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
   const lines: string[] = [];
   const k = report.counts;
   lines.push(
-    `motion ${report.shot}: ${report.frames} frames (${report.seconds.toFixed(2)} s); ${k.nodes} nodes, ${k.bodies} rigid bodies, ${k.springs} springs, ${k.emitters} emitters, ${k.links} links`,
+    `motion ${report.shot}: ${report.frames} frames (${report.seconds.toFixed(2)} s); ${k.nodes} placed nodes, ${k.bodies} of them rigid bodies, ${k.springs} springs, ${k.emitters} emitters, ${k.links} links`,
   );
   lines.push(`camera: median drift ${report.camera.driftPx.toFixed(2)} px per frame at depth 0, zoom ${report.camera.zoomFrom} to ${report.camera.zoomTo}`);
   lines.push(summaryLine(report));
@@ -239,7 +239,7 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
     for (const f of top) lines.push(`  ${f.kind.padEnd(13)} ${when(f)}  ${f.detail}  [${limit(f)}]`);
     if (list.length > top.length) lines.push(`  ... and ${list.length - top.length} more finding(s) on this subject`);
     if (alike.length > 0) lines.push(`  (${total - list.length} more finding(s) of the same kind on the others)`);
-    for (const kind of new Set(top.map((f) => f.kind))) lines.push(`  fix ${kind}: ${FINDING_KINDS[kind].fix}`);
+    for (const kind of new Set(top.map((f) => f.kind))) lines.push(`  usual fix for ${kind}: ${FINDING_KINDS[kind].fix}`);
   }
   if (hiddenSubjects > 0) {
     lines.push('');

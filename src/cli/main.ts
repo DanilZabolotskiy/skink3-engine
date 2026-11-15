@@ -1,4 +1,5 @@
-// Command-line entry point: bake, still, strip, sheet, render, check.
+// Command-line entry point: bake, still, strip, sheet, render, check, and the
+// motion review: motion, trail, graph.
 // Output goes to ./out and the bake cache to ./cache of the caller's working
 // directory, wherever the scene module and the engine live.
 
@@ -15,7 +16,13 @@ import { ffmpegAvailable, type Encoder } from '../render/encode.ts';
 import { frameRaw, heightFor, rendererInfo } from '../render/frame.ts';
 import { renderChunk, renderParallel } from '../render/parallel.ts';
 import { rawToPng, renderSheet, type SheetTile } from '../render/sheet.ts';
+import { renderGraph } from '../review/graph.ts';
+import { motionPictures } from '../review/pictures.ts';
+import { formatMotionReport, motionReportJson, reviewMotion } from '../review/report.ts';
+import { T } from '../review/thresholds.ts';
+import { renderTrail } from '../review/trail.ts';
 import type { CompiledShot } from '../scene/compile.ts';
+import { CAMERA_SUBJECT } from '../scene/types.ts';
 import { languagesOf } from '../text/strings.ts';
 import { engineVersion, physicsVersion } from '../version.ts';
 import { loadShot } from './load.ts';
@@ -23,12 +30,15 @@ import { loadShot } from './load.ts';
 const HELP = `skink3 <command> <scene module> [options]
 
 Commands
-  check   palette laws, string tables and text fit in every language
+  check   palette laws, string tables and text fit in every language; motion findings in short
   bake    simulate physics, springs and particles; write the cache
   still   one or more frames as PNG
   strip   a motion strip: consecutive frames side by side
   sheet   a contact sheet of the whole shot (or of chosen frames, per language)
   render  the shot as an mp4 (parallel chunk workers, joined by ffmpeg)
+  motion  the motion review: jumps, missing ease, strobing speed, springs, dead areas
+  trail   a ghost trail: nodes drawn at every k-th frame in one picture
+  graph   a speed graph of a node, an emitter or the camera
 
 Common options
   --lang <tag>        language of the string tables (default: the first table)
@@ -43,9 +53,13 @@ sheet   [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--cr
 render  [--workers <n>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [--hashes] [--force]
 bake    [--force]
 check   (no options; --lang limits the text checks to some languages)
+motion  [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/motion.json
+trail   --node <id[,id...]> [--from <frame>] [--to <frame>] | [--time <s,s>]  [--every <k>] [--space stage|screen]
+graph   --node <id> | --camera      [--from <frame>] [--to <frame>] | [--time <s,s>]
 
 --crop is in stage units (1920 x 1080, origin top-left). --hash and --hashes
-print or write the SHA-256 of each frame's raw RGBA pixels.`;
+print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes a
+trail and a graph of the worst few subjects of the motion report.`;
 
 interface Common {
   compiled: CompiledShot;
@@ -134,6 +148,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       'hashes-file': { type: 'string' },
       force: { type: 'boolean', default: false },
       bake: { type: 'string' },
+      node: { type: 'string' },
+      camera: { type: 'boolean', default: false },
+      every: { type: 'string' },
+      space: { type: 'string' },
+      pictures: { type: 'boolean', default: false },
+      top: { type: 'string' },
     },
   });
   const str = (name: string): string | undefined => {
@@ -165,11 +185,24 @@ export async function main(argv: readonly string[]): Promise<number> {
     return o ? resolve(process.cwd(), o) : join(common.outDir, fallback);
   };
   const c = compiled;
+  /** The window of frames of `trail` and `graph`: --from and --to in frames, or --time in seconds. */
+  const window = (name: string): { from?: number; to?: number } => {
+    const time = str('time');
+    if (time !== undefined) {
+      const p = numList('time', time);
+      if (p.length !== 2 || p[1]! < p[0]!) fail(`${name}: --time takes two moments in seconds, the earlier first: --time 6.5,7.8`);
+      return { from: checkFrame(c, Math.round(p[0]! * FPS)), to: checkFrame(c, Math.min(c.frames - 1, Math.round(p[1]! * FPS))) };
+    }
+    const w: { from?: number; to?: number } = {};
+    if (str('from') !== undefined) w.from = int('from', str('from'), 0, 0, c.frames - 1);
+    if (str('to') !== undefined) w.to = int('to', str('to'), 0, w.from ?? 0, c.frames - 1);
+    return w;
+  };
 
   switch (command) {
     case 'check': {
       const { bake } = await ensureBake(c, common.cacheDir);
-      const report = runChecks(c, bake, wantedLangs ?? undefined);
+      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true });
       console.log(`check ${c.spec.id}: ${c.frames} frames, ${c.nodes.length} nodes, ${c.layers.length} layers`);
       console.log(formatReport(report));
       return report.ok ? 0 : 1;
@@ -308,6 +341,64 @@ export async function main(argv: readonly string[]): Promise<number> {
       console.log(`  ${result.frames} frames in ${result.seconds.toFixed(2)} s = ${result.fps.toFixed(1)} frames/s`);
       console.log(`  ${result.out}`);
       if (result.hashesFile) console.log(`  ${result.hashesFile}`);
+      return 0;
+    }
+
+    case 'motion': {
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const { series, report } = reviewMotion(c, bake, { lang: common.lang });
+      console.log(formatMotionReport(report, c));
+      const file = outFile('motion.json');
+      write(file, motionReportJson(report));
+      console.log(`\nfull report: ${file}`);
+      if (flag('pictures')) {
+        const count = int('top', str('top'), T.pictureSubjects, 1, 50);
+        const pictures = await motionPictures(c, bake, series, report, { count, gpu: common.gpu, lang: common.lang });
+        if (pictures.length === 0) console.log('pictures: none (no finding on a node, an emitter or the camera)');
+        for (const p of pictures) {
+          const path = join(common.outDir, 'motion', p.name);
+          write(path, p.png);
+          console.log(`${p.kind} of ${p.subject} (${p.note}): ${path}`);
+        }
+      }
+      // Findings are warnings: they never fail the command.
+      return 0;
+    }
+
+    case 'trail': {
+      const ids = (str('node') ?? fail('trail: give --node <id[,id...]>')).split(',').filter((s) => s.length > 0);
+      const space = str('space') ?? 'stage';
+      if (space !== 'stage' && space !== 'screen') fail('--space must be stage or screen');
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const { series } = reviewMotion(c, bake, { lang: common.lang });
+      const every = str('every') === undefined ? undefined : int('every', str('every'), 1, 1, 600);
+      const trail = await renderTrail(c, bake, series, {
+        nodes: ids,
+        ...window('trail'),
+        ...(every === undefined ? {} : { every }),
+        space,
+        lang: common.lang,
+        gpu: common.gpu,
+        maxWidth: Math.min(1920, common.width),
+      });
+      const file = outFile(`trail_${ids.join('+')}_${String(trail.from).padStart(5, '0')}-${String(trail.to).padStart(5, '0')}${space === 'screen' ? '_screen' : ''}.png`);
+      write(file, trail.png);
+      console.log(`trail of ${ids.join(', ')}: frames ${trail.from}-${trail.to}, a ghost every ${trail.every} (${trail.ghosts} ghosts), ${trail.space} space, ${trail.width}x${trail.height}: ${file}`);
+      return 0;
+    }
+
+    case 'graph': {
+      const subject = flag('camera') ? CAMERA_SUBJECT : (str('node') ?? fail('graph: give --node <id> or --camera'));
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const { series, report } = reviewMotion(c, bake, { lang: common.lang });
+      // Findings an intended exception covers are marked too: the graph shows what happens, wanted or not.
+      const findings = [...report.findings, ...report.honoured.flatMap((h) => h.findings)];
+      const graph = await renderGraph(series, { subject, ...window('graph'), findings });
+      const whole = graph.from === 0 && graph.to === c.frames - 1;
+      const name = flag('camera') ? 'camera' : subject;
+      const file = outFile(`graph_${name}${whole ? '' : `_${String(graph.from).padStart(5, '0')}-${String(graph.to).padStart(5, '0')}`}.png`);
+      write(file, graph.png);
+      console.log(`graph of ${subject}: frames ${graph.from}-${graph.to}, ${graph.panels.length} panel(s): ${file}`);
       return 0;
     }
 

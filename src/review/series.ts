@@ -88,7 +88,7 @@ export interface EmitterSeries {
   readonly node: CNode;
   readonly id: string;
   readonly count: Uint32Array;
-  /** How many of them travel at least `fastRatio` of their own size in a frame. */
+  /** How many of them strobe: at least `fastRatio` of their own size and `fastMinPx` in a frame. */
   readonly fast: Uint32Array;
   /** Median travel per frame as a share of the particle's size, and the median speed in px per frame. */
   readonly medianRatio: Float32Array;
@@ -436,7 +436,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
           ratios.push(ratio);
           speeds.push(speed);
           if (pr < 0.5) continue;
-          if (ratio >= T.fastRatio) fast++;
+          if (ratio >= T.fastRatio && speed >= T.fastMinPx) fast++;
           if (speed >= T.alivePx) regions |= regionsOf(sx, sy, pr);
         }
         if (ratios.length === 0) continue;

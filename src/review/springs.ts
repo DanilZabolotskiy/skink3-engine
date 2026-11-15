@@ -3,7 +3,7 @@
 // spring) and ends when it is back within half a pixel of it.
 
 import { FPS } from '../core/time.ts';
-import type { Finding } from './detect.ts';
+import { finding, type Finding } from './detect.ts';
 import { visibleAt, type MotionSeries, type SpringSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
@@ -15,7 +15,7 @@ export interface SpringResponse {
   readonly lagPx: number;
   /** How far it then passed the rest place on the other side, in px; 0 when it never did. */
   readonly overshootPx: number;
-  /** Swings past the rest place large enough to see. */
+  /** Swings past the rest place large enough to see, counted once the target has come to rest (over the whole response if it never does). */
   readonly swings: number;
   /** Seconds from the moment the target came to rest to the last visible swing; null while the target keeps moving. */
   readonly ringSeconds: number | null;
@@ -92,7 +92,6 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
         lobe.at = f;
       }
     }
-    const visible = lobes.slice(1).filter((l) => l.peak >= T.springVisiblePx);
     const overshoot = lobes[1]?.peak ?? 0;
 
     // When the target came to rest.
@@ -102,6 +101,8 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
     let stopped = a;
     for (let f = a; f <= b; f++) if (target[f]! > rest) stopped = f;
     const targetRests = stopped < b - 1;
+    // While the target still moves, the spring is driven; its free swings are those that follow.
+    const visible = lobes.slice(1).filter((l) => l.peak >= T.springVisiblePx && (!targetRests || l.at > stopped));
     const cut = b >= F - 1;
     const lastSwing = visible.length > 0 ? visible[visible.length - 1]!.at : null;
     const ring = !targetRests ? null : lastSwing === null ? 0 : Math.max(0, lastSwing - stopped) / FPS;
@@ -117,32 +118,17 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
     });
 
     if (ring !== null && ring > T.springRingSeconds && lastSwing !== null) {
-      findings.push({
-        kind: 'spring-ringing',
-        subject: s.id,
-        channel: 'spring',
-        from: stopped,
-        to: lastSwing,
-        value: round(ring, 3),
-        threshold: T.springRingSeconds,
-        unit: 's',
-        severity: round(ring / T.springRingSeconds, 3),
-        detail: `still swings visibly ${ring.toFixed(1)} s after its target stopped at frame ${stopped} (${visible.length} swings past the rest place, the first by ${overshoot.toFixed(1)} px; f ${s.params.f}, z ${s.params.z})`,
-      });
+      findings.push(
+        finding('spring-ringing', s.id, 'spring', stopped, lastSwing, ring, T.springRingSeconds, 's',
+          `still swings visibly ${ring.toFixed(1)} s after its target stopped at frame ${stopped} (${visible.length} swings past the rest place; f ${s.params.f}, z ${s.params.z})`),
+      );
     }
     if (s.params.z <= T.springBouncyDamping && lag >= T.springClearResponsePx && overshoot < T.springVisiblePx && targetRests && !cut) {
-      findings.push({
-        kind: 'spring-no-overshoot',
-        subject: s.id,
-        channel: 'spring',
-        from: a,
-        to: b,
-        value: round(overshoot, 3),
-        threshold: T.springVisiblePx,
-        unit: 'px',
-        severity: round(lag / T.springClearResponsePx, 3),
-        detail: `lagged ${lag.toFixed(1)} px behind its target and came to rest without passing it (overshoot ${overshoot.toFixed(2)} px, visible from ${T.springVisiblePx} px; z ${s.params.z} is set to bounce)`,
-      });
+      findings.push(
+        finding('spring-no-overshoot', s.id, 'spring', a, b, overshoot, T.springVisiblePx, 'px',
+          `lagged ${lag.toFixed(1)} px behind its target and came to rest without passing it (overshoot ${overshoot.toFixed(2)} px, visible from ${T.springVisiblePx} px; z ${s.params.z} is set to bounce)`,
+          lag / T.springClearResponsePx),
+      );
     }
   }
   return { id: s.id, kind: s.kind, f: s.params.f, z: s.params.z, r: s.params.r, responses };

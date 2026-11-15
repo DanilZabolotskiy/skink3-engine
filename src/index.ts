@@ -5,7 +5,7 @@
 // See docs/SCENES.md.
 
 // --- Scene authoring -------------------------------------------------------
-export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter } from './scene/build.ts';
+export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, intended } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
 export { IntentError, type Key, type StaggerOrder } from './motion/intents.ts';
@@ -23,17 +23,19 @@ export type {
   EyeNode,
   GroupNode,
   IdleSpec,
+  IntendedSpec,
   LabelNode,
   LabelSide,
   LayerSpec,
   LinkNode,
+  MotionFindingKind,
   PhysicsSpec,
   SceneNode,
   ShapeNode,
   ShotSpec,
   TurbulenceSpec,
 } from './scene/types.ts';
-export { STAGE_W, STAGE_H } from './scene/types.ts';
+export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
 export type { Vec2 } from './core/math.ts';
 
 // --- Core helpers a scene may use to generate content ----------------------
@@ -47,7 +49,15 @@ export { compileShot, defaultTint, CompileError, type CompiledShot, type CNode, 
 export { evaluate, computeWorld, flatItems, labelLayout, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';
 export { Bake, bakeHash, readBake, writeBake, type BakeHeader, type ContactEvent } from './physics/cache.ts';
-export { runChecks, formatReport, checkTextFit, type CheckReport, type CheckIssue } from './checks/index.ts';
+export { runChecks, formatReport, checkTextFit, type CheckReport, type CheckIssue, type CheckOptions } from './checks/index.ts';
+export { sampleMotion, type MotionSeries, type PlacedSeries, type EmitterSeries, type LinkSeries, type SpringSeries, type SampleOptions } from './review/series.ts';
+export { reviewMotion, buildReport, formatMotionReport, formatMotionShort, motionReportJson, type MotionReport, type HonouredException } from './review/report.ts';
+export { FINDING_KINDS, type Finding, type Channel } from './review/detect.ts';
+export type { SpringReport, SpringResponse } from './review/springs.ts';
+export { THRESHOLDS, type Threshold, type ThresholdName } from './review/thresholds.ts';
+export { renderTrail, type TrailOptions, type TrailResult } from './review/trail.ts';
+export { renderGraph, type GraphOptions, type GraphResult } from './review/graph.ts';
+export { motionPictures, type MotionPicture } from './review/pictures.ts';
 export { drawFrame, frameRaw, framePng, heightFor, rendererInfo, type RenderOptions } from './render/frame.ts';
 export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './render/sheet.ts';
 export { renderParallel, type RenderJob, type RenderResult } from './render/parallel.ts';

@@ -113,6 +113,11 @@ export const THRESHOLDS = {
     unit: 'own size per frame',
     why: 'There is no motion blur. At half of its own size per frame, measured along the motion, successive images overlap by half and the motion starts to strobe; at 1 they separate.',
   },
+  fastMinPx: {
+    value: 6,
+    unit: 'px per frame',
+    why: 'Below this travel per frame (360 px per second) successive images lie too close together to come apart, however small the thing is.',
+  },
   fastFrames: {
     value: 6,
     unit: 'frames',

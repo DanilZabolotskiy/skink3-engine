@@ -3,17 +3,21 @@
 //
 // Which finding applies to what:
 //
-//                   timeline nodes   rigid bodies   particles     links        camera
-//   jump                 yes             yes            -        appearance     yes
-//   abrupt start/stop    yes             no             -            -          yes
-//   mechanical           yes             no             -            -          no
-//   too-fast             yes             yes        per emitter    pulses        no
+//                   timeline nodes   rigid bodies      particles     links        camera
+//   jump                 yes         size, opacity         -        appearance     yes
+//   abrupt start/stop    yes             size              -            -          yes
+//   mechanical           yes             size              -            -          no
+//   too-fast             yes              yes          per emitter    pulses        no
 //
-// A rigid body gets its motion from a solver: an impact is a legitimate change
-// of velocity within a frame, and a body that rolls or slides at a constant
-// speed is a flow. So bodies are checked for jumps (a pop out of a contact) and
-// for speed, and not for ease. Children of a body are judged on their own
-// tracks, like any other node.
+// A rigid body gets its place and its turn from a solver: a contact is a
+// legitimate change of velocity within a frame, a nudge from a neighbour moves
+// it a few pixels at once, and a body that rolls or slides at a constant speed
+// is a flow. So the place and the turn of a body are checked for strobing
+// speed only. Its size and its opacity are animated by the timeline and are
+// checked like those of any node. Children of a body are judged on their own
+// tracks. Whether the simulation itself is sound (bodies that sink into each
+// other, jitter at rest, tunnelling) is a matter for physics checks, which are
+// not part of this review.
 //
 // Every placed node is judged on its own motion: its place, turn and size in
 // the space of its parent (a label: relative to its target). A defect of a
@@ -48,6 +52,8 @@ export interface Finding {
   readonly severity: number;
   /** One line: the measurement in words. */
   readonly detail: string;
+  /** One line: what usually fixes it. */
+  readonly fix: string;
 }
 
 /** What each kind of finding means and what usually fixes it. */
@@ -91,7 +97,7 @@ const round = (v: number, digits = 2): number => {
   return Math.round(v * k) / k;
 };
 
-function finding(
+export function finding(
   kind: MotionFindingKind,
   subject: string,
   channel: Channel,
@@ -103,7 +109,7 @@ function finding(
   detail: string,
   severity = value / threshold,
 ): Finding {
-  return { kind, subject, channel, from, to, value: round(value, 3), threshold, unit, severity: round(severity, 3), detail };
+  return { kind, subject, channel, from, to, value: round(value, 3), threshold, unit, severity: round(severity, 3), detail, fix: FINDING_KINDS[kind].fix };
 }
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
@@ -252,8 +258,8 @@ function abrupt(subject: string, ch: Chan, st: Steps, frames: number, onsets: Re
       peak = Math.max(peak, ch.d[end]!);
     }
     if (reached < T.abruptPeakShare * peak) continue;
-    // A bump is a hit: its sudden start is the point.
-    if (onsets.has(f)) continue;
+    // A bump is a hit: its sudden start is the point. It may be the first or the second step of the start.
+    if (onsets.has(f) || onsets.has(f + 1)) continue;
     // So is any other kick: an excursion that comes back.
     let cx = 0;
     let cy = 0;
@@ -372,26 +378,63 @@ function sizeAlong(series: MotionSeries, s: PlacedSeries, f: number, ux: number,
   return 2 * s.radius * k;
 }
 
+/**
+ * The step of a node from frame f - 1 to f in screen px, against what it is
+ * attached to. A node attached to nothing moves against the screen, camera
+ * included. A child is measured in the frame of its parent as it is turned at
+ * each moment: its own move inside the parent counts, and so does the swing a
+ * turning parent gives it, but not the parent's travel or growth, which move
+ * the whole thing as one. A label is measured against its target.
+ */
+export function relativeSteps(series: MotionSeries, s: PlacedSeries): { dx: Float32Array; dy: Float32Array } {
+  const F = series.frames;
+  const view = series.views[s.node.layer]!;
+  const dx = new Float32Array(F);
+  const dy = new Float32Array(F);
+  const node = s.node.node;
+  if (node.type === 'label') {
+    for (let f = 1; f < F; f++) {
+      dx[f] = (s.ownX[f]! - s.ownX[f - 1]!) * s.unit[f]!;
+      dy[f] = (s.ownY[f]! - s.ownY[f - 1]!) * s.unit[f]!;
+    }
+  } else if (s.node.parent >= 0) {
+    const parent = series.placed[s.node.parent]!;
+    let px = 0;
+    let py = 0;
+    for (let f = 0; f < F; f++) {
+      const a = parent.rot[f]! * DEG;
+      const x = s.ownX[f]! * Math.cos(a) - s.ownY[f]! * Math.sin(a);
+      const y = s.ownX[f]! * Math.sin(a) + s.ownY[f]! * Math.cos(a);
+      if (f > 0) {
+        dx[f] = (x - px) * s.unit[f]!;
+        dy[f] = (y - py) * s.unit[f]!;
+      }
+      px = x;
+      py = y;
+    }
+  } else {
+    for (let f = 1; f < F; f++) {
+      dx[f] = s.x[f]! * view.zoom[f]! + view.tx[f]! - (s.x[f - 1]! * view.zoom[f - 1]! + view.tx[f - 1]!);
+      dy[f] = s.y[f]! * view.zoom[f]! + view.ty[f]! - (s.y[f - 1]! * view.zoom[f - 1]! + view.ty[f - 1]!);
+    }
+  }
+  return { dx, dy };
+}
+
 function tooFast(series: MotionSeries, s: PlacedSeries, out: Finding[]): void {
   const F = series.frames;
   const view = series.views[s.node.layer]!;
   const node = s.node.node;
-  // Judged against what it is attached to: a part that rides on a moving thing
-  // does not strobe by itself.
-  const refIndex = node.type === 'label' ? s.node.targetIndex : s.node.parent;
-  const ref = refIndex >= 0 ? series.placed[refIndex]! : null;
+  const rel = relativeSteps(series, s);
   // No direction of a shape is narrower than twice its inner radius: a cheap first test.
   const narrow = node.type === 'shape' ? 2 * shapeExtent(node.shape).inner : 0;
+  // Runs of frames above the limit, each long enough to count.
+  const runs: { from: number; to: number; peak: number; speed: number }[] = [];
   let runStart = -1;
   let peak = 0;
   let peakSpeed = 0;
   const close = (endFrame: number): void => {
-    if (runStart >= 0 && endFrame - runStart + 1 >= T.fastFrames) {
-      out.push(
-        finding('too-fast', s.id, 'position', runStart - 1, endFrame, peak, T.fastRatio, 'own size per frame',
-          `travels up to ${peak.toFixed(2)} of its own size per frame (${peakSpeed.toFixed(1)} px per frame) for ${endFrame - runStart + 1} frames`),
-      );
-    }
+    if (runStart >= 0 && endFrame - runStart + 1 >= T.fastFrames) runs.push({ from: runStart, to: endFrame, peak, speed: peakSpeed });
     runStart = -1;
     peak = 0;
     peakSpeed = 0;
@@ -400,15 +443,11 @@ function tooFast(series: MotionSeries, s: PlacedSeries, out: Finding[]): void {
     let ratio = 0;
     let step = 0;
     if (visibleAt(s, f - 1) && visibleAt(s, f) && (s.flags[f]! & IN_FRAME) !== 0) {
-      let dx = s.x[f]! * view.zoom[f]! + view.tx[f]! - (s.x[f - 1]! * view.zoom[f - 1]! + view.tx[f - 1]!);
-      let dy = s.y[f]! * view.zoom[f]! + view.ty[f]! - (s.y[f - 1]! * view.zoom[f - 1]! + view.ty[f - 1]!);
-      if (ref) {
-        dx -= ref.x[f]! * view.zoom[f]! + view.tx[f]! - (ref.x[f - 1]! * view.zoom[f - 1]! + view.tx[f - 1]!);
-        dy -= ref.y[f]! * view.zoom[f]! + view.ty[f]! - (ref.y[f - 1]! * view.zoom[f - 1]! + view.ty[f - 1]!);
-      }
+      const dx = rel.dx[f]!;
+      const dy = rel.dy[f]!;
       step = Math.hypot(dx, dy);
       const k = s.scale[f]! * view.zoom[f]!;
-      if (step >= T.fastRatio * Math.max(narrow * k, 2 * T.minRadiusPx)) {
+      if (step >= T.fastMinPx && step >= T.fastRatio * Math.max(narrow * k, 2 * T.minRadiusPx)) {
         const size = sizeAlong(series, s, f, dx / step, dy / step);
         if (size >= 2 * T.minRadiusPx) ratio = step / size;
       }
@@ -424,6 +463,24 @@ function tooFast(series: MotionSeries, s: PlacedSeries, out: Finding[]): void {
     }
   }
   close(F - 1);
+  // Runs less than half a second apart are one thing that keeps strobing: a swing, a bounce.
+  for (let i = 0; i < runs.length; ) {
+    let j = i;
+    let frames = runs[i]!.to - runs[i]!.from + 1;
+    let best = runs[i]!;
+    while (j + 1 < runs.length && runs[j + 1]!.from - runs[j]!.to <= FPS / 2) {
+      j++;
+      frames += runs[j]!.to - runs[j]!.from + 1;
+      if (runs[j]!.peak > best.peak) best = runs[j]!;
+    }
+    const from = runs[i]!.from - 1;
+    const to = runs[j]!.to;
+    out.push(
+      finding('too-fast', s.id, 'position', from, to, best.peak, T.fastRatio, 'own size per frame',
+        `travels up to ${best.peak.toFixed(2)} of its own size per frame (${best.speed.toFixed(1)} px per frame); above the limit for ${frames} frames${j > i ? `, in ${j - i + 1} bursts` : ''}`),
+    );
+    i = j + 1;
+  }
 }
 
 // --- Everything on placed nodes, links, emitters and the camera -----------------------------------
@@ -456,8 +513,13 @@ export function detectMotion(series: MotionSeries): Finding[] {
       okSeen[f] = st.seen[f] && st.inFrame[f] && big[f] ? 1 : 0;
       okSize[f] = st.faintless[f] && st.inFrame[f] && big[f] ? 1 : 0;
     }
-    jumps(s.id, pos, okSeen, F, mine);
-    jumps(s.id, rot, okSeen, F, mine);
+    // The place and the turn of a rigid body come from the solver, where a
+    // contact changes them within a frame; its size and opacity are animated
+    // like those of any node.
+    if (!s.solver) {
+      jumps(s.id, pos, okSeen, F, mine);
+      jumps(s.id, rot, okSeen, F, mine);
+    }
     jumps(s.id, scl, okSize, F, mine);
     // Opacity: a third of full opacity in one frame is a pop.
     for (let f = 1; f < F; f++) {
@@ -470,11 +532,11 @@ export function detectMotion(series: MotionSeries): Finding[] {
       );
     }
 
-    if (!s.solver) {
+    {
       const onsets = bumpOnsets(c, s.node.index);
       const eased: Finding[] = [];
       const flat: Finding[] = [];
-      for (const ch of st.channels) {
+      for (const ch of s.solver ? [scl] : st.channels) {
         abrupt(s.id, ch, st, F, onsets, eased);
         mechanical(s.id, ch, st, s, F, flat);
       }
@@ -593,8 +655,3 @@ export function detectMotion(series: MotionSeries): Finding[] {
   return out;
 }
 
-/** The own speed of a node per frame in px, per channel: what the graphs plot. */
-export function ownSpeeds(series: MotionSeries, s: PlacedSeries): { position: Float32Array; rotation: Float32Array; scale: Float32Array } {
-  const st = ownSteps(series, s);
-  return { position: st.channels[0].d, rotation: st.channels[1].d, scale: st.channels[2].d };
-}
