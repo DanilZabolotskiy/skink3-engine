@@ -170,12 +170,14 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 | `depth` | Meaning | Derived defaults |
 |---|---|---|
 | `0` | the focus plane: sharp, moves with the camera | parallax 1, blur 0, tint 0 |
-| above 0 | farther: moves less, slightly blurred, tinted toward `atmosphere` | parallax `1 / (1 + depth)`, blur `focus.far × depth`, tint `min(0.62, 0.3 × depth)` |
+| above 0 | farther: moves less, slightly blurred, paler and closer to the `atmosphere` colour | parallax `1 / (1 + depth)`, blur `focus.far × depth`, tint `min(0.9, 1 - e^(-0.8 × depth))`: 0.33 at depth 0.5, 0.55 at depth 1, 0.80 at depth 2 |
 | below 0 (down to -0.9) | nearer: moves more, heavily blurred | parallax `1 / (1 + depth)`, blur `focus.near × -depth`, tint 0 |
 
 `blur` (units), `parallax` and `tint` (0..1) override the derived values. Nodes are drawn in the order listed; children are drawn after their parent.
 
-A good dark shot has at least three layers: a far one with large pale shapes, the stage at depth 0 where the action is, and a near one with a few big dark blurred shapes at the edges.
+**Tint is atmospheric perspective.** With tint *t*, every colour drawn in the layer (fills, shadows, highlights, links, particles, labels) loses `0.6 × t` of its saturation and then moves *t* of the way to the shot's `atmosphere` colour: hue along the short way round the colour wheel, saturation and value straight. So far things are paler, less saturated and close to one tone, and a warm colour fading into a cool atmosphere never turns gray. At tint 1 everything is the atmosphere colour.
+
+A good dark shot has at least three layers: a far one with large pale shapes, the stage at depth 0 where the action is, and a near one with a few big dark blurred shapes at the edges. Keep far shapes away from the spot behind the subject: the depth tint separates them by tone, but a diagram reads best against the deep background. A far layer moves less than the stage, so "behind the subject" is a band there, as wide as the camera's travel times `1 - parallax`.
 
 ## Nodes
 
@@ -190,7 +192,7 @@ All shape factories take these options:
 | `at` | `[0, 0]` | position in the parent's space |
 | `rotation` | `0` | degrees, clockwise |
 | `scale` | `1` | |
-| `opacity` | `1` | constant |
+| `opacity` | `1` | 0..1 at the start; `fadeTo` animates it (see Opacity) |
 | `lit` | `true` | automatic light: shadow crescent, lit rim, highlight stroke |
 | `glow` | `0` | 0..1: halo around the shape and a lift of the background behind it |
 | `rimLight` | none | palette colour of a thin rim light on the shadow side |
@@ -209,11 +211,11 @@ All shape factories take these options:
 
 Concave forms are composed from several shapes in a `group`.
 
-### `group({ id, at?, rotation?, scale?, children?, follow?, idle? })`
+### `group({ id, at?, rotation?, scale?, opacity?, children?, follow?, idle? })`
 
 An invisible parent. Its children move, turn and scale with it. A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
-### `link({ id, from, to, color, pulseColor?, bend?, width?, gap? })`
+### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity? })`
 
 A curved line between two nodes of the same layer. It follows them as they move.
 
@@ -225,10 +227,11 @@ A curved line between two nodes of the same layer. It follows them as they move.
 | `bend` | `0.12` | sideways bulge as a fraction of the length; negative bends the other way; 0 is straight |
 | `width` | `7` | |
 | `gap` | `6` | free space between the link's end and the node's edge |
+| `opacity` | `1` | 0..1 at the start |
 
-List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden. Animate it with `drawOn` and `pulse`.
+List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden, and it fades with the fainter of the two. Animate it with `drawOn` and `pulse`. A pulse is drawn as travelling light: a bright head with a tail that narrows and fades.
 
-### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, follow? })`
+### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow? })`
 
 A rounded rectangle with a pointer tail aimed at `target`.
 
@@ -243,11 +246,12 @@ A rounded rectangle with a pointer tail aimed at `target`.
 | `minSize` | 62 % of `size` | the layout may shrink the font down to this |
 | `maxWidth` | `420` | widest the text block may get before it wraps |
 | `maxLines` | `3` | |
+| `opacity` | `1` | 0..1 at the start |
 | `follow` | none | spring: the label trails its target |
 
 The layout wraps the string, balances the lines, and shrinks the font if needed. A string that still does not fit is reported by the text-fit check as overflow; it is never cut. Labels are listed directly in a layer, usually last so they are on top.
 
-### `eye({ id, r, white, pupil, at?, scale?, lookAt?, blink? })`
+### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
 
@@ -268,7 +272,7 @@ Particles are small circles that swell quickly and then shrink to nothing. They 
 | `rate` | `0` | particles per second, between `from` (0) and `until` (end) |
 | `bursts` | `[]` | `[{ at, count }]` |
 | `onContact` | none | `{ count, minImpulse }`: a burst at every rigid-body contact at least that strong, at the contact point |
-| `prewarm` | `0` | seconds simulated before the shot starts, so that a field is already populated at frame 0 |
+| `prewarm` | `0` | seconds simulated before the shot starts, so that a field is already populated at frame 0 (for an emitter whose `rate` runs from the start) |
 | `direction`, `spread` | `-90`, `360` | mean direction and full spread angle, degrees |
 | `speed` | `[20, 60]` | units per second |
 | `gravity` | `[0, 0]` | constant acceleration, units per second squared (also works as wind) |
@@ -288,6 +292,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `popIn(id, { at, ... })` | shape, group, eye, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
 | `turnTo(id, { at, to, ... })` | shape, group | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
+| `scaleTo(id, { at, to, ... })` | shape, group, eye, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
+| `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(linkId, { at, ... })` | link | `dur` (0.6) | draws the link on from its `from` end. **The link is hidden before `at`**. Once per link |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
@@ -296,8 +302,24 @@ Rules:
 
 - Moves of one node may not overlap in time; the same holds for turns and for pops. `popIn` and `popOut` must alternate.
 - A node with a `popIn` and no earlier `popOut` starts hidden. A node without pops is visible from the start.
-- A rigid body cannot be the target of `moveTo` or `turnTo`; it can pop and bump.
+- `scaleTo` and `fadeTo` chain: each starts from the size or opacity the node has at that moment, also when the previous one is still under way.
+- Size is a product: the authored `scale` × pops × the lasting size from `scaleTo` × bumps. So a node can pop in, grow in steps, and still react with a bump (also the bump a pulse gives on arrival) at any size. `scaleTo` overshoots in proportion: growing to 2 with `overshoot: 0.15` peaks near 2.2, shrinking to 0.5 dips to 0.45.
+- A rigid body cannot be the target of `moveTo`, `turnTo` or `scaleTo`; it can pop, bump and fade.
 - To time something to a pulse's arrival, use `at + dur` of that pulse.
+
+### Opacity
+
+Every shape, group, eye, label and link has an `opacity` (default 1) that `fadeTo` animates. How it combines:
+
+- **A faded node fades as one picture.** The node and everything in it (its automatic light, its children, their children) are drawn first and then faded together, so parts that overlap inside it do not show through each other: a half-faded creature does not reveal its body through its eyes.
+- **Opacity multiplies down the tree.** A child at 0.5 inside a parent at 0.5 ends up at 0.25. A child cannot be more visible than its parent.
+- **Glow fades too.** The halo of a glowing shape and the lift of the background behind it are scaled by the shape's opacity down the tree.
+- **A link takes the fainter of its two nodes**, times its own opacity.
+- At opacity 0 a node and its whole subtree are not drawn.
+- Particles are not children of anything and do not fade with a node; stop the emitter instead (`until`).
+- Opacity is only a look. A faded rigid body still collides, and a faded label's string still has to fit.
+
+A translucent shape is simply a shape with `opacity` below 1, for example a soft field under a diagram: `circle({ id: 'field', r: 150, fill: 'mid.violet', lit: false, opacity: 0.2 })`.
 
 ### `stagger(ids, { at, each, order? }, make)`
 
@@ -366,8 +388,11 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 | text fit: overflow | a label's string does not fit its `maxWidth` and `maxLines` even at `minSize` |
 | text fit: off-frame | a shown label comes closer than 12 units to the frame edge at any sampled frame |
 | text fit: overlap | two shown labels overlap at any sampled frame |
+| text fit: covers-node (**warning**) | a shown label covers a shape or an eye of its own layer other than its target (and the target's own children and parents), at any sampled frame |
 
-`skink3 render` runs the same checks for the language it renders and stops if they fail (`--force` renders anyway). The checks do not test whether a label covers a node; look at a contact sheet for that.
+A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted. Frames are sampled ten times a second, so a touch shorter than that can be missed.
+
+`skink3 render` runs the same checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway).
 
 `npm run check` in the engine repository also runs `tsc --noEmit` and the unit tests.
 
@@ -392,6 +417,8 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
+- `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
+- If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 
 Review with stills, strips and sheets; render the video when those look right.
 
@@ -411,4 +438,4 @@ Everything the command line does is exported: `compileShot`, `bakeShot`, `ensure
 
 ## What is not there yet
 
-No transitions between shots, no narration or audio, no keys anchored to words, no free-form paths, no bubbles, titles or counters, no scripts beyond Latin and Cyrillic, no soft bodies, ropes, flocks or fluids, no motion blur. See the roadmap in the README.
+No transitions between shots, no narration or audio, no keys anchored to words, no free-form paths, no bubbles, titles or counters, no scripts beyond Latin and Cyrillic, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves. See the roadmap in the README.

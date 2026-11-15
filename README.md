@@ -69,31 +69,31 @@ Scene modules import from the package name (`import { shot, circle } from 'skink
 
 ## Demo shot
 
-`examples/demo/scene.ts` is 15 seconds of neutral content: a glowing source wakes up a small network, pulses travel along the links, a blob creature drifts in, the network rearranges itself, and a handful of pieces tumble into a tray while the camera drifts and pushes in. Measured on November 15, 2026 (Ryzen 7 9700X, RTX 5070 Ti, Vulkan):
+`examples/demo/scene.ts` is 15 seconds of neutral content: a glowing source feeds a small network, and with every wave of pulses its field and then its nodes grow a step; a blob creature drifts in, the network rearranges itself, a tray fades in and a handful of pieces tumble into it, while the camera drifts and pushes in. Measured on November 15, 2026 (Ryzen 7 9700X, RTX 5070 Ti, Vulkan):
 
 | What | Result |
 |---|---|
-| Bake (17 rigid bodies, 8 springs, 8 emitters, 900 frames) | 0.17 s |
-| Render, 1920×1080, 900 frames, 8 worker processes, GPU, x264 | 5.2 s (about 172 frames/s) |
-| Same with 1 worker process | 7.2 s (125 frames/s) |
-| Same with 8 worker processes on the CPU (`--cpu`) | 16.1 s (56 frames/s) |
+| Bake (17 rigid bodies, 8 springs, 8 emitters, 900 frames) | 0.19 s |
+| Render, 1920×1080, 900 frames, 8 worker processes, GPU, x264 | 5.1 s (about 177 frames/s) |
+| Same with 1 worker process | 7.0 s (129 frames/s) |
+| Same with 8 worker processes on the CPU (`--cpu`) | 15.3 s (59 frames/s) |
 | Bake in two separate processes | identical cache hash |
 | Frames 0, 450, 899 alone vs inside the full render | identical raw RGBA hashes |
 | 1 worker vs 8 workers | identical hashes for all 900 frames |
 
 The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit.
 
-The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 30 frames sampled every 0.5 s, see [docs/METRICS.md](docs/METRICS.md#short-clips)):
+The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 30 frames, one every 0.5 s, see [docs/METRICS.md](docs/METRICS.md#short-clips)):
 
 | Metric | Target | Demo shot |
 |---|---|---|
-| Camera drift, median | 0.3–0.7 px per frame at 1080p | 0.38 |
-| Duplicated frames in motion | none | 0 of 790 |
+| Camera drift, median | 0.3–0.7 px per frame at 1080p | 0.50 |
+| Duplicated frames in motion | none | 0 of 733 |
 | Fully static frame pairs; longest hold | 3–9 % over a whole video; no hold above ~4 s | 0.0 %; 0.0 s (one continuously moving shot, no cuts) |
-| Pixels with L* < 30 | about 60 % on dark shots | 61.0 % |
-| Saturation of dark pixels | about 0.8 | 0.80 |
+| Pixels with L* < 30 | about 60 % on dark shots | 62.4 % |
+| Saturation of dark pixels | about 0.8 | 0.81 |
 | Near-gray pixels (S < 0.12) | about 6 % or less | below 0.1 % |
-| Hue of dark pixels | mostly 210–300° | 99 % (210–240°: 5 %, 240–270°: 85 %, 270–300°: 9 %) |
+| Hue of dark pixels | mostly 210–300° | 100 % (210–240°: 1 %, 240–270°: 87 %, 270–300°: 12 %) |
 
 ## Benchmarks
 
@@ -120,14 +120,14 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 |---|---|
 | `src/core` | time base (60 fps, 1/240 s simulation step), seeded random with named streams, easing, second-order dynamics, seeded noise, stable hashing |
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
-| `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers) |
+| `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
 | `src/scene` | scene description types, factory functions, compiler (validation, tracks, bake slots), pure evaluation of a frame |
-| `src/motion` | intents (`moveTo`, `popIn`, `popOut`, `turnTo`, `bump`, `drawOn`, `pulse`), `stagger`, the curves behind them |
+| `src/motion` | intents (`moveTo`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `bump`, `drawOn`, `pulse`), `stagger`, the curves behind them |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift, push-in, parallax view of a depth layer |
 | `src/text` | string tables, bundled font, auto-fit layout, label geometry |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
-| `src/checks` | palette laws, string tables, text fit per language |
+| `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings) |
 | `src/cli`, `bin/` | the `skink3` command |
 | `examples/` | the demo shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
