@@ -1,0 +1,438 @@
+// Compiles a shot description into the form the evaluator, the bake and the
+// renderer work with: a flat node list in draw order, resolved references and
+// colours, per-node tracks built from the timeline, and slots in the bake.
+// Compiling also validates the shot as a whole.
+
+import { springParams, type SpringParams } from '../core/dynamics.ts';
+import { hashOf } from '../core/hash.ts';
+import type { Vec2 } from '../core/math.ts';
+import { Noise } from '../core/noise.ts';
+import { Rng } from '../core/rng.ts';
+import { frameCount } from '../core/time.ts';
+import { lightVector } from '../look/light.ts';
+import { resolveColor, type Palette } from '../look/palette.ts';
+import type { BumpKey, DrawOnKey, Key, MoveToKey, PopInKey, PopOutKey, PulseKey, TurnToKey } from '../motion/intents.ts';
+import {
+  buildLinkTrack,
+  buildPosTrack,
+  buildRotTrack,
+  buildScaleTrack,
+  type LinkTrack,
+  type PosTrack,
+  type RotTrack,
+  type ScaleTrack,
+} from '../motion/tracks.ts';
+import { resolveString } from '../text/strings.ts';
+import type { LayerSpec, SceneNode, ShotSpec } from './types.ts';
+
+export class CompileError extends Error {}
+
+export interface CNode {
+  readonly index: number;
+  readonly id: string;
+  readonly node: SceneNode;
+  readonly layer: number;
+  /** Index of the parent node, or -1 for a top-level node. */
+  readonly parent: number;
+  readonly pos: PosTrack | null;
+  readonly rot: RotTrack | null;
+  readonly scale: ScaleTrack | null;
+  readonly link: LinkTrack | null;
+  /** Slot in the bake, or -1. */
+  readonly bodySlot: number;
+  readonly springSlot: number;
+  readonly emitterSlot: number;
+  readonly springKind: 'follow' | 'sway' | null;
+  readonly springParams: SpringParams | null;
+  /** Indices of the nodes this one refers to, or -1. */
+  readonly fromIndex: number;
+  readonly toIndex: number;
+  readonly targetIndex: number;
+  readonly lookAtIndex: number;
+  readonly attachIndex: number;
+  /** Resolved colours (hex) by the name of the property that holds the reference. */
+  readonly colors: Readonly<Record<string, string>>;
+  /** Emitters: resolved particle colours. */
+  readonly particleColors: readonly string[];
+  /** Idle wandering noise, if the node has `idle`. */
+  readonly idleNoise: Noise | null;
+  /** Eyes: the moments (seconds) a blink starts. */
+  readonly blinks: readonly number[];
+}
+
+export interface CLayer {
+  readonly spec: LayerSpec;
+  /** Node indices of this layer in draw order. */
+  readonly nodes: readonly number[];
+  readonly parallax: number;
+  /** Blur radius in units. */
+  readonly blur: number;
+  /** 0..1 atmospheric tint. */
+  readonly tint: number;
+}
+
+export interface CompiledShot {
+  readonly spec: ShotSpec;
+  readonly frames: number;
+  readonly nodes: readonly CNode[];
+  readonly byId: ReadonlyMap<string, CNode>;
+  readonly layers: readonly CLayer[];
+  /** Node indices by bake slot. */
+  readonly bodies: readonly number[];
+  readonly springs: readonly number[];
+  readonly emitters: readonly number[];
+  /** Unit vector toward the light, in screen space. */
+  readonly light: Vec2;
+  readonly cameraNoise: Noise;
+  readonly background: { readonly inner: string; readonly outer: string };
+  readonly atmosphere: string;
+  /** String keys the scene uses. */
+  readonly stringKeys: readonly string[];
+  /** Hash of everything that can influence the bake. */
+  readonly sceneHash: string;
+}
+
+type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' }>;
+
+function isPlaced(node: SceneNode): node is Placed {
+  return node.type === 'shape' || node.type === 'group' || node.type === 'eye';
+}
+
+function fail(message: string): never {
+  throw new CompileError(message);
+}
+
+/** Seconds between two blinks, and how long a blink lasts. */
+export const BLINK = { minGap: 2.2, maxGap: 5.2, seconds: 0.2 } as const;
+
+export function compileShot(spec: ShotSpec): CompiledShot {
+  const where = `shot "${spec.id}"`;
+  const palette: Palette = spec.palette;
+  const frames = frameCount(spec.seconds);
+
+  // 1. Flatten the node trees in draw order: a parent, then its children.
+  interface Draft {
+    index: number;
+    node: SceneNode;
+    layer: number;
+    parent: number;
+  }
+  const drafts: Draft[] = [];
+  const idIndex = new Map<string, number>();
+  const layerIds = new Set<string>();
+  const layerNodes: number[][] = [];
+
+  const visit = (node: SceneNode, layer: number, parent: number): void => {
+    if (!node || typeof node !== 'object' || typeof (node as { type?: unknown }).type !== 'string') {
+      fail(`${where}: a node in layer "${spec.layers[layer]!.id}" is not a scene node (use the factory functions)`);
+    }
+    if (idIndex.has(node.id)) fail(`${where}: duplicate node id "${node.id}"; ids must be unique within the shot`);
+    const index = drafts.length;
+    idIndex.set(node.id, index);
+    drafts.push({ index, node, layer, parent });
+    layerNodes[layer]!.push(index);
+    if (parent >= 0 && !isPlaced(node)) {
+      fail(`${where}: ${node.type} "${node.id}" must be listed directly in a layer's nodes, not as a child of "${drafts[parent]!.node.id}"`);
+    }
+    if (node.type === 'shape' || node.type === 'group') {
+      for (const child of node.children) visit(child, layer, index);
+    }
+  };
+  spec.layers.forEach((layer, li) => {
+    if (layerIds.has(layer.id)) fail(`${where}: duplicate layer id "${layer.id}"`);
+    layerIds.add(layer.id);
+    layerNodes.push([]);
+    for (const node of layer.nodes) visit(node, li, -1);
+  });
+
+  const known = (): string => [...idIndex.keys()].join(', ');
+  const ref = (owner: SceneNode, prop: string, id: string, sameLayer = true): number => {
+    const index = idIndex.get(id);
+    if (index === undefined) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to "${id}", which does not exist (nodes: ${known()})`);
+    const other = drafts[index]!;
+    if (!isPlaced(other.node)) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to ${other.node.type} "${id}"; it must be a shape, a group or an eye`);
+    if (sameLayer && other.layer !== drafts[idIndex.get(owner.id)!]!.layer) {
+      fail(`${where}: ${owner.type} "${owner.id}" and its ${prop} "${id}" must be in the same layer`);
+    }
+    return index;
+  };
+  const col = (owner: SceneNode, prop: string, value: string): string => {
+    try {
+      return resolveColor(palette, value);
+    } catch (e) {
+      return fail(`${where}: ${owner.type} "${owner.id}" ${prop}: ${(e as Error).message}`);
+    }
+  };
+
+  // 2. Sort the timeline by target.
+  const moves = new Map<number, MoveToKey[]>();
+  const turns = new Map<number, TurnToKey[]>();
+  const popIns = new Map<number, PopInKey[]>();
+  const popOuts = new Map<number, PopOutKey[]>();
+  const bumps = new Map<number, { at: number; amount: number }[]>();
+  const draws = new Map<number, DrawOnKey[]>();
+  const pulses = new Map<number, PulseKey[]>();
+  const push = <T>(map: Map<number, T[]>, index: number, item: T): void => {
+    const list = map.get(index);
+    if (list) list.push(item);
+    else map.set(index, [item]);
+  };
+  for (const key of spec.timeline as readonly Key[]) {
+    if (!key || typeof key !== 'object' || typeof key.kind !== 'string') fail(`${where}: the timeline holds something that is not a key (use moveTo, popIn, ...)`);
+    const index = idIndex.get(key.target);
+    if (index === undefined) fail(`${where}: ${key.kind} targets "${key.target}", which does not exist (nodes: ${known()})`);
+    const node = drafts[index]!.node;
+    if (key.at > spec.seconds) fail(`${where}: ${key.kind}("${key.target}") starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+    const need = (ok: boolean, what: string): void => {
+      if (!ok) fail(`${where}: ${key.kind} cannot target ${node.type} "${node.id}"; it applies to ${what}`);
+    };
+    switch (key.kind) {
+      case 'moveTo':
+        need(isPlaced(node), 'shapes, groups and eyes');
+        if (node.type === 'shape' && node.body) fail(`${where}: moveTo cannot target "${node.id}": a rigid body is moved by the physics bake`);
+        push(moves, index, key);
+        break;
+      case 'turnTo':
+        need(node.type === 'shape' || node.type === 'group', 'shapes and groups');
+        if (node.type === 'shape' && node.body) fail(`${where}: turnTo cannot target "${node.id}": a rigid body is turned by the physics bake`);
+        push(turns, index, key);
+        break;
+      case 'popIn':
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        push(popIns, index, key);
+        break;
+      case 'popOut':
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        push(popOuts, index, key);
+        break;
+      case 'bump':
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        push(bumps, index, { at: (key as BumpKey).at, amount: (key as BumpKey).amount });
+        break;
+      case 'drawOn':
+        need(node.type === 'link', 'links');
+        push(draws, index, key);
+        break;
+      case 'pulse':
+        need(node.type === 'link', 'links');
+        push(pulses, index, key);
+        break;
+      default:
+        fail(`${where}: unknown timeline key kind ${JSON.stringify((key as { kind: unknown }).kind)}`);
+    }
+  }
+  // A pulse that arrives gives the node at the far end of its link a bump.
+  for (const [linkIndex, list] of pulses) {
+    const linkNode = drafts[linkIndex]!.node;
+    if (linkNode.type !== 'link') continue;
+    const toIndex = idIndex.get(linkNode.to);
+    if (toIndex === undefined) continue;
+    for (const p of list) if (p.bump > 0) push(bumps, toIndex, { at: p.at + p.dur, amount: p.bump });
+  }
+
+  // 3. Build the compiled nodes.
+  const bodies: number[] = [];
+  const springs: number[] = [];
+  const emitters: number[] = [];
+  const stringKeys = new Set<string>();
+  let bodyLayer = -1;
+
+  const nodes: CNode[] = drafts.map((d): CNode => {
+    const node = d.node;
+    const colors: Record<string, string> = {};
+    let particleColors: string[] = [];
+    let fromIndex = -1;
+    let toIndex = -1;
+    let targetIndex = -1;
+    let lookAtIndex = -1;
+    let attachIndex = -1;
+    let bodySlot = -1;
+    let springSlot = -1;
+    let emitterSlot = -1;
+    let springKind: CNode['springKind'] = null;
+    let springSpec = null;
+    let blinks: number[] = [];
+    let idleNoise: Noise | null = null;
+
+    switch (node.type) {
+      case 'shape':
+        colors['fill'] = col(node, 'fill', node.fill);
+        if (node.rimLight) colors['rimLight'] = col(node, 'rimLight', node.rimLight);
+        if (node.body) {
+          if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
+          if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
+          if (bodyLayer >= 0 && bodyLayer !== d.layer) {
+            fail(`${where}: rigid bodies must all be in one layer ("${node.id}" is in "${spec.layers[d.layer]!.id}", others are in "${spec.layers[bodyLayer]!.id}")`);
+          }
+          if (node.body.kind === 'dynamic' && node.body.release > spec.seconds) {
+            fail(`${where}: body "${node.id}" is released at ${node.body.release} s, after the shot ends`);
+          }
+          bodyLayer = d.layer;
+          bodySlot = bodies.length;
+          bodies.push(d.index);
+        }
+        if (node.sway) {
+          springKind = 'sway';
+          springSpec = node.sway;
+        } else if (node.follow) {
+          springKind = 'follow';
+          springSpec = node.follow;
+        }
+        break;
+      case 'group':
+        if (node.follow) {
+          springKind = 'follow';
+          springSpec = node.follow;
+        }
+        break;
+      case 'eye':
+        colors['white'] = col(node, 'white', node.white);
+        colors['pupil'] = col(node, 'pupil', node.pupil);
+        if (node.lookAt) lookAtIndex = ref(node, 'lookAt', node.lookAt);
+        if (node.blink) {
+          // Eyes of one parent share a blink schedule, so a creature blinks instead of winking.
+          const owner = d.parent >= 0 ? drafts[d.parent]!.node.id : node.id;
+          const rng = new Rng(spec.seed, `blink/${owner}`);
+          let t = rng.range(0.8, BLINK.maxGap);
+          while (t < spec.seconds) {
+            blinks.push(t);
+            t += rng.range(BLINK.minGap, BLINK.maxGap);
+          }
+        }
+        break;
+      case 'link':
+        colors['color'] = col(node, 'color', node.color);
+        colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
+        fromIndex = ref(node, 'from', node.from);
+        toIndex = ref(node, 'to', node.to);
+        if (fromIndex === toIndex) fail(`${where}: link "${node.id}" joins "${node.from}" to itself`);
+        break;
+      case 'label': {
+        colors['fill'] = col(node, 'fill', node.fill);
+        colors['ink'] = col(node, 'ink', node.ink);
+        targetIndex = ref(node, 'target', node.target);
+        for (const lang of Object.keys(spec.strings)) {
+          try {
+            resolveString(spec.strings, lang, node.text);
+          } catch (e) {
+            fail(`${where}: label "${node.id}": ${(e as Error).message}`);
+          }
+        }
+        stringKeys.add(node.text);
+        if (node.follow) {
+          springKind = 'follow';
+          springSpec = node.follow;
+        }
+        break;
+      }
+      case 'emitter':
+        particleColors = node.colors.map((c, i) => col(node, `colors[${i}]`, c));
+        if (node.attach) attachIndex = ref(node, 'attach', node.attach);
+        emitterSlot = emitters.length;
+        emitters.push(d.index);
+        break;
+      default:
+        fail(`${where}: unknown node type ${JSON.stringify((node as { type: unknown }).type)}`);
+    }
+    if ((node.type === 'shape' || node.type === 'group') && node.idle) {
+      idleNoise = new Noise(spec.seed, `idle/${node.id}`);
+    }
+    if (springKind) {
+      springSlot = springs.length;
+      springs.push(d.index);
+    }
+
+    let pos: PosTrack | null = null;
+    let rot: RotTrack | null = null;
+    let scale: ScaleTrack | null = null;
+    let linkTrack: LinkTrack | null = null;
+    try {
+      if (isPlaced(node)) {
+        pos = buildPosTrack(node.id, node.at, moves.get(d.index) ?? []);
+        rot = buildRotTrack(node.id, node.rotation, turns.get(d.index) ?? []);
+      }
+      if (isPlaced(node) || node.type === 'label') {
+        scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? []);
+      }
+      if (node.type === 'link') {
+        linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? []);
+      }
+    } catch (e) {
+      fail(`${where}: ${(e as Error).message}`);
+    }
+
+    return {
+      index: d.index,
+      id: node.id,
+      node,
+      layer: d.layer,
+      parent: d.parent,
+      pos,
+      rot,
+      scale,
+      link: linkTrack,
+      bodySlot,
+      springSlot,
+      emitterSlot,
+      springKind,
+      springParams: springSpec ? springParams(springSpec) : null,
+      fromIndex,
+      toIndex,
+      targetIndex,
+      lookAtIndex,
+      attachIndex,
+      colors,
+      particleColors,
+      idleNoise,
+      blinks,
+    };
+  });
+
+  // 4. Layers.
+  const cam = spec.camera;
+  const layers: CLayer[] = spec.layers.map((layer, li): CLayer => {
+    const depth = layer.depth;
+    return {
+      spec: layer,
+      nodes: layerNodes[li]!,
+      parallax: layer.parallax ?? 1 / (1 + depth),
+      blur: layer.blur ?? (depth >= 0 ? cam.focus.far * depth : cam.focus.near * -depth),
+      tint: layer.tint ?? (depth > 0 ? Math.min(0.62, 0.3 * depth) : 0),
+    };
+  });
+
+  const byId = new Map<string, CNode>();
+  for (const n of nodes) byId.set(n.id, n);
+
+  // Text does not influence the bake, so the tables stay out of the hash; a
+  // translation re-renders without re-baking.
+  const sceneHash = hashOf({ ...spec, palette: spec.palette.spec, strings: null });
+
+  return {
+    spec,
+    frames,
+    nodes,
+    byId,
+    layers,
+    bodies,
+    springs,
+    emitters,
+    light: lightVector(spec.light),
+    cameraNoise: new Noise(spec.seed, 'camera'),
+    background: {
+      inner: resolveColorOrFail(palette, spec.background.inner, `${where} background.inner`),
+      outer: resolveColorOrFail(palette, spec.background.outer, `${where} background.outer`),
+    },
+    atmosphere: resolveColorOrFail(palette, spec.atmosphere, `${where} atmosphere`),
+    stringKeys: [...stringKeys],
+    sceneHash,
+  };
+}
+
+function resolveColorOrFail(palette: Palette, value: string, what: string): string {
+  try {
+    return resolveColor(palette, value);
+  } catch (e) {
+    return fail(`${what}: ${(e as Error).message}`);
+  }
+}
