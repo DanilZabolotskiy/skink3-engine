@@ -3,9 +3,8 @@
 // so that a shot with hundreds of nodes stays readable) and written as JSON
 // (complete).
 //
-// The report is built to grow: a finding is plain data with a kind, a subject
-// and a measurement, and `kinds` lists what each kind means. Physics checks
-// will add kinds and findings; nothing else here has to change.
+// Whether the simulation itself is sound is the question of the physics review
+// (physics.ts); its report has the same form and its own kinds of findings.
 
 import { FPS } from '../core/time.ts';
 import type { Bake } from '../physics/cache.ts';
@@ -81,7 +80,8 @@ export function buildReport(series: MotionSeries): MotionReport {
   const all = [...detectMotion(series), ...springs.findings, ...detectDead(series)];
   all.sort((a, b) => b.severity - a.severity || (a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0) || a.from - b.from || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0));
 
-  const intended = c.spec.intended ?? [];
+  // Exceptions to the physics review are honoured, and counted as unused, by that review.
+  const intended = (c.spec.intended ?? []).filter((x) => (MOTION_FINDING_KINDS as readonly string[]).includes(x.kind));
   const taken: Finding[][] = intended.map(() => []);
   const findings: Finding[] = [];
   for (const f of all) {
@@ -92,7 +92,7 @@ export function buildReport(series: MotionSeries): MotionReport {
   const honoured: HonouredException[] = [];
   const unused: IntendedSpec[] = [];
   intended.forEach((x, i) => {
-    if (taken[i]!.length > 0) honoured.push({ nodes: x.nodes, kind: x.kind, reason: x.reason, findings: taken[i]! });
+    if (taken[i]!.length > 0) honoured.push({ nodes: x.nodes, kind: x.kind as MotionFindingKind, reason: x.reason, findings: taken[i]! });
     else unused.push(x);
   });
 

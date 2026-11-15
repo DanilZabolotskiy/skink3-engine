@@ -1,9 +1,11 @@
 // Pre-render checks of a shot: palette laws, string tables, text fit in every
-// language, and, when asked for, the motion review in short form. `tsc` and
-// the unit tests are separate steps (see the npm scripts).
+// language, and, when asked for, the motion review and the physics review in
+// short form. `tsc` and the unit tests are separate steps (see the npm scripts).
 
 import { checkPalette } from '../look/palette.ts';
 import type { Bake } from '../physics/cache.ts';
+import { formatPhysicsShort } from '../review/physics-report.ts';
+import { reviewPhysics, type PhysicsReport } from '../review/physics.ts';
 import { formatMotionShort, reviewMotion, type MotionReport } from '../review/report.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { checkStrings, languagesOf } from '../text/strings.ts';
@@ -27,11 +29,15 @@ export interface CheckReport {
   readonly languages: readonly string[];
   /** The motion review, when it was asked for. Its findings are warnings: they never fail the checks. */
   readonly motion: MotionReport | null;
+  /** The physics review, when it was asked for. Its findings are warnings too. */
+  readonly physics: PhysicsReport | null;
 }
 
 export interface CheckOptions {
   /** Also run the motion review (jumps, ease, speed, springs, dead areas); default false. */
   readonly motion?: boolean;
+  /** Also run the physics review (overlap, tunnelling, escapes, jitter, piles that do not settle, energy, unseen hits); default false. */
+  readonly physics?: boolean;
 }
 
 /** Runs every scene-level check. `langs` defaults to all languages of the string tables. */
@@ -43,7 +49,8 @@ export function runChecks(c: CompiledShot, bake: Bake, langs?: readonly string[]
   const fit = checkTextFit(c, bake, languages);
   for (const i of fit.issues) issues.push({ check: 'text-fit', severity: i.severity, message: `${i.kind}: ${i.message}` });
   const motion = opts.motion ? reviewMotion(c, bake, { lang: languages[0] ?? languagesOf(c.spec.strings)[0]! }).report : null;
-  return { ok: !issues.some((i) => i.severity === 'error'), issues, labels: fit.stats, languages, motion };
+  const physics = opts.physics ? reviewPhysics(c, bake) : null;
+  return { ok: !issues.some((i) => i.severity === 'error'), issues, labels: fit.stats, languages, motion, physics };
 }
 
 export function formatReport(report: CheckReport): string {
@@ -63,7 +70,8 @@ export function formatReport(report: CheckReport): string {
     for (const i of list) lines.push(`  ${i.severity === 'error' ? '-' : '~'} ${i.severity === 'warning' ? 'warning: ' : ''}${i.message}`);
   }
   if (report.motion) lines.push(...formatMotionShort(report.motion));
-  const warnings = report.issues.filter((i) => i.severity === 'warning').length + (report.motion?.findings.length ?? 0);
+  if (report.physics) lines.push(...formatPhysicsShort(report.physics));
+  const warnings = report.issues.filter((i) => i.severity === 'warning').length + (report.motion?.findings.length ?? 0) + (report.physics?.findings.length ?? 0);
   lines.push(report.ok ? `checks passed${warnings > 0 ? ` with ${warnings} warning(s)` : ''}` : 'checks FAILED');
   return lines.join('\n');
 }

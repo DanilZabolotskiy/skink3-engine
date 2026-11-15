@@ -47,6 +47,7 @@ node bin/skink3.mjs strip examples/demo/scene.ts --from 388 --count 24 --step 3 
 node bin/skink3.mjs render examples/demo/scene.ts                # 15 s, 1080p60   -> out/demo/demo_en.mp4
 node bin/skink3.mjs render examples/demo/scene.ts --lang x-long  # the same shot in the pseudo-locale
 node bin/skink3.mjs motion examples/demo/scene.ts --pictures     # motion review  -> text, out/demo/motion.json, trails and graphs of the worst findings
+node bin/skink3.mjs physics examples/demo/scene.ts --pictures    # physics review -> text, out/demo/physics.json, close-ups of the worst findings
 node bin/skink3.mjs trail examples/demo/scene.ts --node n2 --time 6.4,8   # ghost trail of a node    -> out/demo/trail_n2_00384-00480.png
 node bin/skink3.mjs graph examples/demo/scene.ts --node n2       # speed graph of a node          -> out/demo/graph_n2.png
 ```
@@ -87,7 +88,7 @@ Scene modules import from the package name (`import { shot, circle } from 'skink
 
 The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit.
 
-The motion review of the demo (`skink3 motion`) reports five findings, all on the creature's antennae, which swing on springs. While the creature pops in they point into its body and snap out within two frames (at 4.07 s and 4.22 s), and at the end of its fast move one of them whips round at 1.5 times the size of its tip per frame (at 11.0 s). These are real defects of the shot as it stands. They are left in place so that the demo's frames stay a fixed reference, and they show what the review finds without anyone watching the video.
+Neither the motion review (`skink3 motion`) nor the physics review (`skink3 physics`) has a finding on the demo. The motion review once had five, all on the creature's antennae, which swing on springs: they snapped out of its body while it popped in and whipped round at the end of its fast move. That was a defect of the spring, found without anyone watching the video, and it is fixed: a swaying stick is now a spring on its angle, which cannot jump and cannot turn more than 57° from its rest direction. To see what the two reviews report, run them on `test/fixtures/defects/scene.ts`, a small shot with planted defects.
 
 The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 30 frames, one every 0.5 s, see [docs/METRICS.md](docs/METRICS.md#short-clips)):
 
@@ -133,22 +134,22 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/camera` | drift, push-in, parallax view of a depth layer |
 | `src/text` | string tables, bundled font, auto-fit layout, label geometry |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
-| `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review in short form (warnings) |
-| `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs |
+| `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
+| `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
 | `src/cli`, `bin/` | the `skink3` command |
 | `examples/` | the demo shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
 | `assets/fonts/` | the bundled font family with its licence |
 | `bench/` | drawing and physics benchmarks |
 | `tools/metrics/` | style and motion metrics for any video — see [docs/METRICS.md](docs/METRICS.md) |
-| `docs/` | principles, architecture, stack, scene authoring, motion review, metrics |
+| `docs/` | principles, architecture, stack, scene authoring, motion review, physics review, metrics |
 
 ## Roadmap
 
 | Phase | Scope | Done when | State |
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
-| 1 | Core picture: more node types, palettes from a mood, camera (spring follow, zoom through scales), bubbles, titles and counters, full script coverage with fallback fonts, transitions, physics sanity as checks (the motion review is built) | three reference shots (dark, light, microscopic) | next |
+| 1 | Core picture: more node types, palettes from a mood, camera (spring follow, zoom through scales), bubbles, titles and counters, full script coverage with fallback fonts, transitions (the motion review and the physics review are built) | three reference shots (dark, light, microscopic) | next |
 | 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search, sound from impact events | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
 | 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language | a complete video | planned |

@@ -8,11 +8,11 @@
 // The result is keyed by engine version, physics version, scene hash and seed.
 
 import { existsSync } from 'node:fs';
-import { SecondOrder } from '../core/dynamics.ts';
+import { SecondOrder, SWAY_MAX_RATE, swayLean, swayTurn } from '../core/dynamics.ts';
 import { DEG, type Vec2 } from '../core/math.ts';
-import { SIM_DT, SUBSTEPS } from '../core/time.ts';
+import { FPS, SIM_DT, SUBSTEPS } from '../core/time.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { computeWorld, posesFromBake, type PoseSource } from '../scene/evaluate.ts';
+import { computeWorld, posesFromBake, swayDirection, type PoseSource } from '../scene/evaluate.ts';
 import { engineVersion, physicsVersion } from '../version.ts';
 import {
   Bake,
@@ -84,6 +84,8 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
   const springs = new Float32Array(frames * nSprings * SPRING_STRIDE);
   const systems: (SecondOrder | null)[] = new Array<SecondOrder | null>(nSprings).fill(null);
   const lastRest: Vec2[] = new Array<Vec2>(nSprings).fill([0, 0]);
+  /** Swaying sticks: the lean the spring was following at the previous frame. */
+  const swayTarget = new Float64Array(nSprings);
   const stepping: PoseSource = {
     body: bodyPose,
     spring: (slot, frame, rest) => {
@@ -108,6 +110,42 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
       springs[o + 1] = value[1];
       // Hand back exactly what was stored, so that parents and children agree with a later read.
       return [springs[o]!, springs[o + 1]!];
+    },
+    // A swaying stick is a spring on its angle. It leans against the sideways
+    // travel of its free end, by a bounded amount (swayLean), and the spring
+    // follows that lean: so the stick lags when its parent moves or turns and
+    // swings back, overshoots and settles when the parent stops. The angle is
+    // the state, so it cannot jump; it is levelled off (swayTurn), so it cannot
+    // whip round; and the lean it follows changes at a limited rate, so it is
+    // not flicked, whatever the parent does. What is stored is the place of
+    // the free end, at the lever's length from the pivot.
+    sway: (slot, frame, pivot, rest, lever, shown) => {
+      const params = c.nodes[c.springs[slot]!]!.springParams!;
+      const tip: Vec2 = [pivot[0] + Math.cos(rest) * lever, pivot[1] + Math.sin(rest) * lever];
+      let sys = systems[slot];
+      let lean = 0;
+      if (!sys || !shown) {
+        // At rest at the start, and while the stick has no size: what happens unseen leaves no swing behind.
+        sys = new SecondOrder(params, [0]);
+        systems[slot] = sys;
+        swayTarget[slot] = 0;
+      } else {
+        const prev = lastRest[slot]!;
+        const lateral = (-(tip[0] - prev[0]) * Math.sin(rest) + (tip[1] - prev[1]) * Math.cos(rest)) * FPS;
+        const from = swayTarget[slot]!;
+        // The wanted lean changes no faster than SWAY_MAX_RATE: a jump of the parent is taken over a few frames.
+        const most = SWAY_MAX_RATE / FPS;
+        const target = Math.max(from - most, Math.min(from + most, swayLean(params, lateral, lever)));
+        let y = sys.value;
+        for (let k = 1; k <= SUBSTEPS; k++) y = sys.step(SIM_DT, [from + ((target - from) * k) / SUBSTEPS]);
+        lean = swayTurn(y[0]!);
+        swayTarget[slot] = target;
+      }
+      lastRest[slot] = tip;
+      const o = (frame * nSprings + slot) * SPRING_STRIDE;
+      springs[o] = pivot[0] + Math.cos(rest + lean) * lever;
+      springs[o + 1] = pivot[1] + Math.sin(rest + lean) * lever;
+      return swayDirection(springs[o]!, springs[o + 1]!, pivot, rest);
     },
   };
   if (nSprings > 0) {

@@ -82,6 +82,46 @@ export class SecondOrder {
   }
 }
 
+/** The farthest a swaying stick turns away from its rest direction, in radians (about 57 degrees). */
+export const SWAY_MAX_LEAN = 1;
+
+/**
+ * The fastest the lean a swaying stick wants may change, in radians per second.
+ * A parent that jumps, or reverses within a frame, asks for the new lean over a
+ * few frames instead of at once, so the stick swings over and is not flicked.
+ * An eased move asks for less than half of this.
+ */
+export const SWAY_MAX_RATE = 6;
+
+/** Levels an angle off at SWAY_MAX_LEAN: unchanged while small, never beyond the limit. */
+function levelOff(angle: number): number {
+  return SWAY_MAX_LEAN * Math.tanh(angle / SWAY_MAX_LEAN);
+}
+
+/**
+ * Where a swaying stick wants to lean: the angle (radians) by which its free
+ * end trails when that end travels sideways at `lateralSpeed` (units per
+ * second, positive toward a positive turn) on a lever of `lever` units.
+ *
+ * The free end trails by the distance it travels in 1 / (2 pi f) seconds, so a
+ * softer spring leans more; the angle is that distance over the lever, levelled
+ * off, so no motion of the parent, however sudden, asks for more than the
+ * limit. The spring then follows this angle with its f, z and r.
+ */
+export function swayLean(params: SpringParams, lateralSpeed: number, lever: number): number {
+  const trail = lateralSpeed / (2 * Math.PI * params.f);
+  return 0 - levelOff(trail / Math.max(lever, 1e-6));
+}
+
+/**
+ * The turn of a swaying stick for the state of its spring. The spring may pass
+ * the lean it follows (that is its overshoot); levelling its state off keeps
+ * the stick within SWAY_MAX_LEAN of its rest direction whatever f, z and r are.
+ */
+export function swayTurn(state: number): number {
+  return levelOff(state);
+}
+
 /**
  * Closed-form step response of an underdamped spring that starts at 0 with zero
  * velocity and settles at 1, overshooting once by `overshoot` (0..0.5) at

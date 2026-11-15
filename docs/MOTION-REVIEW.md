@@ -24,25 +24,32 @@ skink3 check  <scene>                               also shows the findings in s
 - `check` shows the count by kind and the worst five findings, and points to `motion`. Generated nodes with the same kind of finding take one line. They never fail the checks.
 
 ```
-node bin/skink3.mjs motion examples/demo/scene.ts --pictures
+node bin/skink3.mjs motion examples/demo/scene.ts
+node bin/skink3.mjs motion test/fixtures/defects/scene.ts --pictures
 node bin/skink3.mjs trail examples/demo/scene.ts --node n2 --time 6.4,8
 node bin/skink3.mjs graph examples/demo/scene.ts --node buddy-ant-l --time 3.5,6
 node bin/skink3.mjs graph examples/demo/scene.ts --camera
 ```
 
+The demo shot has no findings. `test/fixtures/defects/scene.ts` is a small shot with defects planted in it, kept for the tests of the command line.
+
 ## The report
 
 ```
-motion demo: 900 frames (15.00 s); 64 placed nodes, 17 of them rigid bodies, 8 springs, 8 emitters, 7 links
-camera: median drift 0.72 px per frame at depth 0, zoom 1 to 1.07
-5 warning(s): 4 jump, 1 too-fast
+motion defects: 240 frames (4.00 s); 5 placed nodes, 4 of them rigid bodies, 0 springs, 0 emitters, 0 links
+camera: median drift 0.00 px per frame at depth 0, zoom 1 to 1
+1 warning(s): 1 abrupt-start
 
-buddy-ant-r (capsule, sway spring, in "buddy")
-  jump          f253-255 (4.22-4.25 s)  rotation (travel of its edge): turned by 196.4 px within two frames (253 to 255); the steps around are at most 3.4 px  [196.351 against 4 px in two frames]
-  usual fix for jump: look at the keys at that moment: ...
+mover (circle)
+  abrupt-start  f60-62 (1.00-1.03 s)  position: from rest to 29.5 px per frame within two frames (frames 60-62), 100 % of the peak speed of the move (limit 90 %)  [29.503 against 3 px per frame]
+  usual fix for abrupt-start: give the move an ease-in: ...
+```
 
+A shot with springs ends with one line per spring, as the demo does:
+
+```
 springs: 8 spring-driven node(s), 8 responded
-  buddy-ant-l (sway, f 2.1, z 0.22, r 0): 3 response(s); at most: lag 194.4 px, overshoot 80.7 px, 7 visible swing(s), swinging for 1.37 s, settled after 1.67 s
+  buddy-ant-r (sway, f 2.1, z 0.22, r 0): 3 response(s); at most: lag 49.0 px, overshoot 18.6 px, 4 visible swing(s), swinging for 0.95 s, settled after 1.27 s
 ```
 
 Every finding has:
@@ -92,7 +99,7 @@ Things that are legitimate and are not flagged:
 
 A rigid body gets its place and its turn from the solver. A contact changes its velocity within a frame, a neighbour nudges it a few pixels at once, and a body that rolls at constant speed is a flow. So the place and the turn of a body are checked for strobing speed only. Its size and its opacity are animated by the timeline (`popIn`, `bump`, `fadeTo`) and are checked like those of any node. Children of a body are judged on their own tracks.
 
-Whether the simulation itself is sound is a different question: bodies that sink into each other, jitter at rest, energy that appears from nowhere, tunnelling, fall speed against size. Those are physics checks. They are not built; the report has room for them (a finding is plain data with a kind, and kinds can be added).
+Whether the simulation itself is sound is a different question: bodies that sink into each other, jitter at rest, energy that appears from nowhere, tunnelling, escapes. That is the physics review, a sibling of this one with a report of the same form: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
 
 ### How things are measured
 
@@ -212,6 +219,7 @@ export default shot({
 - An exception that covers nothing is reported as **unused**: the defect is gone, or the exception names the wrong node or kind. Remove it.
 - An exception must name a node that exists, or the shot does not compile.
 - It changes nothing in the picture and nothing in the bake.
+- The same `intended()` marks findings of the physics review. Each review honours, and counts as unused, the exceptions of its own kinds only.
 
 Mark an exception on the subject the finding names. A defect of a parent is reported on the parent.
 
@@ -226,7 +234,7 @@ Mark an exception on the subject the finding names. A defect of a parent is repo
 
 ## What these tools cannot tell
 
-- **Whether the physics is plausible.** Bodies that sink into each other, jitter at rest, tunnelling and wrong weight are not looked at.
+- **Whether the simulation is sound.** Bodies that sink into each other, jitter at rest, tunnelling and escapes are the physics review's findings ([PHYSICS-REVIEW.md](PHYSICS-REVIEW.md)). Wrong weight, a fall too fast or too slow for its size, is looked at by neither.
 - **Taste.** Timing against the narration, whether a pause is too long for the story, whether a move is elegant. A clean report means there is no mechanical defect; it does not mean the motion is good.
 - **Sound.**
 - **What is hidden behind what.** The review does not know that a node is covered by another one. A jump or a start behind a cover is still reported; mark it as intended.

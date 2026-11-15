@@ -28,14 +28,16 @@ export type {
   LabelSide,
   LayerSpec,
   LinkNode,
+  FindingKind,
   MotionFindingKind,
+  PhysicsFindingKind,
   PhysicsSpec,
   SceneNode,
   ShapeNode,
   ShotSpec,
   TurbulenceSpec,
 } from './scene/types.ts';
-export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
+export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, PHYSICS_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
 export type { Vec2 } from './core/math.ts';
 
 // --- Core helpers a scene may use to generate content ----------------------
@@ -56,8 +58,12 @@ export { FINDING_KINDS, type Finding, type Channel } from './review/detect.ts';
 export type { SpringReport, SpringResponse } from './review/springs.ts';
 export { THRESHOLDS, type Threshold, type ThresholdName } from './review/thresholds.ts';
 export { renderTrail, type TrailOptions, type TrailResult } from './review/trail.ts';
-export { renderGraph, type GraphOptions, type GraphResult } from './review/graph.ts';
+export { renderGraph, type GraphMark, type GraphOptions, type GraphResult } from './review/graph.ts';
 export { motionPictures, type MotionPicture } from './review/pictures.ts';
+export { reviewPhysics, PHYSICS_KINDS, type PhysicsReport, type PhysicsFinding, type HonouredPhysicsException } from './review/physics.ts';
+export { formatPhysicsReport, formatPhysicsShort, physicsReportJson } from './review/physics-report.ts';
+export { PHYSICS_THRESHOLDS, type PhysicsThresholdName } from './review/physics-thresholds.ts';
+export { physicsPictures, renderCloseUp, type PhysicsPicture, type CloseUpOptions } from './review/physics-pictures.ts';
 export { drawFrame, frameRaw, framePng, heightFor, rendererInfo, type RenderOptions } from './render/frame.ts';
 export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './render/sheet.ts';
 export { renderParallel, type RenderJob, type RenderResult } from './render/parallel.ts';

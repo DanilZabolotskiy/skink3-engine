@@ -18,7 +18,7 @@ import {
 } from '../shape/geometry.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
-import { MOTION_FINDING_KINDS } from './types.ts';
+import { FINDING_KINDS_ALL } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -32,7 +32,7 @@ import type {
   LabelSide,
   LayerSpec,
   LinkNode,
-  MotionFindingKind,
+  FindingKind,
   PhysicsSpec,
   SceneNode,
   ShapeNode,
@@ -547,18 +547,20 @@ export const PHYSICS_DEFAULTS: PhysicsSpec = {
 };
 
 /**
- * Marks a finding of the motion review as intended: `skink3 motion` and
- * `skink3 check` then leave it out of their warnings and list it as honoured,
- * with the reason. `nodes` is one id or several; for the camera use
- * "(camera)", for a hold of the whole frame "(frame)", for a region
- * "(frame:top-left)". `window` limits it to findings between two moments.
+ * Marks a finding of the motion review or of the physics review as intended:
+ * `skink3 motion`, `skink3 physics` and `skink3 check` then leave it out of
+ * their warnings and list it as honoured, with the reason. `nodes` is one id or
+ * several; for the camera use "(camera)", for a hold of the whole frame
+ * "(frame)", for a region "(frame:top-left)". `window` limits it to findings
+ * between two moments.
  *
  *   intended('door', 'abrupt-start', 'it is kicked open')
  *   intended(sparkIds, 'too-fast', 'sparks are meant to streak', { from: 4, to: 6 })
+ *   intended(crumbIds, 'escape', 'the crumbs fall out of the picture')
  */
 export function intended(
   nodes: string | readonly string[],
-  kind: MotionFindingKind,
+  kind: FindingKind,
   reason: string,
   window: { from?: number; to?: number } = {},
 ): IntendedSpec {
@@ -567,7 +569,7 @@ export function intended(
   if (!Array.isArray(list) || list.length === 0 || !list.every((n) => typeof n === 'string' && n.length > 0)) {
     fail(where, 'the first argument is a node id or a non-empty array of node ids');
   }
-  if (!MOTION_FINDING_KINDS.includes(kind)) fail(where, `unknown kind of finding (use one of: ${MOTION_FINDING_KINDS.join(', ')})`);
+  if (!FINDING_KINDS_ALL.includes(kind)) fail(where, `unknown kind of finding (use one of: ${FINDING_KINDS_ALL.join(', ')})`);
   if (typeof reason !== 'string' || reason.trim().length < 3) fail(where, 'give the reason as the third argument: one line that says why this is intended');
   checkKeys(`${where} window`, window, ['from', 'to']);
   const from = window.from === undefined ? null : num(where, 'from', window.from, 0, 3600);
@@ -614,7 +616,7 @@ export function shot(o: {
     focus?: { far?: number; near?: number };
   };
   physics?: Partial<PhysicsSpec>;
-  /** Intended exceptions to the motion review, made with intended(); nested arrays are flattened. */
+  /** Intended exceptions to the motion review and the physics review, made with intended(); nested arrays are flattened. */
   intended?: Nested<IntendedSpec>;
 }): ShotSpec {
   const where = `shot("${o?.id}")`;

@@ -21,12 +21,32 @@ export interface PoseSource {
   body(slot: number, frame: number): { x: number; y: number; rot: number };
   /** Position of a spring-driven point at a frame; `rest` is where it would be without the spring. */
   spring(slot: number, frame: number, rest: Vec2): Vec2;
+  /**
+   * Direction (radians) of a swaying stick at a frame. `pivot` is its fixed
+   * end, `rest` its direction without the spring, `lever` the distance from the
+   * pivot to its free end, and `shown` is false while the stick has no size.
+   */
+  sway(slot: number, frame: number, pivot: Vec2, rest: number, lever: number, shown: boolean): number;
+}
+
+/**
+ * The direction of a swaying stick from the baked place of its free end: the
+ * angle from the pivot to that place, taken on the turn nearest to `rest`, so
+ * that it never wraps away from the authored rotation.
+ */
+export function swayDirection(tipX: number, tipY: number, pivot: Vec2, rest: number): number {
+  const dx = tipX - pivot[0];
+  const dy = tipY - pivot[1];
+  if (Math.hypot(dx, dy) <= 1e-6) return rest;
+  const a = Math.atan2(dy, dx);
+  return a + 2 * Math.PI * Math.round((rest - a) / (2 * Math.PI));
 }
 
 export function posesFromBake(bake: Bake): PoseSource {
   return {
     body: (slot, frame) => ({ x: bake.bodyX(slot, frame), y: bake.bodyY(slot, frame), rot: bake.bodyRot(slot, frame) }),
     spring: (slot, frame) => [bake.springX(slot, frame), bake.springY(slot, frame)],
+    sway: (slot, frame, pivot, rest) => swayDirection(bake.springX(slot, frame), bake.springY(slot, frame), pivot, rest),
   };
 }
 
@@ -78,13 +98,9 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       const p = poses.spring(n.springSlot, frame, [xf.x, xf.y]);
       xf = { ...xf, x: p[0], y: p[1] };
     } else if (n.springKind === 'sway' && node.type === 'shape' && node.shape.kind === 'capsule') {
-      // The free end is the spring-driven point; the stick turns to reach it.
+      // The stick keeps its first end and its length; the spring only turns it.
       const lever = (node.shape.length - 2 * node.shape.r) * Math.max(xf.scale, 0.05);
-      const rest: Vec2 = [xf.x + Math.cos(xf.rot) * lever, xf.y + Math.sin(xf.rot) * lever];
-      const tip = poses.spring(n.springSlot, frame, rest);
-      const dx = tip[0] - xf.x;
-      const dy = tip[1] - xf.y;
-      if (Math.hypot(dx, dy) > 1e-6) xf = { ...xf, rot: Math.atan2(dy, dx) };
+      xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
     out[n.index] = xf;
   }

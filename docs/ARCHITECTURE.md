@@ -13,7 +13,8 @@ scene (TypeScript) ──► look ──► motion ──► physics bake ──
                                                 by versions
         ▼
 checks (before render): types, palette laws, string tables, text fit per language
-review (no render needed): the motion of every node as findings, ghost trails, speed graphs
+review (no render needed): the motion of every node as findings, ghost trails, speed graphs;
+                           the soundness of the simulation as findings, close-ups
 ```
 
 ## Modules
@@ -30,9 +31,9 @@ review (no render needed): the motion of every node as findings, ghost trails, s
 | `text` | per-language string tables; one bundled OFL family (Latin, Latin Extended, Cyrillic, Vietnamese) registered under the engine's own family name; auto-fit layout (wrap at spaces, balance, shrink, report overflow); label geometry | shaping and fallback fonts for all scripts (CJK, Arabic, Devanagari…), right-to-left text, bubbles, titles, counters |
 | `render` | compositing on Skia GPU with CPU fallback: background gradient, glow lift, layers back to front with blur by depth and atmospheric perspective, group opacity (a faded subtree is drawn as one picture, then faded), tapered pulses, links that glow, two-tone particles, halos, vignette; raw RGBA out; stills, strips and contact sheets; ffmpeg encoding; parallel chunk workers with progress, concatenation, and a clean stop when a worker fails | sub-frame motion blur, transitions, 4K master presets |
 | `audio` | — (contact events are recorded by the bake for later use) | narration import, sound effects from physics and UI events, music bed with ducking, mixdown |
-| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning); the findings of the motion review in short form, as warnings | physics sanity (interpenetration, jitter at rest, tunnelling, escapes, NaN) as pre-render checks |
-| `review` | the motion review, for reviewers that cannot watch a video: the series of every node, link, emitter, spring and of the camera at every frame, in the space of the layer and on screen; findings from it (jump, abrupt start and stop, mechanical move, strobing speed, springs that ring or never bounce, dead areas of the frame) with every threshold in one file; intended exceptions marked in the scene; a report as capped text and complete JSON; ghost trails and speed graphs drawn on the engine's canvas | calibration of the thresholds against reference videos; physics findings in the same report |
-| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`, `motion`, `trail`, `graph`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
+| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning); the findings of the motion review and of the physics review in short form, as warnings | — |
+| `review` | the motion review, for reviewers that cannot watch a video: the series of every node, link, emitter, spring and of the camera at every frame, in the space of the layer and on screen; findings from it (jump, abrupt start and stop, mechanical move, strobing speed, springs that ring or never bounce, dead areas of the frame) with every threshold in one file; intended exceptions marked in the scene; a report as capped text and complete JSON; ghost trails and speed graphs drawn on the engine's canvas. The physics review, from the bake: the distance and depth of every pair of colliders worked out in plain arithmetic, apart from the physics library; findings (overlap, tunnelling through a wall or a gap, escape, jitter at rest, a pile that does not settle, speed from nowhere, a hit by a body that is not drawn, broken numbers) with every threshold in one file; the same intended exceptions; a report of the same form; close-ups with the bodies ringed | calibration of the thresholds against reference videos; the physics review for soft bodies, ropes, fluids and joints when those are built |
+| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`, `motion`, `trail`, `graph`, `physics`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
 
 Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`; `scene` uses all of these plus `text` and `camera`; `physics` bakes what `scene` describes; `render` draws what `scene` evaluates; `review` reads what `scene` evaluates and draws its pictures with `render`; `checks` and `cli` sit on top.
 
@@ -56,6 +57,17 @@ A reviewer that cannot watch a video still has to judge motion. The review answe
 3. **Show.** The report is printed as capped text and written as complete JSON. A ghost trail draws chosen nodes at every k-th frame over a dimmed frame; a speed graph plots speed and whatever else changes over time, with the findings marked.
 
 The same scene always gives the same report and the same pictures. Guide: [MOTION-REVIEW.md](MOTION-REVIEW.md).
+
+## The physics review
+
+Whether the simulation is sound is answered from the bake, in one pass over the frames:
+
+1. **Place.** Every rigid body gets the collider the world gave it: a convex core (a point, a segment, a polygon) and a radius around it, at the baked pose of the frame. The review builds this geometry itself and does not ask the physics library; a test holds the two against each other.
+2. **Pair.** Bodies whose bounding circles are near are found by a sweep along x; for each pair the distance, or the depth, of the two colliders is worked out. From it come the overlaps, the piles (bodies that touch) and what a body can have touched within a frame.
+3. **Detect.** Detectors read the poses and the pairs: an overlap that lasts, a centre that crosses a fixed body or a gap, a body below everything, swings of a body at rest, a pile that travels at the end, speed that nothing in touch can have given, a path bent by a body that is not drawn, numbers that are not numbers. Every threshold is in `src/review/physics-thresholds.ts`. What is not seen is not reported.
+4. **Show.** The report has the form of the motion report. A close-up draws a few frames of the place, enlarged, with the bodies ringed.
+
+It is synchronous and takes a fraction of a second on a shot with five hundred bodies, so it runs in every `skink3 check`. When the physics of the engine changes, this review changes with it in the same piece of work. Guide: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
 
 ## The bake cache
 

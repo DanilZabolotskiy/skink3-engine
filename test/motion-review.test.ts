@@ -537,6 +537,7 @@ test('cli: motion, trail and graph write their files under out/<shot id>, and ch
   const root = fileURLToPath(new URL('..', import.meta.url));
   const cli = join(root, 'bin', 'skink3.mjs');
   const demo = join(root, 'examples', 'demo', 'scene.ts');
+  const defects = join(root, 'test', 'fixtures', 'defects', 'scene.ts');
   const dir = mkdtempSync(join(tmpdir(), 'skink3-motion-'));
   const run = (...args: string[]): string => {
     const r = spawnSync(process.execPath, [cli, ...args, '--cache', join(dir, 'cache'), '--cpu'], { cwd: dir, encoding: 'utf8' });
@@ -545,16 +546,22 @@ test('cli: motion, trail and graph write their files under out/<shot id>, and ch
   };
   try {
     // Findings are warnings: the command succeeds, prints them and writes the JSON report.
-    const text = run('motion', demo, '--pictures', '--top', '2');
-    assert.match(text, /^motion demo: 900 frames \(15\.00 s\); 64 placed nodes, 17 of them rigid bodies, 8 springs, 8 emitters, 7 links\n/);
-    assert.match(text, /\n\d+ warning\(s\): /);
-    assert.match(text, /\nsprings: 8 spring-driven node\(s\), 8 responded\n/);
-    const json = JSON.parse(readFileSync(join(dir, 'out', 'demo', 'motion.json'), 'utf8')) as MotionReport;
-    assert.equal(json.shot, 'demo');
+    // The demo has no findings; a small shot with planted defects has one.
+    const text = run('motion', defects, '--pictures', '--top', '2');
+    assert.match(text, /^motion defects: 240 frames \(4\.00 s\); 5 placed nodes, 4 of them rigid bodies, 0 springs, 0 emitters, 0 links\n/);
+    assert.match(text, /\n1 warning\(s\): 1 abrupt-start\n/);
+    const json = JSON.parse(readFileSync(join(dir, 'out', 'defects', 'motion.json'), 'utf8')) as MotionReport;
+    assert.equal(json.shot, 'defects');
     assert.equal(text.includes(`${json.findings.length} warning(s)`), true);
-    const pictures = readdirSync(join(dir, 'out', 'demo', 'motion')).sort();
-    assert.equal(pictures.length, 4, pictures.join(', '));
-    assert.ok(pictures.every((f) => /^0[12]_[A-Za-z0-9_.-]+_(trail|graph)\.png$/.test(f)), pictures.join(', '));
+    const pictures = readdirSync(join(dir, 'out', 'defects', 'motion')).sort();
+    assert.deepEqual(pictures, ['01_mover_graph.png', '01_mover_trail.png']);
+
+    // The demo is clean, and its springs are listed.
+    const clean = run('motion', demo, '--pictures');
+    assert.match(clean, /^motion demo: 900 frames \(15\.00 s\); 64 placed nodes, 17 of them rigid bodies, 8 springs, 8 emitters, 7 links\n/);
+    assert.match(clean, /\nno warnings\n/);
+    assert.match(clean, /\nsprings: 8 spring-driven node\(s\), 8 responded\n/);
+    assert.match(clean, /\npictures: none \(no finding on a node, an emitter or the camera\)\n$/);
 
     assert.match(run('trail', demo, '--node', 'n2,n3', '--time', '6.4,8'), /trail of n2, n3: frames 384-480, a ghost every 3 \(33 ghosts\), stage space, \d+x\d+: /);
     assert.ok(existsSync(join(dir, 'out', 'demo', 'trail_n2+n3_00384-00480.png')));
@@ -565,9 +572,10 @@ test('cli: motion, trail and graph write their files under out/<shot id>, and ch
     assert.match(run('graph', demo, '--node', 'core', '--time', '0,3'), /graph of core: frames 0-180, /);
     assert.ok(existsSync(join(dir, 'out', 'demo', 'graph_core_00000-00180.png')));
 
-    const check = run('check', demo);
+    const check = run('check', defects);
     assert.match(check, /\nmotion: \d+ warning\(s\): .*\n {2}~ warning: /);
-    assert.match(check, /`skink3 motion <scene>` prints the full report, and with --pictures draws the worst\nchecks passed with \d+ warning\(s\)\n$/);
+    assert.match(check, /`skink3 motion <scene>` prints the full report, and with --pictures draws the worst\nphysics: /);
+    assert.match(check, /\nchecks passed with \d+ warning\(s\)\n$/);
 
     const bad = spawnSync(process.execPath, [cli, 'trail', demo, '--node', 'nobody', '--cache', join(dir, 'cache')], { cwd: dir, encoding: 'utf8' });
     assert.equal(bad.status, 1);

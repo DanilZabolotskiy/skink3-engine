@@ -60,7 +60,12 @@ export interface RigidResult {
   readonly events: ContactEvent[];
 }
 
-function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAPIER.ColliderDesc {
+/**
+ * The collider of a shape, as the world builds it. The physics review works out
+ * the same geometry by itself (src/review/collide.ts), and a test holds the two
+ * against each other: a change here is a change there.
+ */
+export function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAPIER.ColliderDesc {
   switch (shape.kind) {
     case 'circle':
       return R.ColliderDesc.ball(shape.r);

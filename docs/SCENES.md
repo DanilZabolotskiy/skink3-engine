@@ -139,7 +139,7 @@ strings: {
 | `vignette` | 0..1 | `0.5` | darkening of the corners toward `background.outer` |
 | `camera` | see below | see below | drift, push-in, depth of field |
 | `physics` | see below | see below | style of the rigid-body world |
-| `intended` | `intended()[]` | `[]` | findings of the motion review that are what you want, each with a reason (see Motion review) |
+| `intended` | `intended()[]` | `[]` | findings of the motion review or of the physics review that are what you want, each with a reason (see Motion review, Physics review) |
 
 ### Camera
 
@@ -207,7 +207,7 @@ All shape factories take these options:
 | Factory | Extra options | Notes |
 |---|---|---|
 | `circle` | `r` | |
-| `capsule` | `length`, `r`, `origin?`, `sway?` | a stick with round ends along its local x axis; `length` is tip to tip. `origin: 'start'` puts the first end at the node's position (a pivot); `sway` then makes the free end lag on a spring |
+| `capsule` | `length`, `r`, `origin?`, `sway?` | a stick with round ends along its local x axis; `length` is tip to tip. `origin: 'start'` puts the first end at the node's position (a pivot); `sway` then lets the stick lean and swing around it on a spring |
 | `polygon` | `sides`, `r`, `radius?` or `points`, `radius?` | a rounded **convex** polygon: regular (3–12 sides on a circle of radius `r`, corner radius default `0.16 × r`) or from explicit corners |
 | `rect` | `w`, `h`, `radius?` | rounded rectangle centred on its position; `radius` must stay below half the short side (use a capsule for a pill) |
 | `blob` | `r`, `points?` (9), `wobble?` (0.14), `seed?` (1) | a soft irregular outline; the same seed gives the same blob |
@@ -363,7 +363,12 @@ The same intent for a group, each a little later than the one before:
 `f` is how fast it reacts, `z` below 1 overshoots, `r` above 0 reacts at once and below 0 anticipates.
 
 - `follow`: the node's position chases the place it would have without the spring. Give it to a child of a moving node (a satellite, an ornament) or to a label.
-- `sway`: the stick stays attached at its first end and its free end lags, so it swings when its parent moves.
+- `sway`: the stick keeps its first end and its length, and the spring turns it.
+  - It leans against the sideways travel of its free end: back when its parent moves, behind the turn when its parent turns. The free end trails by the distance it travels in `1 / (2π f)` seconds, so a softer spring (a lower `f`) leans more.
+  - When the parent stops, the stick swings back, passes its rest direction and settles, the way `f`, `z` and `r` say.
+  - It never turns more than 57° away from its rest direction, whatever the parent does and whatever the numbers are: a jump of the parent, a pop or a bump cannot make it snap or whip round. At a sustained high speed it leans about 44°.
+  - The lean it follows changes no faster than 6 radians a second, so a parent that jumps or reverses within a frame swings the stick over in a few frames instead of flicking it.
+  - It is at rest when it appears: what the parent does while the stick has no size leaves no swing behind.
 
 Springs are simulated in the bake; nothing about them is left to the renderer.
 
@@ -380,6 +385,9 @@ circle({ id: 'ball', at: [0, -300], r: 30, fill: 'accent.coral', body: { kind: '
 - Bodies must be listed directly in a layer, and all bodies of a shot must be in the same layer.
 - The collider is the shape itself (a blob uses its convex hull).
 - Every contact is recorded with its time, place and peak impulse; `skink3 bake` prints how many. Emitters can react to them with `onContact`. They are also meant for sound, which is not built yet.
+- Put a body where it has room at its release: one that is released inside another body or inside a wall is pushed out over a few frames, in view. The physics review reports it as an overlap that starts at the release.
+- A body is a solid thing only as far as its own shape goes. Children drawn past that shape, and a pop or a bump (which change the picture, not the collider), are not part of what collides.
+- A faded body still collides, and so does a fixed body with `opacity: 0`. That is how a container is drawn by other shapes around invisible walls; draw it where the walls are.
 
 Joints, bodies driven by animation before their release, goal forces and seed search are not built yet.
 
@@ -410,9 +418,9 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 
 A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted. Frames are sampled ten times a second, so a touch shorter than that can be missed.
 
-`skink3 check` also runs the motion review and shows it in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion`. They are warnings and never fail the checks.
+`skink3 check` also runs the motion review and the physics review and shows each in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion` or `skink3 physics`. They are warnings and never fail the checks.
 
-`skink3 render` runs the palette, string and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the motion review.
+`skink3 render` runs the palette, string and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the two reviews.
 
 `npm run check` in the engine repository also runs `tsc --noEmit` and the unit tests.
 
@@ -447,18 +455,54 @@ Two things to know when you write a scene:
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
 
+## Physics review
+
+Whether the rigid bodies behave like solid things is checked from the bake, without drawing. `skink3 physics <scene>` reports, as text and as JSON:
+
+| Finding | What it is |
+|---|---|
+| `overlap` | two bodies sunk into each other deeper than a soft contact gives, for long enough to be seen |
+| `tunnelling` | a body that passed through a fixed body, or through a gap between two fixed bodies that is narrower than itself |
+| `escape` | a body that lay on something and ends below every fixed body, still falling |
+| `jitter` | a body at rest that keeps swinging back and forth by half a pixel or more |
+| `unsettled` | a pile that still travels at the end of the shot, two seconds or more after the last body landed |
+| `energy-spike` | speed that neither gravity nor anything in touch can have given |
+| `unseen-hit` | a seen body whose path is bent by a body that is not drawn: it bounces off nothing |
+| `not-finite` | a baked position that is not a number |
+
+`skink3 physics --pictures` draws the worst findings: a close-up of the frames with the bodies ringed, a ghost trail, or a speed graph. A finding that is what you want is marked with `intended()`, as for the motion review:
+
+```ts
+shot({
+  // ...
+  intended: [intended(crumbIds, 'escape', 'the crumbs fall out of the picture')],
+});
+```
+
+Things to know when you write a scene with bodies:
+
+- Release bodies apart from each other and clear of the walls.
+- Let the walls of a container overlap where they meet. A gap narrower than a body is a place where a loaded pile can press one through.
+- Give a pile time: the review asks for rest two seconds after the last body landed. If the shot must end earlier, the pile may still travel, and that is not reported.
+- A body that is meant to leave the picture and fall forever is reported as an escape only if it lay on something first and is seen leaving. Mark it as intended, or fade it out before it leaves.
+- What is not seen is not reported: a body that is faded out, has no size or is outside the frame.
+- A dynamic body collides from its release on, drawn or not. One that is faded out or has not popped in yet, in the way of bodies that are seen, makes them bounce off nothing.
+
+The full guide, with every threshold, how to read the pictures, and what the review cannot tell: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
+
 ## Command line
 
 ```
 skink3 <command> <scene module> [options]
 
-check   palette laws, string tables and text fit in every language; motion findings in short
+check   palette laws, string tables and text fit in every language; motion and physics findings in short
 bake    simulate physics, springs and particles; write the cache        [--force]
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render  an mp4                 [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion  the motion review      [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/motion.json
+physics the physics review     [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/physics.json
 trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
 graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
 
@@ -467,14 +511,14 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 
 - Inside the engine repository the command is `node bin/skink3.mjs`; from a repository that depends on the engine it is `npx skink3`.
 - Output goes to `./out/<shot id>/`, the bake cache to `./cache/`, both relative to the directory the command is run from.
-- `still`, `strip`, `sheet`, `render`, `check`, `motion`, `trail` and `graph` bake first if the cache is missing or stale.
+- `still`, `strip`, `sheet`, `render`, `check`, `motion`, `physics`, `trail` and `graph` bake first if the cache is missing or stale.
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 
-Review the picture with stills, strips and sheets, and the motion with `motion`, `trail` and `graph`; render the video when those look right.
+Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, and the simulation with `physics`; render the video when those look right.
 
 ## From another repository
 
@@ -488,7 +532,7 @@ Run `npm ci` in the engine checkout too. The dependency must stay a link (npm's 
 
 ## Programmatic use
 
-Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel`, `loadShot`, and for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
+Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel`, `loadShot`, for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`, and for the physics review `reviewPhysics`, `formatPhysicsReport`, `physicsPictures`, `renderCloseUp`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
 
 ## What is not there yet
 

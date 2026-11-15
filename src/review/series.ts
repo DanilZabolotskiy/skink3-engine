@@ -17,7 +17,7 @@ import { pulseSpan } from '../motion/curves.ts';
 import { sampleLid, sampleReveal } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { computeWorld, eyeOpen, FAINT, HIDDEN, labelLayout, opacities, SHUT, type PoseSource } from '../scene/evaluate.ts';
+import { computeWorld, eyeOpen, FAINT, HIDDEN, labelLayout, opacities, SHUT, swayDirection, type PoseSource } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
@@ -284,6 +284,17 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       s.x[frame] = x;
       s.y[frame] = y;
       return [x, y];
+    },
+    // A swaying stick: the spring-driven point is its free end.
+    sway: (slot, frame, pivot, rest, lever) => {
+      const s = springs[slot]!;
+      const x = bake.springX(slot, frame);
+      const y = bake.springY(slot, frame);
+      s.restX[frame] = pivot[0] + Math.cos(rest) * lever;
+      s.restY[frame] = pivot[1] + Math.sin(rest) * lever;
+      s.x[frame] = x;
+      s.y[frame] = y;
+      return swayDirection(x, y, pivot, rest);
     },
   };
 

@@ -1,7 +1,8 @@
 // Speed graph: one picture of what a node does over time. The large panel is
 // its speed; small panels below show whatever else changes on it (position,
-// rotation, scale, opacity). Findings of the motion review are marked where
-// they were raised. It works for a placed node, an emitter and the camera.
+// rotation, scale, opacity). Findings of the motion review, or of the physics
+// review, are marked where they were raised. It works for a placed node, an
+// emitter and the camera.
 //
 // Every panel has one scale of its own. A move with ease is a hump; a linear
 // move is a plateau with vertical sides; a jump is a single spike; a spring is
@@ -11,9 +12,17 @@ import { Canvas } from 'skia-canvas';
 import { FPS } from '../core/time.ts';
 import { CAMERA_SUBJECT } from '../scene/types.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
-import { relativeSteps, type Finding } from './detect.ts';
+import { relativeSteps } from './detect.ts';
 import { DRAWN, type MotionSeries } from './series.ts';
 import { T } from './thresholds.ts';
+
+/** What a graph needs of a finding to mark it: a finding of the motion review or of the physics review. */
+export interface GraphMark {
+  readonly subject: string;
+  readonly kind: string;
+  readonly from: number;
+  readonly to: number;
+}
 
 export interface GraphOptions {
   /** A node id, or "(camera)". */
@@ -22,7 +31,7 @@ export interface GraphOptions {
   readonly from?: number;
   readonly to?: number;
   /** Findings to mark (those of other subjects are ignored). */
-  readonly findings?: readonly Finding[];
+  readonly findings?: readonly GraphMark[];
   /** Width in px; default 1600. */
   readonly width?: number;
 }
@@ -392,7 +401,7 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
   }
   if (mine.length > 0 || hidden.subarray(from, to + 1).includes(1)) {
     const notes: string[] = [];
-    if (mine.length > 0) notes.push('yellow band: a finding of the motion review');
+    if (mine.length > 0) notes.push('yellow band: a finding of the review');
     if (hidden.subarray(from, to + 1).includes(1)) notes.push('dark band: not drawn');
     text(notes.join('     '), left + plotW, 51, 13, MUTED, 'right', 500);
   }

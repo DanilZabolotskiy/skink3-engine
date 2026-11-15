@@ -1,5 +1,5 @@
-// Command-line entry point: bake, still, strip, sheet, render, check, and the
-// motion review: motion, trail, graph.
+// Command-line entry point: bake, still, strip, sheet, render, check, the
+// motion review (motion, trail, graph) and the physics review (physics).
 // Output goes to ./out and the bake cache to ./cache of the caller's working
 // directory, wherever the scene module and the engine live.
 
@@ -16,6 +16,9 @@ import { ffmpegAvailable, type Encoder } from '../render/encode.ts';
 import { frameRaw, heightFor, rendererInfo } from '../render/frame.ts';
 import { renderChunk, renderParallel } from '../render/parallel.ts';
 import { rawToPng, renderSheet, type SheetTile } from '../render/sheet.ts';
+import { P } from '../review/physics-thresholds.ts';
+import { formatPhysicsReport, physicsReportJson } from '../review/physics-report.ts';
+import { reviewPhysics } from '../review/physics.ts';
 import { formatMotionReport, motionReportJson, reviewMotion } from '../review/report.ts';
 import { T } from '../review/thresholds.ts';
 import type { CompiledShot } from '../scene/compile.ts';
@@ -27,13 +30,14 @@ import { loadShot } from './load.ts';
 const HELP = `skink3 <command> <scene module> [options]
 
 Commands
-  check   palette laws, string tables and text fit in every language; motion findings in short
+  check   palette laws, string tables and text fit in every language; motion and physics findings in short
   bake    simulate physics, springs and particles; write the cache
   still   one or more frames as PNG
   strip   a motion strip: consecutive frames side by side
   sheet   a contact sheet of the whole shot (or of chosen frames, per language)
   render  the shot as an mp4 (parallel chunk workers, joined by ffmpeg)
   motion  the motion review: jumps, missing ease, strobing speed, springs, dead areas
+  physics the physics review: overlap, tunnelling, escapes, jitter, piles that do not settle, energy, unseen hits
   trail   a ghost trail: nodes drawn at every k-th frame in one picture
   graph   a speed graph of a node, an emitter or the camera
 
@@ -51,12 +55,14 @@ render  [--workers <n>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [
 bake    [--force]
 check   (no options; --lang limits the text checks to some languages)
 motion  [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/motion.json
+physics [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/physics.json
 trail   --node <id[,id...]> [--from <frame>] [--to <frame>] | [--time <s,s>]  [--every <k>] [--space stage|screen]
 graph   --node <id> | --camera      [--from <frame>] [--to <frame>] | [--time <s,s>]
 
 --crop is in stage units (1920 x 1080, origin top-left). --hash and --hashes
-print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes a
-trail and a graph of the worst few subjects of the motion report.`;
+print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes
+pictures of the worst few subjects of the report: a trail and a graph for
+motion; a close-up, a trail or a graph, by the kind of finding, for physics.`;
 
 interface Common {
   compiled: CompiledShot;
@@ -199,7 +205,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   switch (command) {
     case 'check': {
       const { bake } = await ensureBake(c, common.cacheDir);
-      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true });
+      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true, physics: true });
       console.log(`check ${c.spec.id}: ${c.frames} frames, ${c.nodes.length} nodes, ${c.layers.length} layers`);
       console.log(formatReport(report));
       return report.ok ? 0 : 1;
@@ -361,6 +367,33 @@ export async function main(argv: readonly string[]): Promise<number> {
         }
       } else if (report.findings.length > 0) {
         console.log('pictures: add --pictures for a trail and a graph of the worst findings; for any node, `skink3 trail <scene> --node <id>` and `skink3 graph <scene> --node <id>`');
+      }
+      // Findings are warnings: they never fail the command.
+      return 0;
+    }
+
+    case 'physics': {
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const report = reviewPhysics(c, bake);
+      console.log(formatPhysicsReport(report));
+      const file = outFile('physics.json');
+      write(file, physicsReportJson(report));
+      console.log(`
+full report: ${file}`);
+      if (flag('pictures')) {
+        const count = int('top', str('top'), P.pictureSubjects, 1, 50);
+        // The picture modules are loaded only by the commands that draw them.
+        const { physicsPictures } = await import('../review/physics-pictures.ts');
+        const { sampleMotion } = await import('../review/series.ts');
+        const pictures = await physicsPictures(c, bake, sampleMotion(c, bake, { lang: common.lang, particles: false }), report, { count, gpu: common.gpu, lang: common.lang });
+        if (pictures.length === 0) console.log('pictures: none (no finding on a rigid body)');
+        for (const p of pictures) {
+          const path = join(common.outDir, 'physics', p.name);
+          write(path, p.png);
+          console.log(`${p.kind} of ${p.subject} (${p.note}): ${path}`);
+        }
+      } else if (report.findings.length > 0) {
+        console.log('pictures: add --pictures for a close-up, a trail or a graph of the worst findings');
       }
       // Findings are warnings: they never fail the command.
       return 0;

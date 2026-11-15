@@ -57,3 +57,9 @@ Target norms (checked with `tools/metrics` on renders):
 | Near-gray pixels (S < 0.12) | about 6 % or less |
 | Hue of dark pixels | mostly 210–300° (blue, indigo, violet) |
 | Texture or grain | none: clean vector and gradients |
+
+## 7. Checks that can be trusted
+
+- A check reports what a viewer would see as wrong, and nothing else. A finding on a sound shot is a bug of the check; so is a defect that it has no finding for.
+- Every kind of finding is proven by a test that plants its defect and by sound scenes next to it that must stay clean.
+- **The physics checks grow with the physics.** Any change to the physics of the engine (a new kind of body, a solver, a constraint, a setting) updates the physics review and its tests in the same piece of work: the geometry it works out, the detectors that apply, a planted defect and a sound scene for what is new. The list of what follows from which change is in [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md#when-the-physics-changes).
