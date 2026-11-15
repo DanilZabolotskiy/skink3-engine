@@ -434,6 +434,13 @@ test('motion: the report is deterministic, sorted by severity and capped as text
   assert.equal(json.thresholds.jumpPx.value, THRESHOLDS.jumpPx.value);
   assert.ok(json.kinds['too-fast'].fix.length > 0);
 
+  // In the short form of `check` a family is one line.
+  const short = formatMotionShort(report);
+  assert.equal(short.length, 4, short.join('\n'));
+  assert.match(short[1]!, /~ warning: jump on "lone" at f60-61/);
+  assert.match(short[2]!, /~ warning: abrupt-start on "item39" \(and 39 more like it on 39 other node\(s\)\) at f60-62/);
+  assert.match(short[3]!, /^ {2}`skink3 motion <scene>` prints the full report/);
+
   // As text: one family is shown once, and the whole thing stays short.
   const text = formatMotionReport(report, c);
   assert.match(text, /41 warning\(s\): 1 jump, 40 abrupt-start/);

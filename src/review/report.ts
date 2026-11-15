@@ -290,11 +290,29 @@ export function formatMotionShort(report: MotionReport): string[] {
   const lines: string[] = [];
   const ex = exceptionsLine(report);
   lines.push(`motion: ${report.findings.length === 0 ? 'ok' : summaryLine(report)}${ex ? `; ${ex}` : ''}`);
-  const worst = report.findings.slice(0, T.checkWorst);
-  for (const f of worst) lines.push(`  ~ warning: ${f.kind} on "${f.subject}" at ${when(f)}: ${f.detail}`);
+  // Generated nodes with the same kind of finding are one line: the worst of them, and how many more.
+  const groups = new Map<string, Finding[]>();
+  for (const f of report.findings) {
+    const key = `${familyOf(f.subject)}|${f.kind}`;
+    const list = groups.get(key);
+    if (list) list.push(f);
+    else groups.set(key, [f]);
+  }
+  let shown = 0;
+  let covered = 0;
+  for (const list of groups.values()) {
+    if (shown >= T.checkWorst) break;
+    shown++;
+    covered += list.length;
+    const f = list[0]!;
+    const others = new Set(list.map((x) => x.subject)).size - 1;
+    const more = list.length - 1;
+    const also = others > 0 ? ` (and ${more} more like it on ${others} other node(s))` : more > 0 ? ` (and ${more} more like it)` : '';
+    lines.push(`  ~ warning: ${f.kind} on "${f.subject}"${also} at ${when(f)}: ${f.detail}`);
+  }
   if (report.findings.length > 0) {
-    const more = report.findings.length - worst.length;
-    lines.push(`  ${more > 0 ? `${more} more; ` : ''}\`skink3 motion <scene>\` prints the full report, and with --pictures draws the worst`);
+    const rest = report.findings.length - covered;
+    lines.push(`  ${rest > 0 ? `${rest} more; ` : ''}\`skink3 motion <scene>\` prints the full report, and with --pictures draws the worst`);
   }
   return lines;
 }

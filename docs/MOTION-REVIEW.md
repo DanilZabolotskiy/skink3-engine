@@ -21,7 +21,7 @@ skink3 check  <scene>                               also shows the findings in s
 - `trail` draws one picture: `out/<shot id>/trail_<ids>_<from>-<to>.png`. Without a window it takes the frames in which the nodes move.
 - `graph` draws one picture: `out/<shot id>/graph_<id>.png`. Without a window it shows the whole shot.
 - `--from` and `--to` are frames, as in `strip` and `render`; `--time 6.5,7.8` gives the same window in seconds.
-- `check` shows the count by kind and the worst five findings, and points to `motion`. They never fail the checks.
+- `check` shows the count by kind and the worst five findings, and points to `motion`. Generated nodes with the same kind of finding take one line. They never fail the checks.
 
 ```
 node bin/skink3.mjs motion examples/demo/scene.ts --pictures
