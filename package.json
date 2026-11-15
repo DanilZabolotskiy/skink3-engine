@@ -32,6 +32,7 @@
     "demo:strip": "node bin/skink3.mjs strip examples/demo/scene.ts --from 388 --count 24 --step 3 --cols 8 --crop 940,290,420,360",
     "demo:sheet": "node bin/skink3.mjs sheet examples/demo/scene.ts",
     "demo:render": "node bin/skink3.mjs render examples/demo/scene.ts",
+    "demo:motion": "node bin/skink3.mjs motion examples/demo/scene.ts --pictures",
     "bench:render": "node bench/render.mjs 1920 gpu 20",
     "bench:phys": "node bench/phys.mjs"
   },

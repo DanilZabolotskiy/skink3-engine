@@ -13,6 +13,7 @@ scene (TypeScript) ──► look ──► motion ──► physics bake ──
                                                 by versions
         ▼
 checks (before render): types, palette laws, string tables, text fit per language
+review (no render needed): the motion of every node as findings, ghost trails, speed graphs
 ```
 
 ## Modules
@@ -29,10 +30,11 @@ checks (before render): types, palette laws, string tables, text fit per languag
 | `text` | per-language string tables; one bundled OFL family (Latin, Latin Extended, Cyrillic, Vietnamese) registered under the engine's own family name; auto-fit layout (wrap at spaces, balance, shrink, report overflow); label geometry | shaping and fallback fonts for all scripts (CJK, Arabic, Devanagari…), right-to-left text, bubbles, titles, counters |
 | `render` | compositing on Skia GPU with CPU fallback: background gradient, glow lift, layers back to front with blur by depth and atmospheric perspective, group opacity (a faded subtree is drawn as one picture, then faded), tapered pulses, links that glow, two-tone particles, halos, vignette; raw RGBA out; stills, strips and contact sheets; ffmpeg encoding; parallel chunk workers with progress, concatenation, and a clean stop when a worker fails | sub-frame motion blur, transitions, 4K master presets |
 | `audio` | — (contact events are recorded by the bake for later use) | narration import, sound effects from physics and UI events, music bed with ducking, mixdown |
-| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning) | motion norms (static holds, drift) and physics sanity (tunnelling, escapes, NaN) as pre-render checks |
-| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
+| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning); the findings of the motion review in short form, as warnings | physics sanity (interpenetration, jitter at rest, tunnelling, escapes, NaN) as pre-render checks |
+| `review` | the motion review, for reviewers that cannot watch a video: the series of every node, link, emitter, spring and of the camera at every frame, in the space of the layer and on screen; findings from it (jump, abrupt start and stop, mechanical move, strobing speed, springs that ring or never bounce, dead areas of the frame) with every threshold in one file; intended exceptions marked in the scene; a report as capped text and complete JSON; ghost trails and speed graphs drawn on the engine's canvas | calibration of the thresholds against reference videos; physics findings in the same report |
+| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`, `motion`, `trail`, `graph`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
 
-Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`; `scene` uses all of these plus `text` and `camera`; `physics` bakes what `scene` describes; `render` draws what `scene` evaluates; `checks` and `cli` sit on top.
+Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`; `scene` uses all of these plus `text` and `camera`; `physics` bakes what `scene` describes; `render` draws what `scene` evaluates; `review` reads what `scene` evaluates and draws its pictures with `render`; `checks` and `cli` sit on top.
 
 ## Data flow
 
@@ -45,6 +47,16 @@ Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`;
 
 Because frames are pure, a still, a motion strip or a contact sheet never needs a rendered video.
 
+## The motion review
+
+A reviewer that cannot watch a video still has to judge motion. The review answers from the scene data, in three steps:
+
+1. **Sample.** `sampleMotion` evaluates the shot at every frame without drawing: world transforms, opacities, the camera and the view of every layer. It keeps, for every placed node, its position, rotation, scale and opacity in the space of its layer, and its own motion in the space of its parent; for links, emitters and springs what their checks need. A node that nothing animates is sampled once.
+2. **Detect.** Detectors read the series and return findings: plain data with a kind, a subject, a frame range, the measured value, the threshold and a usual fix. Every threshold is in `src/review/thresholds.ts`. Findings that the scene marks with `intended()` are taken out and listed as honoured.
+3. **Show.** The report is printed as capped text and written as complete JSON. A ghost trail draws chosen nodes at every k-th frame over a dimmed frame; a speed graph plots speed and whatever else changes over time, with the findings marked.
+
+The same scene always gives the same report and the same pictures. Guide: [MOTION-REVIEW.md](MOTION-REVIEW.md).
+
 ## The bake cache
 
 A cache file is `cache/<shot id>-<key>.bake` under the caller's working directory. The key is derived from:
@@ -54,7 +66,7 @@ A cache file is `cache/<shot id>-<key>.bake` under the caller's working director
 - the **scene hash**: everything in the shot except the string tables (a translation does not re-bake);
 - the **seed**.
 
-The file holds a JSON header (the key, slot names, contact events) and four binary sections: body poses, spring positions, the particle index and the particles, as 32-bit floats. The evaluator reads state only from this representation, whether the bake was just computed or loaded from disk.
+The file holds a JSON header (the key, slot names, contact events) and five binary sections: body poses, spring positions, the particle index, the particles and the particle velocities, as 32-bit floats. The evaluator reads state only from this representation, whether the bake was just computed or loaded from disk. Nothing is drawn from the velocities; the motion review reads them to know how fast a particle travels.
 
 ## Determinism
 

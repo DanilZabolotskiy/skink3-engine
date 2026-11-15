@@ -84,7 +84,7 @@ export const THRESHOLDS = {
   mechTolerance: {
     value: 0.1,
     unit: 'share of the speed',
-    why: 'Speed within 10 % of the median of a stretch counts as constant; an eased move leaves that band within a few frames.',
+    why: 'Speed within 10 % of the middle of a stretch counts as constant.',
   },
   mechMinFrames: {
     value: 10,
@@ -104,7 +104,7 @@ export const THRESHOLDS = {
   mechShare: {
     value: 0.7,
     unit: 'share of the move',
-    why: 'Constant speed over most of a move between two rests is what reads as mechanical; an eased move is constant over less than a fifth of it.',
+    why: 'Constant speed over most of a move between two rests is what reads as mechanical; the top of an eased move stays in that band for about a third of the move.',
   },
 
   // --- Too fast to read ----------------------------------------------------------

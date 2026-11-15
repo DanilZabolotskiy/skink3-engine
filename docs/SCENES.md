@@ -139,6 +139,7 @@ strings: {
 | `vignette` | 0..1 | `0.5` | darkening of the corners toward `background.outer` |
 | `camera` | see below | see below | drift, push-in, depth of field |
 | `physics` | see below | see below | style of the rigid-body world |
+| `intended` | `intended()[]` | `[]` | findings of the motion review that are what you want, each with a reason (see Motion review) |
 
 ### Camera
 
@@ -409,35 +410,71 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 
 A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted. Frames are sampled ten times a second, so a touch shorter than that can be missed.
 
-`skink3 render` runs the same checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway).
+`skink3 check` also runs the motion review and shows it in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion`. They are warnings and never fail the checks.
+
+`skink3 render` runs the palette, string and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the motion review.
 
 `npm run check` in the engine repository also runs `tsc --noEmit` and the unit tests.
+
+## Motion review
+
+Nobody has to watch the video to find out whether the motion is smooth. `skink3 motion <scene>` evaluates the shot at every frame without drawing and reports, as text and as JSON:
+
+| Finding | What it is |
+|---|---|
+| `jump` | a teleport or a pop: position, rotation, size or opacity out of line with the frames around it |
+| `abrupt-start`, `abrupt-stop` | a move with no ease at one end |
+| `mechanical` | a move between two rests at constant speed |
+| `too-fast` | travel of half the node's own size per frame or more, sustained: it strobes at 60 fps |
+| `spring-ringing`, `spring-no-overshoot` | a spring that swings far too long, or a bouncy one that never passes its place |
+| `dead-area` | nothing moves on its own in the frame for more than 4 s, or in a sixth of it for more than 6 s |
+
+`skink3 trail` and `skink3 graph` draw pictures in which time is visible: a node at every k-th frame in one image, and its speed over time. `skink3 motion --pictures` draws both for the worst findings.
+
+A finding that is what you want is marked in the scene, with the reason; the report then leaves it out of the warnings and lists it as honoured:
+
+```ts
+shot({
+  // ...
+  intended: [intended('plug', 'abrupt-start', 'it is shot out of the tube')],
+});
+```
+
+Two things to know when you write a scene:
+
+- With `anticipation: 0` and `overshoot: 0` a `moveTo` is a plain ease-out: it starts at full speed. The same holds for `turnTo`, `scaleTo` and `openTo` with `overshoot: 0`. The review reports that as `abrupt-start`. Keep one of the two above 0 unless the start is hidden or meant.
+- Keep a small thing slow: under half of its own size per frame.
+
+The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
 
 ## Command line
 
 ```
 skink3 <command> <scene module> [options]
 
-check   palette laws, string tables and text fit in every language
+check   palette laws, string tables and text fit in every language; motion findings in short
 bake    simulate physics, springs and particles; write the cache        [--force]
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render  an mp4                 [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
+motion  the motion review      [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/motion.json
+trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
+graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
 
 common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>
 ```
 
 - Inside the engine repository the command is `node bin/skink3.mjs`; from a repository that depends on the engine it is `npx skink3`.
 - Output goes to `./out/<shot id>/`, the bake cache to `./cache/`, both relative to the directory the command is run from.
-- `still`, `strip`, `sheet` and `render` bake first if the cache is missing or stale.
+- `still`, `strip`, `sheet`, `render`, `check`, `motion`, `trail` and `graph` bake first if the cache is missing or stale.
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 
-Review with stills, strips and sheets; render the video when those look right.
+Review the picture with stills, strips and sheets, and the motion with `motion`, `trail` and `graph`; render the video when those look right.
 
 ## From another repository
 
@@ -451,7 +488,7 @@ Run `npm ci` in the engine checkout too. The dependency must stay a link (npm's 
 
 ## Programmatic use
 
-Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel`, `loadShot`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
+Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel`, `loadShot`, and for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
 
 ## What is not there yet
 

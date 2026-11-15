@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { palette } from '../examples/demo/palette.ts';
 import {
   bakeShot,
@@ -448,6 +450,14 @@ test('motion: the report is deterministic, sorted by severity and capped as text
   const capped = formatMotionReport(reviewMotion(many, await bakeShot(many)).report, many);
   assert.equal(capped.split('\n').filter((l) => / \(circle\)$/.test(l)).length, THRESHOLDS.reportSubjects.value);
   assert.match(capped, /\.\.\. and 4 finding\(s\) on 4 more subject\(s\), in the JSON report/);
+});
+
+test('docs: the guide lists every threshold with its value and reason, and every kind of finding', () => {
+  const guide = readFileSync(fileURLToPath(new URL('../docs/MOTION-REVIEW.md', import.meta.url)), 'utf8');
+  for (const [name, t] of Object.entries(THRESHOLDS)) {
+    assert.ok(guide.includes(`| \`${name}\` | ${t.value} | ${t.unit} | ${t.why} |`), `docs/MOTION-REVIEW.md must hold the row of ${name} as it is in src/review/thresholds.ts`);
+  }
+  for (const kind of MOTION_FINDING_KINDS) assert.ok(guide.includes(`| \`${kind}\` |`), `the guide explains ${kind}`);
 });
 
 test('check: motion findings are shown in short form and never fail the checks', async () => {
