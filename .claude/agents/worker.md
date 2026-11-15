@@ -1,7 +1,7 @@
 ---
 name: worker
-description: Worker for skink3-engine (Opus 5.5, xhigh) — engine code (TypeScript, skia-canvas, Rapier), physics solvers, rendering, metrics and benchmarks. Use for any sizeable task to keep the main context clean.
-model: claude-opus-5-5
+description: Worker for skink3-engine (Fable 5.2, xhigh) — engine code (TypeScript, skia-canvas, Rapier), physics solvers, rendering, metrics and benchmarks. Use for any sizeable task to keep the main context clean.
+model: fable
 effort: xhigh
 ---
 
