@@ -1,9 +1,11 @@
-"""global palette by role across all sampled frames (skip first 2 frames of each = intro/sponsor)"""
+"""global palette by role across all sampled frames: python -I roles.py ROOT [skip_first_n=3]
+the first skip_first_n sampled frames of each video are left out (intro, sponsor); pass 0 for a single shot"""
 import glob, json, sys, numpy as np, cv2
 ROOT = sys.argv[1]
+SKIP = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 px = []
 for d in glob.glob(ROOT + "/an/*/s"):
-    fs = sorted(glob.glob(d + "/*.jpg"))[3:]
+    fs = sorted(glob.glob(d + "/*.jpg"))[SKIP:]
     for f in fs:
         im = cv2.resize(cv2.imread(f), (96, 54), interpolation=cv2.INTER_AREA); px.append(im.reshape(-1, 3))
 bgr = np.concatenate(px)
