@@ -359,6 +359,8 @@ export async function main(argv: readonly string[]): Promise<number> {
           write(path, p.png);
           console.log(`${p.kind} of ${p.subject} (${p.note}): ${path}`);
         }
+      } else if (report.findings.length > 0) {
+        console.log('pictures: add --pictures for a trail and a graph of the worst findings; for any node, `skink3 trail <scene> --node <id>` and `skink3 graph <scene> --node <id>`');
       }
       // Findings are warnings: they never fail the command.
       return 0;
