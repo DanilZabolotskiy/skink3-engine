@@ -31,6 +31,8 @@ export interface FrameSink {
   write(frame: Buffer): Promise<void>;
   /** Finishes the file. */
   close(): Promise<void>;
+  /** Stops the encoder without finishing the file. */
+  abort(): void;
 }
 
 /**
@@ -73,6 +75,10 @@ export function openEncoder(file: string, width: number, height: number, encoder
       const code = await exited;
       if (failed) throw failed;
       if (code !== 0) throw new Error(`ffmpeg failed with code ${code}:\n${stderr}`);
+    },
+    abort(): void {
+      child.stdin?.destroy();
+      child.kill();
     },
   };
 }

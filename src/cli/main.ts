@@ -270,6 +270,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       if (!report.ok) {
         console.log(formatReport(report));
         if (!flag('force')) fail('render: the checks failed (fix the scene, or pass --force to render anyway)');
+      } else {
+        for (const issue of report.issues) console.log(`  warning: ${issue.message}`);
       }
       const from = int('from', str('from'), 0, 0, c.frames - 1);
       const to = int('to', str('to'), c.frames, from + 1, c.frames);
@@ -277,6 +279,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       const info = rendererInfo(common.gpu);
       console.log(`render ${c.spec.id} [${common.lang}]: frames ${from}..${to - 1} at ${common.width}x${heightFor(common.width)}, ${FPS} fps, ${workers} worker(s), ${info.renderer}${info.renderer === 'GPU' && info.api ? ` ${info.api}` : ''}, ${encoder}`);
       console.log(`  bake ${baked.baked ? 'baked' : 'cache hit'} in ${baked.seconds.toFixed(2)} s`);
+      // Progress: rewritten in place on a terminal, one line every few seconds otherwise.
+      const tty = process.stdout.isTTY === true;
+      let lastShown = -Infinity;
+      let shown = false;
       const result = await renderParallel({
         scene: sceneFile,
         bakeFile: baked.file,
@@ -289,7 +295,16 @@ export async function main(argv: readonly string[]): Promise<number> {
         encoder,
         workers,
         hashes: flag('hashes'),
+        onProgress: (done, total, seconds) => {
+          if (seconds - lastShown < (tty ? 0.25 : 5) && done < total) return;
+          lastShown = seconds;
+          shown = true;
+          const line = `  ${done}/${total} frames, ${Math.floor((100 * done) / total)} %, ${(done / Math.max(seconds, 1e-3)).toFixed(0)} frames/s`;
+          if (tty) process.stdout.write(`\r${line}    `);
+          else console.log(line);
+        },
       });
+      if (tty && shown) process.stdout.write('\n');
       console.log(`  ${result.frames} frames in ${result.seconds.toFixed(2)} s = ${result.fps.toFixed(1)} frames/s`);
       console.log(`  ${result.out}`);
       if (result.hashesFile) console.log(`  ${result.hashesFile}`);
@@ -298,6 +313,8 @@ export async function main(argv: readonly string[]): Promise<number> {
 
     // Internal: one worker of `render`.
     case '_chunk': {
+      // Fault injection, used by the tests of the parallel renderer only.
+      const failAt = process.env['SKINK3_TEST_FAIL_AT_FRAME'];
       const bakePath = str('bake') ?? fail('_chunk: --bake is required');
       const bake = readBake(bakePath);
       if (bake.header.sceneHash !== c.sceneHash) fail('_chunk: the bake does not belong to this scene');
@@ -310,6 +327,10 @@ export async function main(argv: readonly string[]): Promise<number> {
         gpu: common.gpu,
         encoder: (str('encoder') ?? 'x264') as Encoder,
         hashesFile: str('hashes-file') ?? null,
+        onFrames: (frames) => {
+          process.send?.({ frames });
+        },
+        ...(failAt === undefined ? {} : { failAtFrame: Number(failAt) }),
       });
       return 0;
     }

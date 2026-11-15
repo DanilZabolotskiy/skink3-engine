@@ -64,8 +64,10 @@ export function simulateEmitter(
 
   let carry = 0;
   const step = (time: number, at: Vec2): void => {
-    // Emit.
-    if (spec.rate > 0 && time >= spec.from - 1e-9 && time < spec.until) {
+    // Emit. Before the shot starts (prewarm) the emitter runs as it does at its
+    // first moment, so that the field is already populated at frame 0.
+    const emitting = time < 0 ? spec.from <= 1e-9 : time >= spec.from - 1e-9 && time < spec.until;
+    if (spec.rate > 0 && emitting) {
       carry += spec.rate * SIM_DT;
       while (carry >= 1) {
         carry -= 1;
