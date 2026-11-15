@@ -8,7 +8,7 @@ This is the **public** engine repository. Read `README.md` and `docs/PRINCIPLES.
 - **English only:** code, comments, docs, commit messages. The one exception is test fixtures that check non-Latin script rendering, which must say so in the file name.
 - **Engine development is delegated to agents on Opus 5.5 at effort xhigh.** The main session only orchestrates: it plans, writes briefs, delegates, reviews and talks to the owner. It executes nothing itself: no commands, file edits, checks, renders or commits.
   1. It delegates each engine task to a worker (Agent with `model: "opus"`, `effort: "xhigh"`). The definition in `.claude/agents/worker.md` uses `model: claude-opus-5-5`, `effort: xhigh`.
-  2. Agents do all the execution. The worker, or a separate checking agent, runs the checks, produces the review materials (stills, strips, contact sheets) and commits the work.
+  2. Agents do all the execution. The worker, or a separate checking agent, runs the checks, produces the review materials (stills, strips, contact sheets), commits the work and pushes it after the pre-push search below.
   3. The main session reviews by reading: the diff, the agent's report, the check outputs, and the stills or strips the agents produced.
   4. It delegates any fixes back to a worker, then reviews again.
 
