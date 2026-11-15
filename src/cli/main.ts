@@ -275,7 +275,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const to = int('to', str('to'), c.frames, from + 1, c.frames);
       const workers = int('workers', str('workers'), Math.max(1, Math.min(8, Math.floor(availableParallelism() / 2))), 1, 64);
       const info = rendererInfo(common.gpu);
-      console.log(`render ${c.spec.id} [${common.lang}]: frames ${from}..${to - 1} at ${common.width}x${heightFor(common.width)}, ${FPS} fps, ${workers} worker(s), ${info.renderer}${info.api ? ` ${info.api}` : ''}, ${encoder}`);
+      console.log(`render ${c.spec.id} [${common.lang}]: frames ${from}..${to - 1} at ${common.width}x${heightFor(common.width)}, ${FPS} fps, ${workers} worker(s), ${info.renderer}${info.renderer === 'GPU' && info.api ? ` ${info.api}` : ''}, ${encoder}`);
       console.log(`  bake ${baked.baked ? 'baked' : 'cache hit'} in ${baked.seconds.toFixed(2)} s`);
       const result = await renderParallel({
         scene: sceneFile,
