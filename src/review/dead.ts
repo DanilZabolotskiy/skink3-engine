@@ -24,7 +24,7 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
   const F = series.frames;
   const alive = new Uint8Array(F);
   for (const s of series.placed) {
-    if (!s || s.type === 'group') continue;
+    if (!s || s.type === 'group' || s.still) continue;
     const view = series.views[s.node.layer]!;
     for (let f = 1; f < F; f++) {
       const now = visibleAt(s, f);

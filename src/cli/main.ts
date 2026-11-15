@@ -16,11 +16,8 @@ import { ffmpegAvailable, type Encoder } from '../render/encode.ts';
 import { frameRaw, heightFor, rendererInfo } from '../render/frame.ts';
 import { renderChunk, renderParallel } from '../render/parallel.ts';
 import { rawToPng, renderSheet, type SheetTile } from '../render/sheet.ts';
-import { renderGraph } from '../review/graph.ts';
-import { motionPictures } from '../review/pictures.ts';
 import { formatMotionReport, motionReportJson, reviewMotion } from '../review/report.ts';
 import { T } from '../review/thresholds.ts';
-import { renderTrail } from '../review/trail.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { CAMERA_SUBJECT } from '../scene/types.ts';
 import { languagesOf } from '../text/strings.ts';
@@ -353,6 +350,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       console.log(`\nfull report: ${file}`);
       if (flag('pictures')) {
         const count = int('top', str('top'), T.pictureSubjects, 1, 50);
+        // The picture modules are loaded only by the commands that draw them.
+        const { motionPictures } = await import('../review/pictures.ts');
         const pictures = await motionPictures(c, bake, series, report, { count, gpu: common.gpu, lang: common.lang });
         if (pictures.length === 0) console.log('pictures: none (no finding on a node, an emitter or the camera)');
         for (const p of pictures) {
@@ -372,6 +371,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const { bake } = await ensureBake(c, common.cacheDir);
       const { series } = reviewMotion(c, bake, { lang: common.lang });
       const every = str('every') === undefined ? undefined : int('every', str('every'), 1, 1, 600);
+      const { renderTrail } = await import('../review/trail.ts');
       const trail = await renderTrail(c, bake, series, {
         nodes: ids,
         ...window('trail'),
@@ -393,6 +393,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const { series, report } = reviewMotion(c, bake, { lang: common.lang });
       // Findings an intended exception covers are marked too: the graph shows what happens, wanted or not.
       const findings = [...report.findings, ...report.honoured.flatMap((h) => h.findings)];
+      const { renderGraph } = await import('../review/graph.ts');
       const graph = await renderGraph(series, { subject, ...window('graph'), findings });
       const whole = graph.from === 0 && graph.to === c.frames - 1;
       const name = flag('camera') ? 'camera' : subject;

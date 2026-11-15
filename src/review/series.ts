@@ -39,6 +39,12 @@ export interface PlacedSeries {
   readonly type: 'shape' | 'group' | 'eye' | 'label';
   /** Its motion comes from the rigid-body solver: a body, or a label that points at one. */
   readonly solver: boolean;
+  /**
+   * Nothing animates it: no key, no idle wander, no spring, no solver, and
+   * nothing it is attached to moves either. Its series are constant (only
+   * the camera decides whether it is in frame), so the detectors pass it over.
+   */
+  readonly still: boolean;
   /** Place in the layer's space, per frame. For a label: the tip of its tail. */
   readonly x: Float32Array;
   readonly y: Float32Array;
@@ -205,6 +211,26 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     return false;
   };
 
+  // Nodes that nothing animates. Parents come before their children in the
+  // node list; a label whose target comes later is simply taken as animated.
+  const still = new Uint8Array(N);
+  for (const n of c.nodes) {
+    const node = n.node;
+    if (node.type === 'link' || node.type === 'emitter') continue;
+    const animated =
+      (n.pos?.segs.length ?? 0) > 0 ||
+      (n.rot?.segs.length ?? 0) > 0 ||
+      (n.scale ? n.scale.pops.length + n.scale.grows.length + n.scale.bumps.length > 0 : false) ||
+      (n.opacity?.segs.length ?? 0) > 0 ||
+      n.springKind !== null ||
+      (node.type === 'shape' && node.body?.kind === 'dynamic') ||
+      ((node.type === 'shape' || node.type === 'group') && node.idle !== null && node.idle.amp > 0) ||
+      (node.type === 'eye' && ((n.lid?.segs.length ?? 0) > 0 || n.blinks.length > 0)) ||
+      (n.parent >= 0 && still[n.parent] === 0) ||
+      (node.type === 'label' && still[n.targetIndex] === 0);
+    still[n.index] = animated ? 0 : 1;
+  }
+
   const f32 = (): Float32Array => new Float32Array(frames);
   const placed: (PlacedSeries | null)[] = c.nodes.map((n): PlacedSeries | null => {
     const type = n.node.type;
@@ -214,6 +240,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       id: n.id,
       type,
       solver: type === 'label' ? isBody(n.targetIndex) : n.bodySlot >= 0,
+      still: still[n.index] === 1,
       x: f32(),
       y: f32(),
       rot: f32(),
@@ -261,10 +288,15 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   // Raw rotations of the previous frame, to keep the series continuous across the wrap at 180 degrees.
   const prevRot = new Float64Array(N);
   const prevOwnRot = new Float64Array(N);
+  const trigFrame = new Int32Array(N).fill(-1);
+  const trigCos = new Float64Array(N);
+  const trigSin = new Float64Array(N);
   // Length of the current run of frames in which a node's parent has no size.
   const gap = new Uint32Array(N);
   const unwrap = (prev: number, prevRaw: number, raw: number): number => {
-    let d = (raw - prevRaw) % 360;
+    const step = raw - prevRaw;
+    if (step > -180 && step <= 180) return prev + step;
+    let d = step % 360;
     if (d > 180) d -= 360;
     if (d <= -180) d += 360;
     return prev + d;
@@ -310,6 +342,18 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       const xf = world[i]!;
       const view = views[n.layer]!;
       const zoom = view.zoom[f]!;
+      if (s.still && f > 0) {
+        // Only the camera changes anything for it: whether it is in frame.
+        if (drawn[i]) {
+          const sx = xf.x * zoom + view.tx[f]!;
+          const sy = xf.y * zoom + view.ty[f]!;
+          const r = s.radius * xf.scale * zoom;
+          const inFrame = sx + r >= 0 && sy + r >= 0 && sx - r <= STAGE_W && sy - r <= STAGE_H;
+          s.flags[f] = DRAWN | (inFrame ? IN_FRAME : 0);
+        }
+        s.unit[f] = n.parent >= 0 && node.type !== 'label' ? world[n.parent]!.scale * zoom : zoom;
+        continue;
+      }
       s.x[f] = xf.x;
       s.y[f] = xf.y;
       s.scale[f] = xf.scale;
@@ -335,8 +379,14 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         } else {
           const dx = xf.x - p.x;
           const dy = xf.y - p.y;
-          const cos = Math.cos(-p.rot);
-          const sin = Math.sin(-p.rot);
+          // The parent's turn is the same for all its children: its sine and cosine are worked out once per frame.
+          if (trigFrame[n.parent] !== f) {
+            trigFrame[n.parent] = f;
+            trigCos[n.parent] = Math.cos(-p.rot);
+            trigSin[n.parent] = Math.sin(-p.rot);
+          }
+          const cos = trigCos[n.parent]!;
+          const sin = trigSin[n.parent]!;
           s.ownX[f] = (dx * cos - dy * sin) / p.scale;
           s.ownY[f] = (dx * sin + dy * cos) / p.scale;
           s.ownScale[f] = xf.scale / p.scale;
@@ -397,6 +447,13 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       }
       s.active[f] = active ? 1 : 0;
     }
+  }
+
+  // What never changes was sampled at the first frame only.
+  for (const s of placed) {
+    if (!s || !s.still) continue;
+    for (const a of [s.x, s.y, s.rot, s.scale, s.alpha, s.ownAlpha, s.ownX, s.ownY, s.ownRot, s.ownScale]) a.fill(a[0]!);
+    if (s.open) s.open.fill(s.open[0]!);
   }
 
   // Particles: the bake keeps the velocity of every stored particle beside its place.

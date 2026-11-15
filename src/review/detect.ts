@@ -132,32 +132,53 @@ interface Steps {
   /** It reaches into the frame at one of the two frames. */
   readonly inFrame: Uint8Array;
   readonly channels: readonly [Chan, Chan, Chan];
+  /** The largest step of each channel, in px: a channel that never moves is passed over. */
+  readonly largest: [number, number, number];
 }
 
-/** A node's own motion as steps in screen px. */
-function ownSteps(series: MotionSeries, s: PlacedSeries): Steps {
+function newSteps(frames: number): Steps {
+  return {
+    seen: new Uint8Array(frames),
+    faintless: new Uint8Array(frames),
+    inFrame: new Uint8Array(frames),
+    channels: [chan('position', frames), chan('rotation', frames), chan('scale', frames)],
+    largest: [0, 0, 0],
+  };
+}
+
+/** A node's own motion as steps in screen px, written into `st` (every entry from frame 1 on is overwritten). */
+function ownSteps(series: MotionSeries, s: PlacedSeries, st: Steps): void {
   const F = series.frames;
   const zoom = series.views[s.node.layer]!.zoom;
-  const pos = chan('position', F);
-  const rot = chan('rotation', F);
-  const scl = chan('scale', F);
-  const seen = new Uint8Array(F);
-  const faintless = new Uint8Array(F);
-  const inFrame = new Uint8Array(F);
+  const [pos, rot, scl] = st.channels;
+  const { seen, faintless, inFrame } = st;
+  let maxPos = 0;
+  let maxRot = 0;
+  let maxScl = 0;
   for (let f = 1; f < F; f++) {
     seen[f] = visibleAt(s, f - 1) && visibleAt(s, f) ? 1 : 0;
     faintless[f] = s.alpha[f - 1]! >= T.visibleAlpha || s.alpha[f]! >= T.visibleAlpha ? 1 : 0;
     inFrame[f] = ((s.flags[f - 1]! | s.flags[f]!) & IN_FRAME) !== 0 ? 1 : 0;
     const u = s.unit[f]!;
-    pos.a[f] = (s.ownX[f]! - s.ownX[f - 1]!) * u;
-    pos.b[f] = (s.ownY[f]! - s.ownY[f - 1]!) * u;
-    pos.d[f] = Math.hypot(pos.a[f]!, pos.b[f]!);
-    rot.a[f] = (s.ownRot[f]! - s.ownRot[f - 1]!) * DEG * s.turnRadius * s.scale[f]! * zoom[f]!;
-    rot.d[f] = Math.abs(rot.a[f]!);
-    scl.a[f] = (s.ownScale[f]! - s.ownScale[f - 1]!) * s.radius * u;
-    scl.d[f] = Math.abs(scl.a[f]!);
+    const a = (s.ownX[f]! - s.ownX[f - 1]!) * u;
+    const b = (s.ownY[f]! - s.ownY[f - 1]!) * u;
+    const d = a === 0 && b === 0 ? 0 : Math.hypot(a, b);
+    pos.a[f] = a;
+    pos.b[f] = b;
+    pos.d[f] = d;
+    if (d > maxPos) maxPos = d;
+    const r = (s.ownRot[f]! - s.ownRot[f - 1]!) * DEG * s.turnRadius * s.scale[f]! * zoom[f]!;
+    rot.a[f] = r;
+    rot.d[f] = Math.abs(r);
+    if (rot.d[f]! > maxRot) maxRot = rot.d[f]!;
+    const g = (s.ownScale[f]! - s.ownScale[f - 1]!) * s.radius * u;
+    scl.a[f] = g;
+    scl.d[f] = Math.abs(g);
+    if (scl.d[f]! > maxScl) maxScl = scl.d[f]!;
   }
-  return { seen, faintless, inFrame, channels: [pos, rot, scl] };
+  st.largest[0] = maxPos;
+  st.largest[1] = maxRot;
+  st.largest[2] = maxScl;
 }
 
 const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; readonly what: string }>> = {
@@ -421,10 +442,17 @@ export function relativeSteps(series: MotionSeries, s: PlacedSeries): { dx: Floa
   return { dx, dy };
 }
 
-function tooFast(series: MotionSeries, s: PlacedSeries, out: Finding[]): void {
+function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out: Finding[]): void {
   const F = series.frames;
   const view = series.views[s.node.layer]!;
   const node = s.node.node;
+  // A part that neither moves inside its parent nor rides on one that turns cannot strobe by itself.
+  if (node.type !== 'label' && s.node.parent >= 0 && ownLargest < T.fastMinPx) {
+    const parent = series.placed[s.node.parent]!;
+    let turns = parent.still === false && parent.rot[0] !== parent.rot[F - 1];
+    for (let f = 1; !turns && f < F; f += 1) turns = parent.rot[f] !== parent.rot[f - 1];
+    if (!turns) return;
+  }
   const rel = relativeSteps(series, s);
   // No direction of a shape is narrower than twice its inner radius: a cheap first test.
   const narrow = node.type === 'shape' ? 2 * shapeExtent(node.shape).inner : 0;
@@ -490,14 +518,20 @@ export function detectMotion(series: MotionSeries): Finding[] {
   const c = series.shot;
   const F = series.frames;
   const out: Finding[] = [];
+  // One set of buffers for all nodes.
+  const st = newSteps(F);
+  const big = new Uint8Array(F);
+  const okSeen = new Uint8Array(F);
+  const okSize = new Uint8Array(F);
+  // Below this no detector has anything to say about a channel.
+  const quiet = Math.min(T.jumpPx / 2, T.abruptMinPx, T.mechMinSpeedPx);
 
   for (const s of series.placed) {
     if (!s) continue;
-    // A group with nothing in it is an anchor: it is never seen.
-    if (s.type === 'group' && s.radius <= 0) continue;
-    const st = ownSteps(series, s);
+    // A group with nothing in it is an anchor: it is never seen. And what nothing animates has no motion to judge.
+    if (s.still || (s.type === 'group' && s.radius <= 0)) continue;
+    ownSteps(series, s, st);
     const zoom = series.views[s.node.layer]!.zoom;
-    const big = new Uint8Array(F);
     for (let f = 1; f < F; f++) {
       const r = s.radius * Math.max(s.scale[f - 1]!, s.scale[f]!) * zoom[f]!;
       big[f] = r >= T.minRadiusPx ? 1 : 0;
@@ -507,8 +541,6 @@ export function detectMotion(series: MotionSeries): Finding[] {
 
     // Jumps. Position and rotation need the node seen on both sides; size is
     // judged across a pop too, where the hidden side counts as size zero.
-    const okSeen = new Uint8Array(F);
-    const okSize = new Uint8Array(F);
     for (let f = 1; f < F; f++) {
       okSeen[f] = st.seen[f] && st.inFrame[f] && big[f] ? 1 : 0;
       okSize[f] = st.faintless[f] && st.inFrame[f] && big[f] ? 1 : 0;
@@ -517,10 +549,10 @@ export function detectMotion(series: MotionSeries): Finding[] {
     // contact changes them within a frame; its size and opacity are animated
     // like those of any node.
     if (!s.solver) {
-      jumps(s.id, pos, okSeen, F, mine);
-      jumps(s.id, rot, okSeen, F, mine);
+      if (st.largest[0] >= quiet) jumps(s.id, pos, okSeen, F, mine);
+      if (st.largest[1] >= quiet) jumps(s.id, rot, okSeen, F, mine);
     }
-    jumps(s.id, scl, okSize, F, mine);
+    if (st.largest[2] >= quiet) jumps(s.id, scl, okSize, F, mine);
     // Opacity: a third of full opacity in one frame is a pop.
     for (let f = 1; f < F; f++) {
       if (!st.inFrame[f] || !big[f]) continue;
@@ -536,10 +568,11 @@ export function detectMotion(series: MotionSeries): Finding[] {
       const onsets = bumpOnsets(c, s.node.index);
       const eased: Finding[] = [];
       const flat: Finding[] = [];
-      for (const ch of s.solver ? [scl] : st.channels) {
+      st.channels.forEach((ch, i) => {
+        if ((s.solver && ch !== scl) || st.largest[i]! < quiet) return;
         abrupt(s.id, ch, st, F, onsets, eased);
         mechanical(s.id, ch, st, s, F, flat);
-      }
+      });
       // A constant-speed move starts and stops abruptly by nature, and a jump is
       // a start and a stop at once: one finding says it.
       const leaps = mine.filter((j) => j.kind === 'jump');
@@ -552,7 +585,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
       mine.push(...flat);
     }
 
-    if (s.type !== 'group' || s.node.parent < 0) tooFast(series, s, mine);
+    if (s.type !== 'group' || s.node.parent < 0) tooFast(series, s, st.largest[0], mine);
     out.push(...mine);
   }
 
@@ -645,10 +678,10 @@ export function detectMotion(series: MotionSeries): Finding[] {
       scl.a[f] = (z - series.camera.zoom[f - 1]!) * (STAGE_W / 2);
       scl.d[f] = Math.abs(scl.a[f]!);
     }
-    const st: Steps = { seen: all, faintless: all, inFrame: all, channels: [pos, chan('rotation', F), scl] };
+    const cam: Steps = { seen: all, faintless: all, inFrame: all, channels: [pos, chan('rotation', F), scl], largest: [0, 0, 0] };
     for (const ch of [pos, scl]) {
       jumps(CAMERA_SUBJECT, ch, all, F, out);
-      abrupt(CAMERA_SUBJECT, ch, st, F, new Set(), out);
+      abrupt(CAMERA_SUBJECT, ch, cam, F, new Set(), out);
     }
   }
 
