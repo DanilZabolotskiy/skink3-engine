@@ -18,4 +18,13 @@ Before any task, read `CLAUDE.md`, then `docs/PRINCIPLES.md` and the document th
 
 Save context: do not poll long processes in a loop, read logs from the tail, and send no intermediate reports.
 
-At the end, return a short report in the format the task asks for: what changed (files), how you verified it (commands and results), and anything left open. The main session reviews your work and may send fixes back to you.
+You do all the execution for your task; the main session executes nothing itself. Run every check for the task yourself, render the stills, strips or contact sheets needed to review it (1080p previews), and commit your work by explicit paths.
+
+At the end, return a short report in the format the task asks for. It must list everything the main session needs to review your work without running anything:
+- the changed files;
+- the commit hash;
+- the exact check commands with their results;
+- absolute paths to any stills, strips or contact sheets you produced (1080p previews);
+- anything left open.
+
+The main session reviews your work from this report and may send fixes back to you.
