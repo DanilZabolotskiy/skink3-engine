@@ -7,7 +7,7 @@ import type { CompiledShot } from '../scene/compile.ts';
 import { CAMERA_SUBJECT } from '../scene/types.ts';
 import type { Finding } from './detect.ts';
 import { renderGraph } from './graph.ts';
-import type { MotionReport } from './report.ts';
+import { familyOf, type MotionReport } from './report.ts';
 import type { MotionSeries } from './series.ts';
 import { renderTrail } from './trail.ts';
 
@@ -27,7 +27,8 @@ const GRAPH_PAD = 90;
 
 /**
  * Trails and graphs of the `count` worst subjects of a report. Subjects that
- * have no place of their own (a region of the frame, a link) are passed over.
+ * have no place of their own (a region of the frame, a link) are passed over,
+ * and of generated nodes that share their findings only the worst is drawn.
  */
 export async function motionPictures(
   c: CompiledShot,
@@ -45,11 +46,16 @@ export async function motionPictures(
   }
   const F = series.frames;
   let made = 0;
+  // Generated nodes with the same findings show the same thing: one of a family is enough.
+  const families = new Set<string>();
   for (const [subject, list] of bySubject) {
     if (made >= opts.count) break;
     const node = c.byId.get(subject);
     const camera = subject === CAMERA_SUBJECT;
     if (!camera && (!node || node.node.type === 'link')) continue;
+    const family = `${familyOf(subject)}|${[...new Set(list.map((f) => f.kind))].sort().join(',')}`;
+    if (families.has(family)) continue;
+    families.add(family);
     made++;
     const prefix = `${String(made).padStart(2, '0')}_${camera ? 'camera' : subject}`;
     const worst = list[0]!;

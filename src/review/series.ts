@@ -55,7 +55,11 @@ export interface PlacedSeries {
   readonly alpha: Float32Array;
   /** The node's own opacity, without what it is nested in. */
   readonly ownAlpha: Float32Array;
-  /** Own motion: place in the parent's space (a label: offset from its target), in the parent's units. */
+  /**
+   * Own motion: place in the parent's space, in the parent's units. For a label
+   * and for a node on a follow spring: the offset from its target or parent in
+   * the layer's units, because that is the space such a node moves in.
+   */
   readonly ownX: Float32Array;
   readonly ownY: Float32Array;
   /** Own rotation in degrees, continuous. */
@@ -373,7 +377,14 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.unit[f] = zoom;
       } else if (n.parent >= 0) {
         const p = world[n.parent]!;
-        if (p.scale <= HIDDEN) {
+        if (n.springKind === 'follow') {
+          // A follower lives in the layer's space: its spring pulls it toward a place, not along
+          // with the parent's size or turn. Its own motion is its offset from the parent's origin.
+          s.ownX[f] = xf.x - p.x;
+          s.ownY[f] = xf.y - p.y;
+          s.ownScale[f] = xf.scale / Math.max(p.scale, 1e-9);
+          s.unit[f] = zoom;
+        } else if (p.scale <= HIDDEN) {
           // The parent has no size: the node's place inside it is not defined. It is filled in below.
           gap[i] = gap[i]! + 1;
         } else {

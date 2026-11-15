@@ -182,7 +182,7 @@ function describe(c: CompiledShot, subject: string): string {
 }
 
 /** Ids that differ only in their digits belong to one family: generated nodes with the same motion. */
-const familyOf = (id: string): string => id.replace(/\d+/g, '#');
+export const familyOf = (id: string): string => id.replace(/\d+/g, '#');
 
 /**
  * The report as text: a summary, then the findings grouped by subject, the

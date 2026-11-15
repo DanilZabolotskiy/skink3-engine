@@ -413,7 +413,8 @@ export function relativeSteps(series: MotionSeries, s: PlacedSeries): { dx: Floa
   const dx = new Float32Array(F);
   const dy = new Float32Array(F);
   const node = s.node.node;
-  if (node.type === 'label') {
+  if (node.type === 'label' || (s.node.parent >= 0 && s.node.springKind === 'follow')) {
+    // Their own place is already an offset in the layer's space.
     for (let f = 1; f < F; f++) {
       dx[f] = (s.ownX[f]! - s.ownX[f - 1]!) * s.unit[f]!;
       dy[f] = (s.ownY[f]! - s.ownY[f - 1]!) * s.unit[f]!;
@@ -447,7 +448,7 @@ function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out:
   const view = series.views[s.node.layer]!;
   const node = s.node.node;
   // A part that neither moves inside its parent nor rides on one that turns cannot strobe by itself.
-  if (node.type !== 'label' && s.node.parent >= 0 && ownLargest < T.fastMinPx) {
+  if (node.type !== 'label' && s.node.parent >= 0 && s.node.springKind !== 'follow' && ownLargest < T.fastMinPx) {
     const parent = series.placed[s.node.parent]!;
     let turns = parent.still === false && parent.rot[0] !== parent.rot[F - 1];
     for (let f = 1; !turns && f < F; f += 1) turns = parent.rot[f] !== parent.rot[f - 1];
