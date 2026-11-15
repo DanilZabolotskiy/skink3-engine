@@ -95,7 +95,8 @@ function changes(data: ArrayLike<number>, from: number, to: number, eps: number)
 export async function renderGraph(series: MotionSeries, opts: GraphOptions): Promise<GraphResult> {
   const c = series.shot;
   const F = series.frames;
-  const from = Math.max(0, Math.min(F - 1, opts.from ?? 0));
+  if (F < 2) throw new Error('graph: a shot of one frame has no motion to plot');
+  const from = Math.max(0, Math.min(F - 2, opts.from ?? 0));
   const to = Math.max(from + 1, Math.min(F - 1, opts.to ?? F - 1));
   const nan = (): Float32Array => new Float32Array(F).fill(NaN);
   const panels: Panel[] = [];
