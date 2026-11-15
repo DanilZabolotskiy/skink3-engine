@@ -7,8 +7,31 @@
   "engines": {
     "node": ">=26"
   },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "skink3": "./bin/skink3.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "assets",
+    "docs",
+    "examples",
+    "README.md"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts",
+    "demo:check": "node bin/skink3.mjs check examples/demo/scene.ts",
+    "demo:bake": "node bin/skink3.mjs bake examples/demo/scene.ts",
+    "demo:still": "node bin/skink3.mjs still examples/demo/scene.ts --frame 450",
+    "demo:strip": "node bin/skink3.mjs strip examples/demo/scene.ts --from 388 --count 24 --step 3 --cols 8 --crop 940,290,420,360",
+    "demo:sheet": "node bin/skink3.mjs sheet examples/demo/scene.ts",
+    "demo:render": "node bin/skink3.mjs render examples/demo/scene.ts",
     "bench:render": "node bench/render.mjs 1920 gpu 20",
     "bench:phys": "node bench/phys.mjs"
   },
