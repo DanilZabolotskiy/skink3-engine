@@ -5,7 +5,7 @@ import { ease } from '../core/easing.ts';
 import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
 import { arcBump, bumpScale, BUMP_SECONDS, moveProgress, popInScale, popOutScale } from './curves.ts';
-import type { BumpKey, DrawOnKey, MoveToKey, PopInKey, PopOutKey, PulseKey, TurnToKey } from './intents.ts';
+import type { BumpKey, DrawOnKey, FadeToKey, MoveToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from './intents.ts';
 
 /** A move never backs away or overshoots by more than this many units, however long it is. */
 export const MAX_ANTICIPATION_UNITS = 44;
@@ -85,9 +85,34 @@ export interface PopSeg {
   readonly overshoot: number;
 }
 
+export interface GrowSeg {
+  readonly at: number;
+  readonly dur: number;
+  readonly from: number;
+  readonly to: number;
+  readonly overshoot: number;
+}
+
 export interface ScaleTrack {
   readonly pops: readonly PopSeg[];
+  /** Lasting changes of size (scaleTo), each starting from the size reached before it. */
+  readonly grows: readonly GrowSeg[];
   readonly bumps: readonly { readonly at: number; readonly amount: number }[];
+}
+
+/** The lasting size multiplier at time t: 1 before the first scaleTo. */
+function sampleGrow(segs: readonly GrowSeg[], t: number): number {
+  let seg: GrowSeg | null = null;
+  for (const g of segs) {
+    if (t >= g.at) seg = g;
+    else break;
+  }
+  if (!seg) return 1;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  // Sizes are interpolated as ratios, so growing and shrinking overshoot alike
+  // and the size can never pass through zero.
+  return seg.from * (seg.to / seg.from) ** overshootStep(u, seg.overshoot, 0.5);
 }
 
 export function buildScaleTrack(
@@ -95,6 +120,7 @@ export function buildScaleTrack(
   ins: readonly PopInKey[],
   outs: readonly PopOutKey[],
   bumps: readonly { at: number; amount: number }[],
+  scales: readonly ScaleToKey[] = [],
 ): ScaleTrack {
   const pops: PopSeg[] = [
     ...ins.map((k): PopSeg => ({ kind: 'in', at: k.at, dur: k.dur, overshoot: k.overshoot })),
@@ -112,10 +138,16 @@ export function buildScaleTrack(
     prev = p;
     free = p.at + p.dur;
   }
-  return { pops, bumps: bumps.slice().sort((a, b) => a.at - b.at) };
+  // A scaleTo starts from the size the node has at that moment, also when the
+  // previous one is still under way.
+  const grows: GrowSeg[] = [];
+  for (const k of scales.slice().sort((a, b) => a.at - b.at)) {
+    grows.push({ at: k.at, dur: k.dur, from: sampleGrow(grows, k.at), to: k.to, overshoot: k.overshoot });
+  }
+  return { pops, grows, bumps: bumps.slice().sort((a, b) => a.at - b.at) };
 }
 
-/** The scale multiplier of a node at time t: pops times bumps. */
+/** The scale multiplier of a node at time t: pops times lasting size times bumps. */
 export function sampleScale(track: ScaleTrack, t: number): number {
   let s = 1;
   const first = track.pops[0];
@@ -139,7 +171,42 @@ export function sampleScale(track: ScaleTrack, t: number): number {
     const tau = t - b.at;
     if (tau < BUMP_SECONDS) extra += bumpScale(tau, b.amount);
   }
-  return s * (1 + extra);
+  return s * sampleGrow(track.grows, t) * (1 + extra);
+}
+
+export interface FadeSeg {
+  readonly at: number;
+  readonly dur: number;
+  readonly from: number;
+  readonly to: number;
+}
+
+export interface OpacityTrack {
+  /** Opacity before the first fadeTo. */
+  readonly base: number;
+  readonly segs: readonly FadeSeg[];
+}
+
+/** Opacity at time t, 0..1. */
+export function sampleOpacity(track: OpacityTrack, t: number): number {
+  let seg: FadeSeg | null = null;
+  for (const f of track.segs) {
+    if (t >= f.at) seg = f;
+    else break;
+  }
+  if (!seg) return track.base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  return seg.from + (seg.to - seg.from) * ease('inOutSine', u);
+}
+
+export function buildOpacityTrack(base: number, keys: readonly FadeToKey[]): OpacityTrack {
+  const segs: FadeSeg[] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    // Like scaleTo, a fade takes over from the opacity reached at that moment.
+    segs.push({ at: k.at, dur: k.dur, from: sampleOpacity({ base, segs }, k.at), to: k.to });
+  }
+  return { base, segs };
 }
 
 export interface TurnSeg {

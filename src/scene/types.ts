@@ -64,7 +64,7 @@ export interface ShapeNode extends NodeBase {
   readonly type: 'shape';
   readonly shape: ShapeSpec;
   readonly fill: ColorRef;
-  /** 0..1, constant. */
+  /** 0..1 at the start; fadeTo animates it. The shape and its children fade as one picture. */
   readonly opacity: number;
   /** Automatic light: shadow crescent, lit rim and highlight stroke. */
   readonly lit: boolean;
@@ -83,6 +83,8 @@ export interface ShapeNode extends NodeBase {
 
 export interface GroupNode extends NodeBase {
   readonly type: 'group';
+  /** 0..1 at the start; the whole group fades as one picture. */
+  readonly opacity: number;
   readonly children: readonly SceneNode[];
   readonly follow: SpringSpec | null;
   readonly idle: IdleSpec | null;
@@ -102,6 +104,8 @@ export interface LinkNode {
   readonly pulseColor: ColorRef;
   /** Units to leave free at each end (in addition to the end nodes' own radius). */
   readonly gap: number;
+  /** 0..1 at the start. A link also fades with the fainter of the two nodes it joins. */
+  readonly opacity: number;
 }
 
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
@@ -126,6 +130,8 @@ export interface LabelNode {
   readonly maxLines: number;
   readonly fill: ColorRef;
   readonly ink: ColorRef;
+  /** 0..1 at the start. */
+  readonly opacity: number;
   readonly follow: SpringSpec | null;
 }
 
@@ -135,6 +141,8 @@ export interface EyeNode extends NodeBase {
   readonly r: number;
   readonly white: ColorRef;
   readonly pupil: ColorRef;
+  /** 0..1 at the start. */
+  readonly opacity: number;
   /** Node to look at, or null to look straight ahead. */
   readonly lookAt: string | null;
   readonly blink: boolean;
@@ -200,7 +208,10 @@ export interface LayerSpec {
   readonly blur: number | null;
   /** How strongly the camera moves this layer (1 at depth 0); null derives it from the depth. */
   readonly parallax: number | null;
-  /** 0..1 atmospheric tint; null derives it from the depth. */
+  /**
+   * 0..1 atmospheric perspective: every colour of the layer loses saturation and
+   * moves this far toward the shot's atmosphere colour. null derives it from the depth.
+   */
   readonly tint: number | null;
 }
 

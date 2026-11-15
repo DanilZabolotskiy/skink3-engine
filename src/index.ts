@@ -7,7 +7,7 @@
 // --- Scene authoring -------------------------------------------------------
 export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
-export { moveTo, popIn, popOut, turnTo, bump, drawOn, pulse, stagger } from './motion/intents.ts';
+export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, stagger } from './motion/intents.ts';
 export { IntentError, type Key, type StaggerOrder } from './motion/intents.ts';
 export { definePalette, checkPalette, resolveColor, PALETTE_LAWS, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, Palette, PaletteIssue, PaletteSpec, Role } from './look/palette.ts';
@@ -43,8 +43,8 @@ export { FPS, SIM_DT, SUBSTEPS, frameToSeconds, secondsToFrame } from './core/ti
 export { ease, EASINGS, type EaseName } from './core/easing.ts';
 
 // --- Tools: compile, bake, evaluate, check, render -------------------------
-export { compileShot, CompileError, type CompiledShot, type CNode, type CLayer } from './scene/compile.ts';
-export { evaluate, computeWorld, labelLayout, type FrameState, type Item, type LayerState } from './scene/evaluate.ts';
+export { compileShot, defaultTint, CompileError, type CompiledShot, type CNode, type CLayer } from './scene/compile.ts';
+export { evaluate, computeWorld, flatItems, labelLayout, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';
 export { Bake, bakeHash, readBake, writeBake, type BakeHeader, type ContactEvent } from './physics/cache.ts';
 export { runChecks, formatReport, checkTextFit, type CheckReport, type CheckIssue } from './checks/index.ts';

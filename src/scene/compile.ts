@@ -11,13 +11,15 @@ import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
-import type { BumpKey, DrawOnKey, Key, MoveToKey, PopInKey, PopOutKey, PulseKey, TurnToKey } from '../motion/intents.ts';
+import type { BumpKey, DrawOnKey, FadeToKey, Key, MoveToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from '../motion/intents.ts';
 import {
   buildLinkTrack,
+  buildOpacityTrack,
   buildPosTrack,
   buildRotTrack,
   buildScaleTrack,
   type LinkTrack,
+  type OpacityTrack,
   type PosTrack,
   type RotTrack,
   type ScaleTrack,
@@ -34,6 +36,10 @@ export interface CNode {
   readonly layer: number;
   /** Index of the parent node, or -1 for a top-level node. */
   readonly parent: number;
+  /** Index of the last node of this node's subtree (its own index if it has no children). */
+  readonly subtreeEnd: number;
+  /** Opacity over time; null for nodes that have none (emitters). */
+  readonly opacity: OpacityTrack | null;
   readonly pos: PosTrack | null;
   readonly rot: RotTrack | null;
   readonly scale: ScaleTrack | null;
@@ -102,6 +108,14 @@ function fail(message: string): never {
   throw new CompileError(message);
 }
 
+/**
+ * Atmospheric perspective by depth: 0 at the focus plane and in front of it,
+ * rising quickly behind it (0.55 at depth 1, 0.80 at depth 2) up to 0.9.
+ */
+export function defaultTint(depth: number): number {
+  return depth > 0 ? Math.min(0.9, 1 - Math.exp(-0.8 * depth)) : 0;
+}
+
 /** Seconds between two blinks, and how long a blink lasts. */
 export const BLINK = { minGap: 2.2, maxGap: 5.2, seconds: 0.2 } as const;
 
@@ -116,6 +130,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     node: SceneNode;
     layer: number;
     parent: number;
+    subtreeEnd: number;
   }
   const drafts: Draft[] = [];
   const idIndex = new Map<string, number>();
@@ -129,7 +144,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     if (idIndex.has(node.id)) fail(`${where}: duplicate node id "${node.id}"; ids must be unique within the shot`);
     const index = drafts.length;
     idIndex.set(node.id, index);
-    drafts.push({ index, node, layer, parent });
+    const draft: Draft = { index, node, layer, parent, subtreeEnd: index };
+    drafts.push(draft);
     layerNodes[layer]!.push(index);
     if (parent >= 0 && !isPlaced(node)) {
       fail(`${where}: ${node.type} "${node.id}" must be listed directly in a layer's nodes, not as a child of "${drafts[parent]!.node.id}"`);
@@ -137,6 +153,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     if (node.type === 'shape' || node.type === 'group') {
       for (const child of node.children) visit(child, layer, index);
     }
+    draft.subtreeEnd = drafts.length - 1;
   };
   spec.layers.forEach((layer, li) => {
     if (layerIds.has(layer.id)) fail(`${where}: duplicate layer id "${layer.id}"`);
@@ -170,6 +187,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const popIns = new Map<number, PopInKey[]>();
   const popOuts = new Map<number, PopOutKey[]>();
   const bumps = new Map<number, { at: number; amount: number }[]>();
+  const scales = new Map<number, ScaleToKey[]>();
+  const fades = new Map<number, FadeToKey[]>();
   const draws = new Map<number, DrawOnKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const push = <T>(map: Map<number, T[]>, index: number, item: T): void => {
@@ -204,6 +223,15 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'popOut':
         need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
         push(popOuts, index, key);
+        break;
+      case 'scaleTo':
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        if (node.type === 'shape' && node.body) fail(`${where}: scaleTo cannot target "${node.id}": the size of a rigid body is fixed by the physics bake`);
+        push(scales, index, key);
+        break;
+      case 'fadeTo':
+        need(node.type !== 'emitter', 'shapes, groups, eyes, labels and links');
+        push(fades, index, key);
         break;
       case 'bump':
         need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
@@ -352,7 +380,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         rot = buildRotTrack(node.id, node.rotation, turns.get(d.index) ?? []);
       }
       if (isPlaced(node) || node.type === 'label') {
-        scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? []);
+        scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? [], scales.get(d.index) ?? []);
       }
       if (node.type === 'link') {
         linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? []);
@@ -367,6 +395,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       node,
       layer: d.layer,
       parent: d.parent,
+      subtreeEnd: d.subtreeEnd,
+      opacity: node.type === 'emitter' ? null : buildOpacityTrack(node.opacity, fades.get(d.index) ?? []),
       pos,
       rot,
       scale,
@@ -397,7 +427,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       nodes: layerNodes[li]!,
       parallax: layer.parallax ?? 1 / (1 + depth),
       blur: layer.blur ?? (depth >= 0 ? cam.focus.far * depth : cam.focus.near * -depth),
-      tint: layer.tint ?? (depth > 0 ? Math.min(0.62, 0.3 * depth) : 0),
+      tint: layer.tint ?? defaultTint(depth),
     };
   });
 

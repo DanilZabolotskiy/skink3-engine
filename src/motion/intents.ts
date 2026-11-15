@@ -70,7 +70,27 @@ export interface PulseKey {
   readonly bump: number;
 }
 
-export type Key = MoveToKey | PopInKey | PopOutKey | TurnToKey | BumpKey | DrawOnKey | PulseKey;
+export interface ScaleToKey {
+  readonly kind: 'scaleTo';
+  readonly target: string;
+  readonly at: number;
+  /** New size as a multiple of the node's authored size (1 = as authored). */
+  readonly to: number;
+  readonly dur: number;
+  /** How far it shoots past the new size, as a fraction of the change. */
+  readonly overshoot: number;
+}
+
+export interface FadeToKey {
+  readonly kind: 'fadeTo';
+  readonly target: string;
+  readonly at: number;
+  /** New opacity, 0..1. */
+  readonly to: number;
+  readonly dur: number;
+}
+
+export type Key = MoveToKey | PopInKey | PopOutKey | TurnToKey | ScaleToKey | FadeToKey | BumpKey | DrawOnKey | PulseKey;
 
 export class IntentError extends Error {}
 
@@ -145,6 +165,39 @@ export function turnTo(id: string, opts: { at: number; to: number; dur?: number;
     to: num(w, 'to', opts.to, -1e5, 1e5),
     dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.1, 0, 0.5),
+  };
+}
+
+/**
+ * Change a node's size for good: it grows (or shrinks) to `to` times its
+ * authored size, overshoots and settles. Several keys chain: each starts from
+ * the size the node has at that moment. Pops and bumps play on top of it.
+ */
+export function scaleTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): ScaleToKey {
+  const w = `scaleTo("${id}")`;
+  return {
+    kind: 'scaleTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, 0, MAX_T),
+    to: num(w, 'to', opts.to, 0.01, 100),
+    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
+    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+  };
+}
+
+/**
+ * Fade a node to an opacity (0..1). A node and everything in it fade as one
+ * picture, with its light and its glow. Several keys chain from the opacity the
+ * node has at that moment.
+ */
+export function fadeTo(id: string, opts: { at: number; to: number; dur?: number }): FadeToKey {
+  const w = `fadeTo("${id}")`;
+  return {
+    kind: 'fadeTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, 0, MAX_T),
+    to: num(w, 'to', opts.to, 0, 1),
+    dur: num(w, 'dur', opts.dur ?? 0.5, 0.05, 60),
   };
 }
 

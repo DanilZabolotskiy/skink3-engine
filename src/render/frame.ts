@@ -1,6 +1,6 @@
 // Frame compositing on Skia: background, glow lift, depth layers back to front
-// (each with its blur and atmospheric tint), halos, vignette. The result is a
-// canvas whose pixels can be read back as raw RGBA.
+// (each with its blur and its atmospheric perspective), halos, vignette. The
+// result is a canvas whose pixels can be read back as raw RGBA.
 //
 // No texture, no grain: flat fills and gradients only.
 
@@ -9,10 +9,10 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, type FrameState, type Item, type LayerState } from '../scene/evaluate.ts';
+import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type ShapeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
-import { drawEye, drawLabel, drawLink, drawLinkGlow, drawParticles, drawShape, drawShapeGlow } from './draw.ts';
+import { drawEye, drawLabel, drawLink, drawLinkGlow, drawParticles, drawShape, drawShapeGlow, makePaint, type Paint } from './draw.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -31,12 +31,13 @@ export function heightFor(width: number): number {
 /** Samples per pixel used when exporting from the GPU. */
 export const GPU_MSAA = 4;
 
-function glowStrength(item: Item): number {
+/** How strongly an item feeds the halo: its glow times its opacity down the tree. */
+function glowStrength(item: LeafItem): number {
   switch (item.kind) {
     case 'shape':
-      return (item.node.node as ShapeNode).glow;
+      return (item.node.node as ShapeNode).glow * item.alpha;
     case 'link':
-      return item.pulses.length > 0 ? 1 : 0;
+      return item.pulses.length > 0 ? item.alpha : 0;
     case 'particles':
       return item.node.node.type === 'emitter' ? item.node.node.glow : 0;
     default:
@@ -45,7 +46,7 @@ function glowStrength(item: Item): number {
 }
 
 /** Radius (in layer units) that sets how wide the halo of an item is. */
-function glowReach(item: Item): number {
+function glowReach(item: LeafItem): number {
   if (item.kind === 'shape') return shapeExtent((item.node.node as ShapeNode).shape).outer * item.xf.scale;
   return 12;
 }
@@ -60,22 +61,52 @@ function newCanvas(scratch: Scratch, w: number, h: number, gpu: boolean): Canvas
   return c;
 }
 
+/** What is needed to open another canvas that lines up with a layer's canvas. */
+interface LayerTarget {
+  readonly scratch: Scratch;
+  readonly layer: LayerState;
+  readonly width: number;
+  readonly height: number;
+  readonly k: number;
+  readonly pad: number;
+  readonly gpu: boolean;
+}
+
 /** A canvas larger than the frame by `pad` pixels on every side, set up to draw in layer space. */
-function layerCanvas(
-  scratch: Scratch,
-  layer: LayerState,
-  width: number,
-  height: number,
-  k: number,
-  pad: number,
-  gpu: boolean,
-): { canvas: Canvas; ctx: CanvasRenderingContext2D } {
-  const canvas = newCanvas(scratch, width + 2 * pad, height + 2 * pad, gpu);
+function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingContext2D } {
+  const canvas = newCanvas(t.scratch, t.width + 2 * t.pad, t.height + 2 * t.pad, t.gpu);
   const ctx = canvas.getContext('2d');
-  ctx.translate(pad, pad);
-  ctx.scale(k, k);
-  ctx.transform(layer.view.zoom, 0, 0, layer.view.zoom, layer.view.tx, layer.view.ty);
+  ctx.translate(t.pad, t.pad);
+  ctx.scale(t.k, t.k);
+  ctx.transform(t.layer.view.zoom, 0, 0, t.layer.view.zoom, t.layer.view.tx, t.layer.view.ty);
   return { canvas, ctx };
+}
+
+/**
+ * Draws items in order. A group is drawn into a canvas of its own and that
+ * picture is composited at the group's opacity, so a faded node fades as a
+ * whole: its light, its children and anything overlapping inside it.
+ */
+function drawItems(ctx: CanvasRenderingContext2D, items: readonly Item[], paint: Paint, target: LayerTarget): void {
+  for (const item of items) {
+    switch (item.kind) {
+      case 'shape': drawShape(ctx, item, paint); break;
+      case 'eye': drawEye(ctx, item, paint); break;
+      case 'link': drawLink(ctx, item, paint); break;
+      case 'label': drawLabel(ctx, item, paint); break;
+      case 'particles': drawParticles(ctx, item, paint); break;
+      case 'group': {
+        const { canvas, ctx: gx } = layerCanvas(target);
+        drawItems(gx, item.items, paint, target);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = item.opacity;
+        ctx.drawCanvas(canvas, 0, 0);
+        ctx.restore();
+        break;
+      }
+    }
+  }
 }
 
 export interface DrawnFrame {
@@ -98,7 +129,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   const layers = state.layers
     .map((layer, i) => ({ layer, i }))
     .sort((a, b) => b.layer.layer.spec.depth - a.layer.layer.spec.depth || a.i - b.i)
-    .map((x) => x.layer);
+    .map((x) => ({ layer: x.layer, leaves: flatItems(x.layer.items), paint: makePaint(c.light, c.atmosphere, x.layer.layer.tint) }));
 
   // 1. Background gradient.
   ctx.save();
@@ -113,19 +144,20 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
 
   // 2. Background lift: every glowing shape brightens what is behind it.
   ctx.globalCompositeOperation = 'screen';
-  for (const layer of layers) {
-    for (const item of layer.items) {
+  for (const { layer, leaves, paint } of layers) {
+    for (const item of leaves) {
       if (item.kind !== 'shape') continue;
       const node = item.node.node as ShapeNode;
-      if (node.glow <= 0) continue;
+      const strength = node.glow * item.alpha * Math.min(1, item.xf.scale);
+      if (strength <= 0) continue;
       const v = layer.view;
       const x = item.xf.x * v.zoom + v.tx;
       const y = item.xf.y * v.zoom + v.ty;
       const r = shapeExtent(node.shape).outer * item.xf.scale * v.zoom * GLOW.liftRadius;
       if (r < 1) continue;
-      const color = item.node.colors['fill']!;
+      const color = paint.tone('base', item.node.colors['fill']!);
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const a = GLOW.liftAlpha * node.glow * node.opacity * Math.min(1, item.xf.scale);
+      const a = GLOW.liftAlpha * strength;
       g.addColorStop(0, withAlpha(color, a));
       g.addColorStop(0.35, withAlpha(color, a * 0.45));
       g.addColorStop(1, withAlpha(color, 0));
@@ -136,35 +168,24 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   ctx.restore();
 
   // 3. Layers.
-  for (const layer of layers) {
-    if (layer.items.length === 0) continue;
+  for (const { layer, leaves, paint } of layers) {
+    if (leaves.length === 0) continue;
     const blurPx = layer.layer.blur * k * layer.view.zoom;
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
-    const { canvas: lc, ctx: lx } = layerCanvas(scratch, layer, width, height, k, pad, opts.gpu);
+    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu };
+    const { canvas: lc, ctx: lx } = layerCanvas(target);
+    drawItems(lx, layer.items, paint, target);
 
     let glowReachMax = 0;
     let anyGlow = false;
-    for (const item of layer.items) {
-      switch (item.kind) {
-        case 'shape': drawShape(lx, item, c.light); break;
-        case 'eye': drawEye(lx, item, c.light); break;
-        case 'link': drawLink(lx, item); break;
-        case 'label': drawLabel(lx, item); break;
-        case 'particles': drawParticles(lx, item); break;
-      }
+    for (const item of leaves) {
       if (glowStrength(item) > 0) {
         anyGlow = true;
         glowReachMax = Math.max(glowReachMax, glowReach(item));
       }
     }
-    if (layer.layer.tint > 0) {
-      // Atmosphere: tint what was drawn, and only that, toward the far colour.
-      lx.setTransform(1, 0, 0, 1, 0, 0);
-      lx.globalCompositeOperation = 'source-atop';
-      lx.fillStyle = withAlpha(c.atmosphere, layer.layer.tint);
-      lx.fillRect(0, 0, width + 2 * pad, height + 2 * pad);
-    }
+
     // Halo: the glowing parts again, blurred. The wide pass goes under the layer,
     // so that it surrounds the glowing thing without washing it out; the tight
     // pass goes on top and makes its edge bloom.
@@ -174,13 +195,13 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       const tight = Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx;
       const wide = Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx;
       const gpad = Math.ceil(wide * 3);
-      const { canvas: gc, ctx: gx } = layerCanvas(scratch, layer, width, height, k, gpad, opts.gpu);
-      for (const item of layer.items) {
+      const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
+      for (const item of leaves) {
         const s = glowStrength(item);
         if (s <= 0) continue;
-        if (item.kind === 'shape') drawShapeGlow(gx, item);
-        else if (item.kind === 'link') drawLinkGlow(gx, item);
-        else if (item.kind === 'particles') drawParticles(gx, item, s);
+        if (item.kind === 'shape') drawShapeGlow(gx, item, paint);
+        else if (item.kind === 'link') drawLinkGlow(gx, item, paint);
+        else if (item.kind === 'particles') drawParticles(gx, item, paint, s);
       }
       halo = { canvas: gc, pad: gpad, tight, wide };
       ctx.save();

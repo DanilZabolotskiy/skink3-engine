@@ -135,7 +135,7 @@ export interface ShapeOptions {
   rotation?: number;
   /** Default 1. */
   scale?: number;
-  /** 0..1; default 1. */
+  /** 0..1 at the start; default 1. Animate it with fadeTo(). */
   opacity?: number;
   /** Automatic light; default true. */
   lit?: boolean;
@@ -247,18 +247,21 @@ export function group(o: {
   at?: Vec2;
   rotation?: number;
   scale?: number;
+  /** 0..1 at the start; default 1. The group fades as one picture. */
+  opacity?: number;
   children?: readonly SceneNode[];
   follow?: SpringSpec;
   idle?: IdleSpec;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'children', 'follow', 'idle']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'children', 'follow', 'idle']);
   return {
     type: 'group',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     children: children(where, o.children),
     follow: spring(where, 'follow', o.follow),
     idle: idle(where, o.idle),
@@ -279,9 +282,11 @@ export function link(o: {
   width?: number;
   /** Extra free space at each end; default 6. */
   gap?: number;
+  /** 0..1 at the start; default 1. */
+  opacity?: number;
 }): LinkNode {
   const where = `link("${o?.id}")`;
-  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap']);
+  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity']);
   const c = color(where, 'color', o.color);
   return {
     type: 'link',
@@ -293,6 +298,7 @@ export function link(o: {
     color: c,
     pulseColor: o.pulseColor === undefined ? c : color(where, 'pulseColor', o.pulseColor),
     gap: o.gap === undefined ? 6 : num(where, 'gap', o.gap, 0, 400),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
   };
 }
 
@@ -321,10 +327,12 @@ export function label(o: {
   maxWidth?: number;
   /** Default 3. */
   maxLines?: number;
+  /** 0..1 at the start; default 1. */
+  opacity?: number;
   follow?: SpringSpec;
 }): LabelNode {
   const where = `label("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'follow']);
+  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "label.core", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
@@ -344,6 +352,7 @@ export function label(o: {
     maxLines: o.maxLines === undefined ? 3 : num(where, 'maxLines', o.maxLines, 1, 12),
     fill: color(where, 'fill', o.fill),
     ink: color(where, 'ink', o.ink),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     follow: spring(where, 'follow', o.follow),
   };
 }
@@ -356,12 +365,14 @@ export function eye(o: {
   pupil: ColorRef;
   at?: Vec2;
   scale?: number;
+  /** 0..1 at the start; default 1. */
+  opacity?: number;
   lookAt?: string;
   /** Default true. */
   blink?: boolean;
 }): EyeNode {
   const where = `eye("${o?.id}")`;
-  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'lookAt', 'blink']);
+  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink']);
   return {
     type: 'eye',
     id: idOf(where, o.id),
@@ -371,6 +382,7 @@ export function eye(o: {
     r: num(where, 'r', o.r, 1, 2000),
     white: color(where, 'white', o.white),
     pupil: color(where, 'pupil', o.pupil),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     lookAt: o.lookAt === undefined ? null : idOf(where, o.lookAt),
     blink: o.blink ?? true,
   };
@@ -476,7 +488,7 @@ export function layer(o: {
   blur?: number;
   /** Default 1 / (1 + depth). */
   parallax?: number;
-  /** 0..1 atmospheric tint; default derived from depth. */
+  /** 0..1 atmospheric perspective (paler, less saturated, toward the atmosphere colour); default derived from depth. */
   tint?: number;
 }): LayerSpec {
   const where = `layer("${o?.id}")`;

@@ -144,3 +144,26 @@ export function lightTone(hex: string, amount = 0.4): string {
     v: c.v + (1 - c.v) * amount,
   }));
 }
+
+/** Share of its saturation a colour loses at full atmospheric perspective. */
+export const ATMOSPHERE_DESATURATION = 0.6;
+
+/**
+ * Atmospheric perspective on one colour: it loses saturation and moves toward
+ * the atmosphere colour. `amount` 0 leaves it alone, 1 turns it into the
+ * atmosphere colour. Far things thus end up paler and closer to one tone.
+ *
+ * The blend runs around the colour wheel (hue along the short way, saturation
+ * and value straight), not through the middle of it: a warm colour fading into
+ * a cool atmosphere never passes through gray.
+ */
+export function atmosphereTone(hex: string, atmosphere: string, amount: number): string {
+  if (amount <= 0) return hex;
+  const a = clamp01(amount);
+  const c = hexToHsv(hex);
+  const to = hexToHsv(atmosphere);
+  // A colour without saturation has no hue of its own; it takes the atmosphere's.
+  const h = c.s < 1e-6 ? to.h : c.h + angleDiffDeg(c.h, to.h) * a;
+  const pale = c.s * (1 - ATMOSPHERE_DESATURATION * a);
+  return toHex(hsvToRgb({ h, s: pale + (to.s - pale) * a, v: c.v + (to.v - c.v) * a }));
+}

@@ -6,7 +6,7 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { samplePos, sampleReveal, sampleRot, sampleScale } from '../motion/tracks.ts';
+import { sampleOpacity, samplePos, sampleReveal, sampleRot, sampleScale } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { reach } from '../shape/geometry.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -100,16 +100,24 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
   return out;
 }
 
+/**
+ * Every drawn item carries `alpha`: the product of its own opacity and the
+ * opacities of everything it is nested in. The picture itself gets that opacity
+ * from the groups around the item (see GroupItem); `alpha` is what the glow and
+ * the checks use.
+ */
 export interface ShapeItem {
   readonly kind: 'shape';
   readonly node: CNode;
   readonly xf: Xf;
+  readonly alpha: number;
 }
 
 export interface EyeItem {
   readonly kind: 'eye';
   readonly node: CNode;
   readonly xf: Xf;
+  readonly alpha: number;
   /** Pupil offset in the eye's local space, as a fraction of its free travel (length 0..1). */
   readonly look: Vec2;
   /** 1 = open, near 0 = closed. */
@@ -124,6 +132,7 @@ export interface LinkItem {
   /** How much of it is drawn, 0..1 from the start. */
   readonly reveal: number;
   readonly pulses: readonly { readonly head: number; readonly tail: number }[];
+  readonly alpha: number;
 }
 
 export interface LabelItem {
@@ -134,6 +143,7 @@ export interface LabelItem {
   readonly scale: number;
   readonly geometry: LabelGeometry;
   readonly layout: TextLayout;
+  readonly alpha: number;
 }
 
 export interface ParticlesItem {
@@ -143,7 +153,30 @@ export interface ParticlesItem {
   readonly data: Float32Array;
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem;
+/**
+ * A node that is not fully opaque, together with everything inside it. The
+ * renderer draws the items into one picture and composites that picture at
+ * `opacity`, so overlapping parts do not show through each other. Groups nest:
+ * opacity multiplies down the tree.
+ */
+export interface GroupItem {
+  readonly kind: 'group';
+  readonly node: CNode;
+  readonly opacity: number;
+  readonly items: readonly Item[];
+}
+
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | GroupItem;
+export type LeafItem = Exclude<Item, GroupItem>;
+
+/** All items of a list with the groups opened up, in draw order. */
+export function flatItems(items: readonly Item[], out: LeafItem[] = []): LeafItem[] {
+  for (const item of items) {
+    if (item.kind === 'group') flatItems(item.items, out);
+    else out.push(item);
+  }
+  return out;
+}
 
 export interface LayerState {
   readonly layer: CLayer;
@@ -188,6 +221,22 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
 
 /** Scale below which a node is treated as hidden. */
 const HIDDEN = 1e-3;
+/** Opacity below which a node is not drawn, and above which it is drawn without a group. */
+const FAINT = 0.002;
+const OPAQUE = 0.998;
+
+/** Drops groups that ended up with nothing to draw. */
+function prune(items: readonly Item[]): Item[] {
+  const out: Item[] = [];
+  for (const item of items) {
+    if (item.kind !== 'group') out.push(item);
+    else {
+      const inner = prune(item.items);
+      if (inner.length > 0) out.push({ ...item, items: inner });
+    }
+  }
+  return out;
+}
 
 function eyeOpen(blinks: readonly number[], t: number): number {
   for (const b of blinks) {
@@ -210,17 +259,49 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const world = computeWorld(c, frame, posesFromBake(bake));
   const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames);
 
+  // Opacity of every node: its own, and the product down the tree. A link also
+  // takes the fainter of the two nodes it joins.
+  const own = new Float64Array(c.nodes.length).fill(1);
+  const alpha = new Float64Array(c.nodes.length).fill(1);
+  for (const n of c.nodes) {
+    own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
+    alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
+  }
+  for (const n of c.nodes) {
+    if (n.node.type !== 'link') continue;
+    own[n.index] = own[n.index]! * Math.min(alpha[n.fromIndex]!, alpha[n.toIndex]!);
+    alpha[n.index] = own[n.index]!;
+  }
+
   const layers = c.layers.map((layer): LayerState => {
-    const items: Item[] = [];
+    const root: Item[] = [];
+    // Open groups: the items of a faded node and of its subtree go into its group.
+    const open: { end: number; items: Item[] }[] = [];
+    let skipUntil = -1;
     for (const index of layer.nodes) {
+      if (index <= skipUntil) continue;
+      while (open.length > 0 && index > open[open.length - 1]!.end) open.pop();
       const n = c.nodes[index]!;
       const node = n.node;
       const xf = world[index]!;
+      const a = alpha[index]!;
+      if (own[index]! <= FAINT) {
+        // Invisible, and so is everything inside it.
+        skipUntil = n.subtreeEnd;
+        continue;
+      }
+      let items = open.length > 0 ? open[open.length - 1]!.items : root;
+      if (own[index]! < OPAQUE) {
+        const group: Item[] = [];
+        items.push({ kind: 'group', node: n, opacity: own[index]!, items: group });
+        open.push({ end: n.subtreeEnd, items: group });
+        items = group;
+      }
       switch (node.type) {
         case 'group':
           break;
         case 'shape':
-          if (xf.scale > HIDDEN && node.opacity > 0) items.push({ kind: 'shape', node: n, xf });
+          if (xf.scale > HIDDEN) items.push({ kind: 'shape', node: n, xf, alpha: a });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -235,37 +316,37 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
               look = vrot([(dx / dist) * m, (dy / dist) * m], -xf.rot);
             }
           }
-          items.push({ kind: 'eye', node: n, xf, look, open: eyeOpen(n.blinks, t) });
+          items.push({ kind: 'eye', node: n, xf, look, open: eyeOpen(n.blinks, t), alpha: a });
           break;
         }
         case 'link': {
-          const a = world[n.fromIndex]!;
-          const b = world[n.toIndex]!;
-          if (a.scale <= HIDDEN || b.scale <= HIDDEN) break;
+          const from = world[n.fromIndex]!;
+          const to = world[n.toIndex]!;
+          if (from.scale <= HIDDEN || to.scale <= HIDDEN) break;
           const reveal = sampleReveal(n.link!, t);
           if (reveal <= 0) break;
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
+          const dx = to.x - from.x;
+          const dy = to.y - from.y;
           const len = Math.hypot(dx, dy);
           if (len < 1e-6) break;
           const dir: Vec2 = [dx / len, dy / len];
-          const r0 = reachOf(c.nodes[n.fromIndex]!, a, dir) + node.gap;
-          const r1 = reachOf(c.nodes[n.toIndex]!, b, [-dir[0], -dir[1]]) + node.gap;
+          const r0 = reachOf(c.nodes[n.fromIndex]!, from, dir) + node.gap;
+          const r1 = reachOf(c.nodes[n.toIndex]!, to, [-dir[0], -dir[1]]) + node.gap;
           if (len <= r0 + r1 + 1) break;
-          const mid: Vec2 = [(a.x + b.x) / 2 - dir[1] * node.bend * len, (a.y + b.y) / 2 + dir[0] * node.bend * len];
-          const curve = quadSub([[a.x, a.y], mid, [b.x, b.y]], r0 / len, 1 - r1 / len);
+          const mid: Vec2 = [(from.x + to.x) / 2 - dir[1] * node.bend * len, (from.y + to.y) / 2 + dir[0] * node.bend * len];
+          const curve = quadSub([[from.x, from.y], mid, [to.x, to.y]], r0 / len, 1 - r1 / len);
           const pulses: { head: number; tail: number }[] = [];
           for (const p of n.link!.pulses) {
             const span = pulseSpan(t, p.at, p.dur);
             if (span && span.head > span.tail) pulses.push(span);
           }
-          items.push({ kind: 'link', node: n, curve, reveal, pulses });
+          items.push({ kind: 'link', node: n, curve, reveal, pulses, alpha: a });
           break;
         }
         case 'label': {
           if (xf.scale <= HIDDEN) break;
           const { layout, geometry } = labelLayout(c, n, lang);
-          items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout });
+          items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a });
           break;
         }
         case 'emitter': {
@@ -275,7 +356,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
       }
     }
-    return { layer, view: layerView(camera, layer.parallax), items };
+    return { layer, view: layerView(camera, layer.parallax), items: prune(root) };
   });
 
   return { frame, time: t, lang, camera, layers };
