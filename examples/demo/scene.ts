@@ -1,8 +1,9 @@
 // Demo shot: 15 seconds through the whole engine path, with neutral content.
 //
-// A glowing source wakes up a small network; pulses travel along the links; a
-// blob creature drifts in and watches; the network rearranges itself; a handful
-// of pieces tumble into a tray. The camera drifts to the right and pushes in.
+// A glowing source feeds a small network: with every wave of pulses its field
+// grows a step and, later, so do the nodes. A blob creature drifts in and
+// watches; the network rearranges itself; a tray fades in and a handful of
+// pieces tumble into it. The camera drifts to the right and pushes in.
 //
 // Everything on screen is a simple form (circle, capsule, rounded polygon,
 // blob), and every word on screen comes from the string tables.
@@ -15,6 +16,7 @@ import {
   drawOn,
   emitter,
   eye,
+  fadeTo,
   group,
   label,
   layer,
@@ -25,6 +27,7 @@ import {
   pulse,
   rect,
   Rng,
+  scaleTo,
   shot,
   stagger,
   type ColorRef,
@@ -42,7 +45,7 @@ const rng = new Rng(SEED, 'demo-layout');
 
 const CORE: Vec2 = [150, -40];
 const RING = 270;
-const NODE_ANGLES = [-22, 34, 92, 148, 197];
+const NODE_ANGLES = [-16, 34, 92, 148, 194];
 const NODE_ANGLES_AFTER = [8, 62, 120, 172, 209];
 const RING_AFTER = 318;
 const NODE_FILLS: ColorRef[] = ['accent.aqua', 'mid.rose', 'accent.azure', 'mid.violet', 'accent.pink'];
@@ -55,6 +58,10 @@ function onRing(angleDeg: number, radius: number): Vec2 {
 const nodeIds = NODE_ANGLES.map((_, i) => `n${i}`);
 const spokeIds = NODE_ANGLES.map((_, i) => `spoke${i}`);
 
+// The field of the source: a translucent disc under the network. It is there
+// from the first frame and grows a step with every wave.
+const field = circle({ id: 'field', at: CORE, r: 150, fill: 'mid.violet', lit: false, opacity: 0.15 });
+
 // Links are drawn first, so that the nodes cover their ends.
 const links: SceneNode[] = [
   ...nodeIds.map((id, i) =>
@@ -65,6 +72,7 @@ const links: SceneNode[] = [
 ];
 
 const nodes: SceneNode[] = [
+  // The source is on screen from the first frame: the shot opens on something alive.
   circle({ id: 'core', at: CORE, r: 76, fill: 'accent.amber', glow: 1 }),
   ...nodeIds.map((id, i) =>
     circle({
@@ -112,19 +120,21 @@ const creature = group({
 
 // --- The tray and the pieces that tumble into it ----------------------------
 
-const TRAY_X = 1060;
+// The tray is invisible at first and fades in once the camera has brought its
+// place fully into the frame, well before the pieces are released.
+const TRAY_X = 950;
 const TRAY_Y = 372;
+const trayIds = ['tray-floor', 'tray-wall-l', 'tray-wall-r'];
 const tray: SceneNode[] = [
-  rect({ id: 'tray-floor', at: [TRAY_X, TRAY_Y], w: 430, h: 36, radius: 16, fill: 'dark.indigo', rimLight: 'mid.violet', body: { kind: 'fixed' } }),
-  rect({ id: 'tray-wall-l', at: [TRAY_X - 205, TRAY_Y - 96], w: 36, h: 210, radius: 16, rotation: -9, fill: 'dark.indigo', rimLight: 'mid.violet', body: { kind: 'fixed' } }),
-  rect({ id: 'tray-wall-r', at: [TRAY_X + 205, TRAY_Y - 96], w: 36, h: 210, radius: 16, rotation: 9, fill: 'dark.indigo', rimLight: 'mid.violet', body: { kind: 'fixed' } }),
+  rect({ id: 'tray-floor', at: [TRAY_X, TRAY_Y], w: 430, h: 36, radius: 16, fill: 'dark.indigo', rimLight: 'mid.violet', opacity: 0, body: { kind: 'fixed' } }),
+  rect({ id: 'tray-wall-l', at: [TRAY_X - 205, TRAY_Y - 96], w: 36, h: 210, radius: 16, rotation: -9, fill: 'dark.indigo', rimLight: 'mid.violet', opacity: 0, body: { kind: 'fixed' } }),
+  rect({ id: 'tray-wall-r', at: [TRAY_X + 205, TRAY_Y - 96], w: 36, h: 210, radius: 16, rotation: 9, fill: 'dark.indigo', rimLight: 'mid.violet', opacity: 0, body: { kind: 'fixed' } }),
 ];
 
 const PIECE_FILLS: ColorRef[] = ['accent.coral', 'accent.aqua', 'mid.violet', 'accent.amber', 'accent.pink', 'accent.azure', 'mid.rose'];
 const PIECE_COUNT = 14;
 const pieceIds: string[] = [];
 const pieces: SceneNode[] = [];
-const releaseAt: number[] = [];
 for (let i = 0; i < PIECE_COUNT; i++) {
   const id = `piece${i}`;
   const col = i % 4;
@@ -146,29 +156,59 @@ for (let i = 0; i < PIECE_COUNT; i++) {
   else if (kind === 3) pieces.push(capsule({ ...common, length: 92, r: 17 }));
   else pieces.push(polygon({ ...common, sides: 6, r: 32, radius: 8 }));
   pieceIds.push(id);
-  releaseAt.push(release);
 }
 
 // --- Background layers ------------------------------------------------------
+//
+// Far shapes are pale and close to one tone (the depth tint does that), and
+// they keep clear of the place where the network is: the middle of the frame
+// stays deep, so the diagram reads against it. Coordinates are in each layer's
+// own space; a far layer moves less than the stage, so "behind the network" is
+// a wide band there.
 
-// Large soft discs far away: [x, y, radius, fill] in the layer's own space.
-const DISTANCE: [number, number, number, ColorRef][] = [
-  [-640, -250, 230, 'dark.indigo'],
-  [90, 400, 190, 'dark.navy'],
-  [770, -290, 255, 'dark.plum'],
-  [930, 310, 200, 'dark.indigo'],
-  [-900, 430, 170, 'dark.navy'],
-  [330, -520, 135, 'dark.plum'],
+// [x, y, radius, fill]
+type Disc = [number, number, number, ColorRef];
+
+// Large soft discs far away, at the far left and the far right.
+const DISTANCE: Disc[] = [
+  [-930, -200, 250, 'dark.indigo'],
+  [1200, -250, 245, 'dark.indigo'],
+  [1215, 290, 205, 'dark.navy'],
 ];
 
-// Low hills along the bottom of the far layer: circles whose tops peek into the frame.
-const HILLS: [number, number, number, ColorRef][] = [
-  [-420, 1060, 780, 'mid.violet'],
-  [560, 1200, 860, 'mid.ocean'],
-  [1500, 1050, 760, 'mid.violet'],
+// The far layer frames the stage: low hills along the bottom and a ceiling of
+// the same kind along the top (circles whose edges peek into the frame).
+const HILLS: Disc[] = [
+  [-420, 960, 780, 'mid.violet'],
+  [560, 1090, 860, 'dark.haze'],
+  [1500, 950, 760, 'mid.violet'],
+];
+const CEILING: Disc[] = [
+  [-560, -1120, 760, 'dark.haze'],
+  [420, -1225, 860, 'mid.violet'],
+  [1380, -1110, 760, 'dark.haze'],
 ];
 
-function scatter(prefix: string, count: number, box: [number, number, number, number], radius: Vec2, fills: ColorRef[], idleAmp: number): SceneNode[] {
+// Smaller far shapes at the sides.
+const FAR: Disc[] = [
+  [-860, -150, 82, 'mid.violet'],
+  [-770, 110, 54, 'dark.indigo'],
+  [-905, 250, 66, 'mid.violet'],
+  [1090, -230, 74, 'dark.indigo'],
+  [1235, -20, 86, 'mid.violet'],
+  [1125, 180, 58, 'dark.indigo'],
+];
+
+function discs(prefix: string, list: Disc[], idleAmp: number): SceneNode[] {
+  return list.map(([x, y, r, fill], i) => {
+    const idle = idleAmp > 0 ? { amp: idleAmp, period: 5.5 + (i % 4) } : undefined;
+    return i % 3 === 0 && r < 120
+      ? blob({ id: `${prefix}${i}`, at: [x, y], r, points: 8, wobble: 0.12, seed: i + 1, fill, ...(idle ? { idle } : {}) })
+      : circle({ id: `${prefix}${i}`, at: [x, y], r, fill, ...(idle ? { idle } : {}) });
+  });
+}
+
+function scatter(prefix: string, count: number, box: [number, number, number, number], radius: Vec2, fills: ColorRef[]): SceneNode[] {
   const r = new Rng(SEED, `scatter/${prefix}`);
   const out: SceneNode[] = [];
   for (let i = 0; i < count; i++) {
@@ -176,41 +216,47 @@ function scatter(prefix: string, count: number, box: [number, number, number, nu
     const at: Vec2 = [r.range(box[0], box[2]), r.range(box[1], box[3])];
     const size = r.range(radius[0], radius[1]);
     const fill = r.pick(fills);
-    const idle = { amp: idleAmp, period: r.range(5, 9) };
-    out.push(
-      i % 3 === 0
-        ? blob({ id, at, r: size, points: 8, wobble: 0.12, seed: i + 1, fill, idle })
-        : circle({ id, at, r: size, fill, idle }),
-    );
+    out.push(i % 3 === 0 ? blob({ id, at, r: size, points: 8, wobble: 0.12, seed: i + 1, fill }) : circle({ id, at, r: size, fill }));
   }
   return out;
 }
 
 // --- Timeline ---------------------------------------------------------------
 
-/** A wave of pulses from the source along every spoke; each arrival throws a few sparks. */
-function wave(at: number, each = 0.11): { keys: Key[]; arrivals: number[] } {
-  const dur = 0.62;
-  return {
-    keys: [bump('core', { at, amount: 0.1 }), ...stagger(spokeIds, { at: at + 0.05, each }, (id, t) => pulse(id, { at: t, dur }))],
-    arrivals: spokeIds.map((_, i) => at + 0.05 + i * each + dur),
-  };
-}
-
-const waves = [2.5, 4.7, 9.4, 11.7, 13.5].map((at) => wave(at));
+const PULSE_DUR = 0.62;
+const WAVE_EACH = 0.11;
+const WAVES = [2.2, 4.6, 9.3, 11.6, 13.4];
+/** When the pulse of wave `w` reaches node `i`. */
+const arrival = (w: number, i: number): number => WAVES[w]! + 0.05 + i * WAVE_EACH + PULSE_DUR;
+/** Size of the field after each wave, as a multiple of its first size. */
+const FIELD_STEPS = [1.22, 1.45, 1.68, 1.9, 2.1];
 
 const timeline: Key[] = [
-  // The source appears, then its nodes, one after another.
-  popIn('core', { at: 0.35, dur: 0.7, overshoot: 0.22 }),
-  ...stagger(nodeIds, { at: 0.95, each: 0.11 }, (id, at) => popIn(id, { at })),
-  ...stagger(spokeIds, { at: 1.55, each: 0.11 }, (id, at) => drawOn(id, { at, dur: 0.55 })),
-  ...waves.flatMap((w) => w.keys),
-  popIn('label-source', { at: 3.15 }),
-  ...stagger(['arc0', 'arc1'], { at: 3.6, each: 0.2 }, (id, at) => drawOn(id, { at, dur: 0.6 })),
-  pulse('arc0', { at: 5.5, dur: 0.6 }),
-  pulse('arc1', { at: 5.75, dur: 0.6 }),
-  pulse('arc0', { at: 12.4, dur: 0.6 }),
-  pulse('arc1', { at: 12.65, dur: 0.6 }),
+  // The source is already there and beats once; its nodes appear one after another.
+  bump('core', { at: 0.12, amount: 0.12 }),
+  ...stagger(nodeIds, { at: 0.45, each: 0.11 }, (id, at) => popIn(id, { at })),
+  ...stagger(spokeIds, { at: 1.1, each: 0.1 }, (id, at) => drawOn(id, { at, dur: 0.5 })),
+
+  // Waves: the source beats, a pulse runs down every spoke, the field grows a step (scaleTo).
+  ...WAVES.flatMap((at, w) => [
+    bump('core', { at, amount: 0.1 }),
+    ...stagger(spokeIds, { at: at + 0.05, each: WAVE_EACH }, (id, t) => pulse(id, { at: t, dur: PULSE_DUR })),
+    scaleTo('field', { at: at + 0.1, to: FIELD_STEPS[w]!, dur: 0.9, overshoot: 0.2 }),
+  ]),
+  // The first wave also switches the field on a little brighter (fadeTo).
+  fadeTo('field', { at: WAVES[0]!, to: 0.24, dur: 0.7 }),
+  // Nodes that have been fed twice, then four times, grow a step when the pulse arrives.
+  ...nodeIds.flatMap((id, i) => [
+    scaleTo(id, { at: arrival(1, i), to: 1.18 }),
+    scaleTo(id, { at: arrival(3, i), to: 1.36 }),
+  ]),
+
+  popIn('label-source', { at: 2.95 }),
+  ...stagger(['arc0', 'arc1'], { at: 3.5, each: 0.2 }, (id, at) => drawOn(id, { at, dur: 0.6 })),
+  pulse('arc0', { at: 5.6, dur: 0.6 }),
+  pulse('arc1', { at: 5.85, dur: 0.6 }),
+  pulse('arc0', { at: 12.5, dur: 0.6 }),
+  pulse('arc1', { at: 12.75, dur: 0.6 }),
 
   // The creature drifts in and comes closer.
   popIn('buddy', { at: 4.05, dur: 0.6 }),
@@ -221,10 +267,11 @@ const timeline: Key[] = [
     moveTo(id, { at, to: onRing(NODE_ANGLES_AFTER[i]!, RING_AFTER), dur: 1.1, anticipation: 0.2, overshoot: 0.14, arc: 0.2 }),
   ),
 
-  // Pieces appear above the tray and are released into it.
+  // The tray fades in (fadeTo); pieces appear above it and are released into it.
+  ...stagger(trayIds, { at: 6.2, each: 0.12 }, (id, at) => fadeTo(id, { at, to: 1, dur: 0.7 })),
   ...stagger(pieceIds, { at: 7.35, each: 0.07 }, (id, at) => popIn(id, { at, dur: 0.45 })),
   moveTo('focus', { at: 8.3, to: [TRAY_X, 120], dur: 1.2, anticipation: 0, overshoot: 0, arc: 0 }),
-  moveTo('buddy', { at: 10.3, to: [590, 285], dur: 1.7, arc: -0.12 }),
+  moveTo('buddy', { at: 10.3, to: [540, 285], dur: 1.7, arc: -0.12 }),
   popIn('label-landing', { at: 12.6 }),
   bump('buddy', { at: 13.9, amount: 0.12 }),
 ];
@@ -234,7 +281,7 @@ const sparks: SceneNode[] = nodeIds.map((id, i) =>
   emitter({
     id: `sparks-${id}`,
     attach: id,
-    bursts: waves.map((w) => ({ at: w.arrivals[i]!, count: 9 })),
+    bursts: WAVES.map((_, w) => ({ at: arrival(w, i), count: 9 })),
     colors: ['accent.amber', 'light.cream'],
     size: [3, 6.5],
     life: [0.45, 0.9],
@@ -256,24 +303,20 @@ export default shot({
   light: { from: 'top-left' },
   background: { inner: 'deep.night', outer: 'deep.abyss', center: [0.46, 0.44], radius: 0.7 },
   atmosphere: 'mid.mist',
-  vignette: 0.45,
+  vignette: 0.3,
   camera: {
     drift: { speed: 0.7, heading: 0, wander: 9, period: 6 },
     pushIn: { from: 1, to: 1.07 },
   },
   layers: [
-    layer({
-      id: 'distance',
-      depth: 2.4,
-      tint: 0.86,
-      nodes: DISTANCE.map(([x, y, r, fill], i) => circle({ id: `distance${i}`, at: [x, y], r, fill })),
-    }),
+    layer({ id: 'distance', depth: 2.4, nodes: discs('distance', DISTANCE, 0) }),
     layer({
       id: 'far',
       depth: 1,
       nodes: [
-        ...HILLS.map(([x, y, r, fill], i) => circle({ id: `hill${i}`, at: [x, y], r, fill })),
-        ...scatter('far-blob', 16, [-900, -500, 1500, 250], [30, 88], ['mid.violet', 'mid.ocean', 'dark.plum', 'mid.violet', 'dark.navy'], 12),
+        ...discs('ceiling', CEILING, 0),
+        ...discs('hill', HILLS, 0),
+        ...discs('far', FAR, 12),
         emitter({
           id: 'far-dust',
           at: [300, 0],
@@ -307,6 +350,7 @@ export default shot({
           colors: ['accent.aqua', 'light.cream', 'accent.pink', 'mid.violet'],
           glow: 0.5,
         }),
+        field,
         ...links,
         ...sparks,
         ...nodes,
@@ -336,8 +380,8 @@ export default shot({
       id: 'near',
       depth: -0.5,
       nodes: [
-        ...scatter('near-blob', 7, [-700, 690, 2900, 730], [270, 310], ['deep.night', 'dark.indigo', 'dark.navy'], 0),
-        ...scatter('near-top', 4, [-500, -770, 2900, -730], [270, 310], ['deep.night', 'dark.indigo'], 0),
+        ...scatter('near-blob', 5, [-700, 720, 2900, 760], [270, 310], ['deep.night', 'dark.indigo', 'dark.navy']),
+        ...scatter('near-top', 3, [-500, -800, 2900, -760], [270, 310], ['deep.night', 'dark.indigo']),
       ],
     }),
   ],
