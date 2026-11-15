@@ -52,7 +52,7 @@ Target norms (checked with `tools/metrics` on renders):
 | Fully static frame pairs | 3–9 %; no hold longer than ~4 s |
 | Camera drift (median) | 0.3–0.7 px per frame at 1080p |
 | Average shot between hard cuts | 8–16 s |
-| Pixels with L* < 30 | about 60 % on dark shots |
+| Pixels with L* < 30 | about 60 % over a whole video, which mixes dark and bright shots; 78–95 % on a dark shot (median 88 %) |
 | Saturation of dark pixels | about 0.8 |
 | Near-gray pixels (S < 0.12) | about 6 % or less |
 | Hue of dark pixels | mostly 210–300° (blue, indigo, violet) |

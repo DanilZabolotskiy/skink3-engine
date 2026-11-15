@@ -3,7 +3,9 @@ import sys, subprocess, numpy as np
 from PIL import Image, ImageDraw
 v, start, n, step, w, cols, out = sys.argv[1], float(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]), sys.argv[7]
 crop = sys.argv[8] if len(sys.argv) > 8 else None
-vf = (f"crop={crop.replace(',', ':')}," if crop else "") + f"select='not(mod(n\\,{step}))',scale={w}:-2"
+if crop:
+    cx, cy, cw, ch = crop.split(",")  # ffmpeg's crop filter takes w:h:x:y
+vf = (f"crop={cw}:{ch}:{cx}:{cy}," if crop else "") + f"select='not(mod(n\\,{step}))',scale={w}:-2"
 p = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-i", v, "-frames:v", str(n),
                     "-vf", vf, "-fps_mode", "passthrough", "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True)
 data = p.stdout; ims = []; i = 0

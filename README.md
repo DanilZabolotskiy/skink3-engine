@@ -90,7 +90,7 @@ The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 3
 | Camera drift, median | 0.3–0.7 px per frame at 1080p | 0.50 |
 | Duplicated frames in motion | none | 0 of 733 |
 | Fully static frame pairs; longest hold | 3–9 % over a whole video; no hold above ~4 s | 0.0 %; 0.0 s (one continuously moving shot, no cuts) |
-| Pixels with L* < 30 | about 60 % on dark shots | 62.4 % |
+| Pixels with L* < 30 | about 60 % over a whole video; 78–95 % on a dark shot | 62.4 % (the demo is a mid-tone shot: V is below 0.3 on about half of its pixels) |
 | Saturation of dark pixels | about 0.8 | 0.81 |
 | Near-gray pixels (S < 0.12) | about 6 % or less | below 0.1 % |
 | Hue of dark pixels | mostly 210–300° | 100 % (210–240°: 1 %, 240–270°: 87 %, 270–300°: 12 %) |

@@ -115,6 +115,8 @@ export interface LinkNode {
   readonly gap: number;
   /** 0..1 at the start. A link also fades with the fainter of the two nodes it joins. */
   readonly opacity: number;
+  /** 0 = no glow; 1 = the line itself feeds the halo. Pulses glow whatever this is. */
+  readonly glow: number;
 }
 
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';

@@ -224,7 +224,7 @@ circle({ id: 'ball', r: 30, fill: 'accent.amber', body: { kind: 'dynamic', relea
   children: [group({ id: 'ball-face', upright: true, children: [eye({ id: 'ball-eye', r: 8, white: 'light.snow', pupil: 'deep.abyss' })] })] })
 ```
 
-### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity? })`
+### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity?, glow? })`
 
 A curved line between two nodes of the same layer. It follows them as they move.
 
@@ -237,6 +237,7 @@ A curved line between two nodes of the same layer. It follows them as they move.
 | `width` | `7` | |
 | `gap` | `6` | free space between the link's end and the node's edge |
 | `opacity` | `1` | 0..1 at the start |
+| `glow` | `0` | 0..1: the line itself glows, with a halo around it. Pulses glow whatever this is |
 
 List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden, and it fades with the fainter of the two. Animate it with `drawOn` and `pulse`. A pulse is drawn as travelling light: a bright head with a tail that narrows and fades.
 

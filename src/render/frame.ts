@@ -10,7 +10,7 @@ import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem } from '../scene/evaluate.ts';
-import { STAGE_H, STAGE_W, type ShapeNode } from '../scene/types.ts';
+import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { drawEye, drawLabel, drawLink, drawLinkGlow, drawParticles, drawShape, drawShapeGlow, makePaint, type Paint } from './draw.ts';
 
@@ -37,7 +37,8 @@ function glowStrength(item: LeafItem): number {
     case 'shape':
       return (item.node.node as ShapeNode).glow * item.alpha;
     case 'link':
-      return item.pulses.length > 0 ? item.alpha : 0;
+      // A pulse always glows; the line glows as much as the link says.
+      return Math.max((item.node.node as LinkNode).glow, item.pulses.length > 0 ? 1 : 0) * item.alpha;
     case 'particles':
       return item.node.node.type === 'emitter' ? item.node.node.glow : 0;
     default:

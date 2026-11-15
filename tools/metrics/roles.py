@@ -3,11 +3,14 @@ the first skip_first_n sampled frames of each video are left out (intro, sponsor
 import glob, json, sys, numpy as np, cv2
 ROOT = sys.argv[1]
 SKIP = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-px = []
+px = []; fL = []; fV = []
 for d in glob.glob(ROOT + "/an/*/s"):
     fs = sorted(glob.glob(d + "/*.jpg"))[SKIP:]
     for f in fs:
         im = cv2.resize(cv2.imread(f), (96, 54), interpolation=cv2.INTER_AREA); px.append(im.reshape(-1, 3))
+        # per frame: the share of pixels below L* 30, and the share with V below 0.3
+        fL.append((cv2.cvtColor(im, cv2.COLOR_BGR2Lab)[:, :, 0].astype(np.float32) * 100 / 255 < 30).mean())
+        fV.append((cv2.cvtColor(im, cv2.COLOR_BGR2HSV)[:, :, 2].astype(np.float32) / 255 < .3).mean())
 bgr = np.concatenate(px)
 lab = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2Lab).reshape(-1, 3).astype(np.float32)
 hsv = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float32)
@@ -28,4 +31,9 @@ for name, m in roles.items():
 dk = (L < 30) & (S > .2)
 hh = np.histogram(hsv[dk, 0] * 2, bins=12, range=(0, 360))[0]; print("dark hue hist 30deg:", np.round(hh / hh.sum(), 2).tolist())
 print("overall: median L", np.median(L).round(1), " S of L<30:", S[L < 30].mean().round(2), " gray(S<.12):", (S < .12).mean().round(3))
+# tone per frame: a whole video mixes dark and bright shots, so the share of L<30 over all pixels says little about one shot
+fL = np.array(fL); dk = np.array(fV) > .5
+q = lambda a: f"median {100 * np.median(a):.0f} %, quartiles {100 * np.percentile(a, 25):.0f}-{100 * np.percentile(a, 75):.0f} %"
+print(f"L<30 over all pixels: {100 * (L < 30).mean():.1f} %  | dark frames (V<.3 on more than half of the frame): {int(dk.sum())} of {len(fL)}"
+      + (f", L<30 in them: {q(fL[dk])}" if dk.any() else "") + (f"  | the other frames: {q(fL[~dk])}" if (~dk).any() else ""))
 json.dump(out, open(ROOT + "/an/roles.json", "w"))

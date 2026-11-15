@@ -203,13 +203,25 @@ export function drawLink(ctx: CanvasRenderingContext2D, item: LinkItem, paint: P
   ctx.restore();
 }
 
-/** The pulses again, a little fatter, for the halo; they fade with the link. */
+/**
+ * What a link feeds the halo with: the line itself, as far as the link glows,
+ * and its pulses, a little fatter. Both fade with the link.
+ */
 export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, paint: Paint): void {
-  if (item.pulses.length === 0) return;
   const node = item.node.node as LinkNode;
-  const pulse = paint.tone('base', item.node.colors['pulseColor']!);
+  if (item.pulses.length === 0 && node.glow <= 0) return;
   ctx.save();
-  drawPulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
+  if (node.glow > 0) {
+    ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
+    ctx.lineWidth = node.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    strokeQuad(ctx, item.curve, 0, item.reveal);
+  }
+  if (item.pulses.length > 0) {
+    const pulse = paint.tone('base', item.node.colors['pulseColor']!);
+    drawPulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
+  }
   ctx.restore();
 }
 

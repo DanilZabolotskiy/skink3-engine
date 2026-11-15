@@ -288,9 +288,11 @@ export function link(o: {
   gap?: number;
   /** 0..1 at the start; default 1. */
   opacity?: number;
+  /** 0..1: the line itself glows (a halo around it); default 0. */
+  glow?: number;
 }): LinkNode {
   const where = `link("${o?.id}")`;
-  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity']);
+  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow']);
   const c = color(where, 'color', o.color);
   return {
     type: 'link',
@@ -303,6 +305,7 @@ export function link(o: {
     pulseColor: o.pulseColor === undefined ? c : color(where, 'pulseColor', o.pulseColor),
     gap: o.gap === undefined ? 6 : num(where, 'gap', o.gap, 0, 400),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
+    glow: o.glow === undefined ? 0 : num(where, 'glow', o.glow, 0, 1),
   };
 }
 
