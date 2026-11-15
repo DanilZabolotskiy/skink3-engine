@@ -3,7 +3,7 @@
 //
 //   overlap                              a close-up of the frames around the deepest moment
 //   tunnelling, escape, energy-spike     a ghost trail of the body, and a close-up
-//   jitter, unsettled                    a speed graph of the body: a tremble is a train of small humps
+//   jitter, unsettled                    a speed graph of the body: at rest the line is at zero, a tremble lifts it
 //
 // In a close-up the body is ringed in blue and the other body of a pair in
 // orange, so that a reviewer finds them in a pile of bodies that look alike.

@@ -152,7 +152,7 @@ All of them live in `src/review/physics-thresholds.ts`, with the reason for each
 |---|---|---|
 | `overlap` | a close-up of four frames around the deepest moment | The same part of the stage, enlarged, in every tile; the stamp gives the frame and the enlargement. The body is ringed in blue, the other body in orange. Two outlines that cross are the overlap. A fixed body larger than the picture gets no ring: it is the wall or the floor in view. |
 | `tunnelling`, `escape`, `energy-spike`, `unseen-hit` | a ghost trail of the body, and a close-up | The trail is the one of the motion review: a line through a wall is a passage, a path that leaves the frame downward an escape, a gap much wider than its neighbours a kick, a bend in mid-air a hit. In the close-up of a hit the orange ring shows where the body that is not drawn is. |
-| `jitter`, `unsettled` | a speed graph of the body | The graph is the one of the motion review, with the finding marked in yellow. A tremble is a train of small humps that does not die out; a pile that does not settle is a line that stays above zero to the right edge. |
+| `jitter`, `unsettled` | a speed graph of the body | The graph is the one of the motion review, with the finding marked in yellow. A body at rest is a line at zero. A tremble lifts the line off zero for as long as it lasts: a flat step when the body flips every frame, a train of small humps when it rocks more slowly. A pile that does not settle is a line that stays above zero to the right edge. |
 
 A close-up of any bodies at any frames is `renderCloseUp` (see Programmatic use).
 
