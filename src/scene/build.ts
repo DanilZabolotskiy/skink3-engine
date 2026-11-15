@@ -109,7 +109,7 @@ function body(where: string, value: BodySpec | undefined): BodySpec | null {
   }
   if (value.kind === 'dynamic') {
     checkKeys(`${where} body`, value, ['kind', 'release', 'velocity', 'spin', 'density', 'friction', 'restitution']);
-    num(where, 'body.release', value.release, 0, 3600);
+    num(where, 'body.release', value.release, -120, 3600);
     if (value.velocity !== undefined) vec(where, 'body.velocity', value.velocity);
     if (value.spin !== undefined) num(where, 'body.spin', value.spin, -3600, 3600);
     if (value.density !== undefined) num(where, 'body.density', value.density, 0.01, 100);
@@ -249,12 +249,15 @@ export function group(o: {
   scale?: number;
   /** 0..1 at the start; default 1. The group fades as one picture. */
   opacity?: number;
+  /** Keep the group's own rotation in the layer's space, whatever its parent does; default false. */
+  upright?: boolean;
   children?: readonly SceneNode[];
   follow?: SpringSpec;
   idle?: IdleSpec;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'children', 'follow', 'idle']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle']);
+  if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   return {
     type: 'group',
     id: idOf(where, o.id),
@@ -262,6 +265,7 @@ export function group(o: {
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
+    upright: o.upright ?? false,
     children: children(where, o.children),
     follow: spring(where, 'follow', o.follow),
     idle: idle(where, o.idle),
@@ -357,7 +361,11 @@ export function label(o: {
   };
 }
 
-/** A simple eye. The pupil looks at the node `lookAt`; the eye blinks now and then. */
+/**
+ * A simple eye. The pupil looks at the node `lookAt`; the eye blinks now and
+ * then. `open` sets its lids at the start (0 = shut and not drawn); openTo()
+ * opens and closes them, blink() asks for a blink at a chosen moment.
+ */
 export function eye(o: {
   id: string;
   r: number;
@@ -370,9 +378,11 @@ export function eye(o: {
   lookAt?: string;
   /** Default true. */
   blink?: boolean;
+  /** Lids at the start, 0 (shut) .. 1 (open); default 1. */
+  open?: number;
 }): EyeNode {
   const where = `eye("${o?.id}")`;
-  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink']);
+  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open']);
   return {
     type: 'eye',
     id: idOf(where, o.id),
@@ -385,6 +395,7 @@ export function eye(o: {
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     lookAt: o.lookAt === undefined ? null : idOf(where, o.lookAt),
     blink: o.blink ?? true,
+    open: o.open === undefined ? 1 : num(where, 'open', o.open, 0, 1),
   };
 }
 
@@ -424,11 +435,13 @@ export function emitter(o: {
   turbulence?: TurbulenceSpec;
   /** 0..1; default 0. */
   glow?: number;
+  /** An inner disc on every particle: its colour and its radius as a fraction of the particle's (0..1). */
+  core?: { color: ColorRef; size: number };
 }): EmitterNode {
   const where = `emitter("${o?.id}")`;
   checkKeys(where, o, [
     'id', 'colors', 'size', 'life', 'at', 'attach', 'area', 'rate', 'from', 'until', 'bursts', 'onContact', 'prewarm',
-    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow',
+    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core',
   ]);
   if (!Array.isArray(o.colors) || o.colors.length === 0) fail(where, 'colors must be a non-empty array of palette references');
   const rate = o.rate === undefined ? 0 : num(where, 'rate', o.rate, 0, 5000);
@@ -454,6 +467,11 @@ export function emitter(o: {
       speed: num(where, 'turbulence.speed', o.turbulence.speed, 0, 100),
     };
   }
+  let core: EmitterNode['core'] = null;
+  if (o.core !== undefined) {
+    checkKeys(`${where} core`, o.core, ['color', 'size']);
+    core = { color: color(where, 'core.color', o.core.color), size: num(where, 'core.size', o.core.size, 0.05, 0.95) };
+  }
   return {
     type: 'emitter',
     id: idOf(where, o.id),
@@ -472,6 +490,7 @@ export function emitter(o: {
     life: range(where, 'life', o.life, 0.05, 600),
     size: range(where, 'size', o.size, 0.1, 500),
     colors: o.colors.map((c, i) => color(where, `colors[${i}]`, c)),
+    core,
     gravity: o.gravity === undefined ? [0, 0] : vec(where, 'gravity', o.gravity),
     drag: o.drag === undefined ? 0.8 : num(where, 'drag', o.drag, 0, 100),
     turbulence,
@@ -518,6 +537,7 @@ export const PHYSICS_DEFAULTS: PhysicsSpec = {
   angularDamping: 0.6,
   restitution: 0.12,
   friction: 0.7,
+  prewarm: 0,
 };
 
 type Nested<T> = T | readonly Nested<T>[];
@@ -599,7 +619,7 @@ export function shot(o: {
     },
   };
   const ph = o.physics ?? {};
-  checkKeys(`${where} physics`, ph, ['gravity', 'linearDamping', 'angularDamping', 'restitution', 'friction']);
+  checkKeys(`${where} physics`, ph, ['gravity', 'linearDamping', 'angularDamping', 'restitution', 'friction', 'prewarm']);
   const P = PHYSICS_DEFAULTS;
   const physics: PhysicsSpec = {
     gravity: num(where, 'physics.gravity', ph.gravity ?? P.gravity, -5000, 5000),
@@ -607,6 +627,7 @@ export function shot(o: {
     angularDamping: num(where, 'physics.angularDamping', ph.angularDamping ?? P.angularDamping, 0, 50),
     restitution: num(where, 'physics.restitution', ph.restitution ?? P.restitution, 0, 1),
     friction: num(where, 'physics.friction', ph.friction ?? P.friction, 0, 5),
+    prewarm: num(where, 'physics.prewarm', ph.prewarm ?? P.prewarm, 0, 120),
   };
   const light: LightSpec = o.light ?? { from: 'top-left' };
   try {

@@ -160,10 +160,12 @@ camera: {
 ### Physics style
 
 ```ts
-physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7 }
+physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 }
 ```
 
 100 units count as one metre, so the default gravity is 5.4 m/s²: slower than real, on purpose. Leave the defaults unless a shot needs otherwise.
+
+`prewarm` is the number of seconds the world is simulated before the shot starts. With it a body may be released at a negative time, so a pile already lies there, or a stream already falls, at frame 0 (see Rigid bodies).
 
 ## `layer({ id, depth, nodes, blur?, parallax?, tint? })`
 
@@ -211,9 +213,16 @@ All shape factories take these options:
 
 Concave forms are composed from several shapes in a `group`.
 
-### `group({ id, at?, rotation?, scale?, opacity?, children?, follow?, idle? })`
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle? })`
 
 An invisible parent. Its children move, turn and scale with it. A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
+
+`upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
+
+```ts
+circle({ id: 'ball', r: 30, fill: 'accent.amber', body: { kind: 'dynamic', release: 1 },
+  children: [group({ id: 'ball-face', upright: true, children: [eye({ id: 'ball-eye', r: 8, white: 'light.snow', pupil: 'deep.abyss' })] })] })
+```
 
 ### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity? })`
 
@@ -251,9 +260,11 @@ A rounded rectangle with a pointer tail aimed at `target`.
 
 The layout wraps the string, balances the lines, and shrinks the font if needed. A string that still does not fit is reported by the text-fit check as overflow; it is never cut. Labels are listed directly in a layer, usually last so they are on top.
 
-### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink? })`
+### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
+
+`open` (0..1, default 1) sets the lids at the start. At 0 the eye is shut, and a shut eye is not drawn at all, so a thing can look lifeless until its eyes open. `openTo` opens and closes the lids, and `blink` asks for a blink at a chosen moment (see the timeline). For a character whose blinks must not land on a staged moment, set `blink: false` and place the blinks yourself.
 
 A simple creature is a blob with two eyes as children, optionally with `capsule` sticks that `sway`. That is all a character needs under the simple-forms rule; see `examples/demo/scene.ts`.
 
@@ -279,6 +290,7 @@ Particles are small circles that swell quickly and then shrink to nothing. They 
 | `drag` | `0.8` | share of velocity lost per second, as a rate |
 | `turbulence` | none | `{ strength, scale, speed }`: a slowly changing swirl field |
 | `glow` | `0` | 0..1: the particles also feed the halo |
+| `core` | none | `{ color, size }`: an inner disc on every particle, in one palette colour; `size` is its radius as a fraction of the particle's (0.05..0.95). A particle with a core reads as a ring around a face: a cell, a bead, a wheel |
 
 An emitter needs at least one of `rate`, `bursts`, `onContact`.
 
@@ -297,6 +309,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(linkId, { at, ... })` | link | `dur` (0.6) | draws the link on from its `from` end. **The link is hidden before `at`**. Once per link |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
+| `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
+| `blink(eyeId, { at })` | eye | | one blink at that moment, on top of the eye's own schedule |
 
 Rules:
 
@@ -305,6 +319,7 @@ Rules:
 - `scaleTo` and `fadeTo` chain: each starts from the size or opacity the node has at that moment, also when the previous one is still under way.
 - Size is a product: the authored `scale` × pops × the lasting size from `scaleTo` × bumps. So a node can pop in, grow in steps, and still react with a bump (also the bump a pulse gives on arrival) at any size. `scaleTo` overshoots in proportion: growing to 2 with `overshoot: 0.15` peaks near 2.2, shrinking to 0.5 dips to 0.45.
 - A rigid body cannot be the target of `moveTo`, `turnTo` or `scaleTo`; it can pop, bump and fade.
+- `openTo` keys chain like `fadeTo`: each starts from the opening the eye has at that moment. Blinks multiply with the lids, so a blink never opens a shut eye.
 - To time something to a pulse's arrival, use `at + dur` of that pulse.
 
 ### Opacity
@@ -359,6 +374,7 @@ circle({ id: 'ball', at: [0, -300], r: 30, fill: 'accent.coral', body: { kind: '
 
 - `{ kind: 'fixed' }` never moves; other bodies land on it.
 - `{ kind: 'dynamic', release, velocity?, spin?, density?, friction?, restitution? }` stays where the scene put it until `release` (seconds), then the simulation takes it over. Before its release it does not collide with anything. `velocity` (units per second) and `spin` (degrees per second) apply at the release.
+- `release` may be negative, down to minus the shot's `physics.prewarm`. The world then starts that many seconds before frame 0, and such a body is already falling, or already at rest, when the shot opens. Contacts from before frame 0 are not recorded.
 - Bodies must be listed directly in a layer, and all bodies of a shot must be in the same layer.
 - The collider is the shape itself (a blob uses its convex hull).
 - Every contact is recorded with its time, place and peak impulse; `skink3 bake` prints how many. Emitters can react to them with `onContact`. They are also meant for sound, which is not built yet.

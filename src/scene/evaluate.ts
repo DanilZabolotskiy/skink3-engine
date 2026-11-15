@@ -6,7 +6,7 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { sampleOpacity, samplePos, sampleReveal, sampleRot, sampleScale } from '../motion/tracks.ts';
+import { sampleLid, sampleOpacity, samplePos, sampleReveal, sampleRot, sampleScale } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { reach } from '../shape/geometry.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -70,7 +70,10 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       y += node.idle.amp * n.idleNoise.n1(u + 71.3);
     }
     const parent = n.parent >= 0 ? out[n.parent]! : XF_IDENTITY;
-    let xf = xfCompose(parent, { x, y, rot: sampleRot(n.rot!, t) * DEG, scale });
+    const rot = sampleRot(n.rot!, t) * DEG;
+    let xf = xfCompose(parent, { x, y, rot, scale });
+    // An upright group keeps its own rotation, whatever it is attached to.
+    if (node.type === 'group' && node.upright) xf = { ...xf, rot };
     if (n.springKind === 'follow') {
       const p = poses.spring(n.springSlot, frame, [xf.x, xf.y]);
       xf = { ...xf, x: p[0], y: p[1] };
@@ -120,7 +123,7 @@ export interface EyeItem {
   readonly alpha: number;
   /** Pupil offset in the eye's local space, as a fraction of its free travel (length 0..1). */
   readonly look: Vec2;
-  /** 1 = open, near 0 = closed. */
+  /** 1 = open, near 0 = closed; a little above 1 while an opening overshoots. */
   readonly open: number;
 }
 
@@ -221,6 +224,8 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
 
 /** Scale below which a node is treated as hidden. */
 const HIDDEN = 1e-3;
+/** Lid opening below which an eye is shut and not drawn. */
+const SHUT = 0.02;
 /** Opacity below which a node is not drawn, and above which it is drawn without a group. */
 const FAINT = 0.002;
 const OPAQUE = 0.998;
@@ -305,6 +310,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
+          const lid = n.lid ? sampleLid(n.lid, t) : 1;
+          if (lid <= SHUT) break;
           let look: Vec2 = [0, 0];
           if (n.lookAtIndex >= 0) {
             const target = world[n.lookAtIndex]!;
@@ -316,7 +323,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
               look = vrot([(dx / dist) * m, (dy / dist) * m], -xf.rot);
             }
           }
-          items.push({ kind: 'eye', node: n, xf, look, open: eyeOpen(n.blinks, t), alpha: a });
+          items.push({ kind: 'eye', node: n, xf, look, open: lid * eyeOpen(n.blinks, t), alpha: a });
           break;
         }
         case 'link': {

@@ -12,7 +12,7 @@ import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import type { EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem } from '../scene/evaluate.ts';
-import type { EyeNode, LinkNode, ShapeNode } from '../scene/types.ts';
+import type { EmitterNode, EyeNode, LinkNode, ShapeNode } from '../scene/types.ts';
 import { shapePath } from '../shape/path.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 
@@ -213,10 +213,12 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
   ctx.restore();
 }
 
-/** Particles, batched into one path per colour. */
+/** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. */
 export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem, paint: Paint, alpha = 1): void {
   const colors = item.node.particleColors;
   const paths: (Path2D | null)[] = colors.map(() => null);
+  const core = (item.node.node as EmitterNode).core;
+  const cores = core ? new Path2D() : null;
   const d = item.data;
   for (let i = 0; i < d.length; i += PARTICLE_STRIDE) {
     const ci = d[i + 3]!;
@@ -230,6 +232,11 @@ export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem
     const r = d[i + 2]!;
     p.moveTo(x + r, y);
     p.arc(x, y, r, 0, TAU);
+    if (core && cores) {
+      const cr = r * core.size;
+      cores.moveTo(x + cr, y);
+      cores.arc(x, y, cr, 0, TAU);
+    }
   }
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -238,6 +245,10 @@ export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem
     ctx.fillStyle = paint.tone('base', colors[ci]!);
     ctx.fill(p);
   });
+  if (cores) {
+    ctx.fillStyle = paint.tone('base', item.node.colors['core']!);
+    ctx.fill(cores);
+  }
   ctx.restore();
 }
 

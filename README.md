@@ -122,7 +122,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
 | `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
 | `src/scene` | scene description types, factory functions, compiler (validation, tracks, bake slots), pure evaluation of a frame |
-| `src/motion` | intents (`moveTo`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `bump`, `drawOn`, `pulse`), `stagger`, the curves behind them |
+| `src/motion` | intents (`moveTo`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `bump`, `drawOn`, `pulse`, `openTo`, `blink`), `stagger`, the curves behind them |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift, push-in, parallax view of a depth layer |
 | `src/text` | string tables, bundled font, auto-fit layout, label geometry |

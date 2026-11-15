@@ -90,7 +90,35 @@ export interface FadeToKey {
   readonly dur: number;
 }
 
-export type Key = MoveToKey | PopInKey | PopOutKey | TurnToKey | ScaleToKey | FadeToKey | BumpKey | DrawOnKey | PulseKey;
+export interface OpenToKey {
+  readonly kind: 'openTo';
+  readonly target: string;
+  readonly at: number;
+  /** New lid opening: 0 = shut, 1 = open. */
+  readonly to: number;
+  readonly dur: number;
+  /** How far the lids shoot past the new opening, as a fraction of the change. */
+  readonly overshoot: number;
+}
+
+export interface BlinkKey {
+  readonly kind: 'blink';
+  readonly target: string;
+  readonly at: number;
+}
+
+export type Key =
+  | MoveToKey
+  | PopInKey
+  | PopOutKey
+  | TurnToKey
+  | ScaleToKey
+  | FadeToKey
+  | BumpKey
+  | DrawOnKey
+  | PulseKey
+  | OpenToKey
+  | BlinkKey;
 
 export class IntentError extends Error {}
 
@@ -199,6 +227,29 @@ export function fadeTo(id: string, opts: { at: number; to: number; dur?: number 
     to: num(w, 'to', opts.to, 0, 1),
     dur: num(w, 'dur', opts.dur ?? 0.5, 0.05, 60),
   };
+}
+
+/**
+ * Open or close the lids of an eye: `to` 1 is open, 0 is shut (a shut eye is
+ * not drawn). The change lasts; several keys chain from the opening the eye
+ * has at that moment. With an overshoot the eye opens a little too wide first.
+ */
+export function openTo(eyeId: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): OpenToKey {
+  const w = `openTo("${eyeId}")`;
+  return {
+    kind: 'openTo',
+    target: target(w, eyeId),
+    at: num(w, 'at', opts.at, 0, MAX_T),
+    to: num(w, 'to', opts.to, 0, 1),
+    dur: num(w, 'dur', opts.dur ?? 0.3, 0.03, 60),
+    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.12, 0, 0.5),
+  };
+}
+
+/** Make an eye blink at a chosen moment, in addition to its own schedule. */
+export function blink(eyeId: string, opts: { at: number }): BlinkKey {
+  const w = `blink("${eyeId}")`;
+  return { kind: 'blink', target: target(w, eyeId), at: num(w, 'at', opts.at, 0, MAX_T) };
 }
 
 /** A quick swell-and-settle of a node's scale: a reaction, a beat. */

@@ -7,7 +7,7 @@
 
 import RAPIER from '@dimforge/rapier2d-deterministic-compat';
 import { DEG } from '../core/math.ts';
-import { SIM_DT, SUBSTEPS } from '../core/time.ts';
+import { FPS, SIM_DT, SUBSTEPS } from '../core/time.ts';
 import { capsuleCenters, insetConvex, outline, scaleShape, type ShapeSpec } from '../shape/geometry.ts';
 import type { BodySpec, PhysicsSpec } from '../scene/types.ts';
 import { physicsVersion } from '../version.ts';
@@ -99,7 +99,10 @@ function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAPIER.Col
 /**
  * Simulates the rigid bodies of a shot and returns their pose at every frame.
  * A dynamic body holds its authored pose until its release time, then joins the
- * world. The pose stored for frame n is the state at time n / 60 s.
+ * world. The pose stored for frame n is the state at time n / 60 s. With
+ * `style.prewarm` the world first runs for that many seconds before frame 0;
+ * bodies with a negative release join it then, and contacts from before the
+ * shot are not recorded.
  */
 export async function simulateRigid(defs: readonly RigidBodyDef[], style: PhysicsSpec, frames: number): Promise<RigidResult> {
   const n = defs.length;
@@ -169,7 +172,7 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
   const pending: Pending[] = [];
   const flush = (p: Pending): void => {
     const impulse = p.peak / UNITS_PER_METER;
-    if (impulse < MIN_RECORDED_IMPULSE) return;
+    if (impulse < MIN_RECORDED_IMPULSE || p.step < 0) return;
     const a = idOfCollider.get(p.h1);
     const b = idOfCollider.get(p.h2);
     if (a === undefined || b === undefined) return;
@@ -183,6 +186,52 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
       impulse: Math.fround(impulse),
     });
   };
+
+  /** One simulation step; `step` counts from the start of the shot and is negative during the prewarm. */
+  const advance = (step: number): void => {
+    const time = step * SIM_DT;
+    while (next < waiting.length && releaseOf(waiting[next]!) <= time + 1e-9) {
+      create(waiting[next]!);
+      next++;
+    }
+    world.step(queue);
+    queue.drainCollisionEvents((h1, h2, started) => {
+      if (started) pending.push({ h1, h2, age: 0, peak: 0, x: 0, y: 0, step });
+    });
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const p = pending[i]!;
+      const c1 = world.getCollider(p.h1);
+      const c2 = world.getCollider(p.h2);
+      if (c1 && c2) {
+        world.contactPair(c1, c2, (manifold) => {
+          let sum = 0;
+          for (let j = 0; j < manifold.numContacts(); j++) sum += manifold.contactImpulse(j);
+          if (sum > p.peak) {
+            p.peak = sum;
+            p.step = step;
+            const pt = manifold.numSolverContacts() > 0 ? manifold.solverContactPoint(0) : null;
+            if (pt) {
+              p.x = pt.x;
+              p.y = pt.y;
+            } else {
+              const t1 = c1.translation();
+              const t2 = c2.translation();
+              p.x = (t1.x + t2.x) / 2;
+              p.y = (t1.y + t2.y) / 2;
+            }
+          }
+        });
+      }
+      p.age++;
+      if (p.age >= IMPACT_WINDOW) {
+        flush(p);
+        pending.splice(i, 1);
+      }
+    }
+  };
+
+  const prewarmSteps = Math.round(Math.max(0, style.prewarm) * FPS * SUBSTEPS);
+  for (let s = -prewarmSteps; s < 0; s++) advance(s);
 
   for (let f = 0; f < frames; f++) {
     for (let i = 0; i < n; i++) {
@@ -200,48 +249,7 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
         poses[o + 2] = def.rot;
       }
     }
-    for (let k = 0; k < SUBSTEPS; k++) {
-      const step = f * SUBSTEPS + k;
-      const time = step * SIM_DT;
-      while (next < waiting.length && releaseOf(waiting[next]!) <= time + 1e-9) {
-        create(waiting[next]!);
-        next++;
-      }
-      world.step(queue);
-      queue.drainCollisionEvents((h1, h2, started) => {
-        if (started) pending.push({ h1, h2, age: 0, peak: 0, x: 0, y: 0, step });
-      });
-      for (let i = pending.length - 1; i >= 0; i--) {
-        const p = pending[i]!;
-        const c1 = world.getCollider(p.h1);
-        const c2 = world.getCollider(p.h2);
-        if (c1 && c2) {
-          world.contactPair(c1, c2, (manifold) => {
-            let sum = 0;
-            for (let j = 0; j < manifold.numContacts(); j++) sum += manifold.contactImpulse(j);
-            if (sum > p.peak) {
-              p.peak = sum;
-              p.step = step;
-              const pt = manifold.numSolverContacts() > 0 ? manifold.solverContactPoint(0) : null;
-              if (pt) {
-                p.x = pt.x;
-                p.y = pt.y;
-              } else {
-                const t1 = c1.translation();
-                const t2 = c2.translation();
-                p.x = (t1.x + t2.x) / 2;
-                p.y = (t1.y + t2.y) / 2;
-              }
-            }
-          });
-        }
-        p.age++;
-        if (p.age >= IMPACT_WINDOW) {
-          flush(p);
-          pending.splice(i, 1);
-        }
-      }
-    }
+    for (let k = 0; k < SUBSTEPS; k++) advance(f * SUBSTEPS + k);
   }
   for (const p of pending) flush(p);
   // Order the record by time, then by ids, so that it does not depend on solver internals.

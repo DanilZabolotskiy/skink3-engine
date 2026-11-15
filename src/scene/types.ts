@@ -38,7 +38,11 @@ export type BodySpec =
   | {
       /** Stays where the scene puts it until `release`, then falls and collides. */
       readonly kind: 'dynamic';
-      /** Seconds: the moment the simulation takes the body over. */
+      /**
+       * Seconds: the moment the simulation takes the body over. It may be
+       * negative, down to minus the shot's `physics.prewarm`: such a body is
+       * already under way (or already at rest) at frame 0.
+       */
       readonly release: number;
       /** Velocity at release, units per second. */
       readonly velocity?: Vec2;
@@ -85,6 +89,11 @@ export interface GroupNode extends NodeBase {
   readonly type: 'group';
   /** 0..1 at the start; the whole group fades as one picture. */
   readonly opacity: number;
+  /**
+   * The group keeps its own rotation in the layer's space instead of turning
+   * with its parent: a face on a body that rolls stays level.
+   */
+  readonly upright: boolean;
   readonly children: readonly SceneNode[];
   readonly follow: SpringSpec | null;
   readonly idle: IdleSpec | null;
@@ -145,7 +154,10 @@ export interface EyeNode extends NodeBase {
   readonly opacity: number;
   /** Node to look at, or null to look straight ahead. */
   readonly lookAt: string | null;
+  /** Blink now and then, on a seeded schedule. */
   readonly blink: boolean;
+  /** How far the lids are open at the start: 0 = shut (the eye is not drawn), 1 = open. openTo animates it. */
+  readonly open: number;
 }
 
 export interface TurbulenceSpec {
@@ -187,6 +199,11 @@ export interface EmitterNode {
   /** Radius in units, [min, max]. */
   readonly size: Vec2;
   readonly colors: readonly ColorRef[];
+  /**
+   * An inner disc drawn on every particle, in one colour: `size` is its radius
+   * as a fraction of the particle's. null draws plain discs.
+   */
+  readonly core: { readonly color: ColorRef; readonly size: number } | null;
   /** Constant acceleration (gravity, wind), units per second squared. */
   readonly gravity: Vec2;
   /** Velocity lost per second, as a rate (0 = none). */
@@ -252,6 +269,11 @@ export interface PhysicsSpec {
   readonly angularDamping: number;
   readonly restitution: number;
   readonly friction: number;
+  /**
+   * Seconds the world is simulated before the shot starts, so that a pile
+   * already lies there, or a stream already falls, at frame 0.
+   */
+  readonly prewarm: number;
 }
 
 export interface ShotSpec {

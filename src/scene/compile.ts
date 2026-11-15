@@ -11,13 +11,15 @@ import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
-import type { BumpKey, DrawOnKey, FadeToKey, Key, MoveToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from '../motion/intents.ts';
+import type { BumpKey, DrawOnKey, FadeToKey, Key, MoveToKey, OpenToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from '../motion/intents.ts';
 import {
+  buildLidTrack,
   buildLinkTrack,
   buildOpacityTrack,
   buildPosTrack,
   buildRotTrack,
   buildScaleTrack,
+  type LidTrack,
   type LinkTrack,
   type OpacityTrack,
   type PosTrack,
@@ -44,6 +46,8 @@ export interface CNode {
   readonly rot: RotTrack | null;
   readonly scale: ScaleTrack | null;
   readonly link: LinkTrack | null;
+  /** Eyes: how far the lids are open over time. */
+  readonly lid: LidTrack | null;
   /** Slot in the bake, or -1. */
   readonly bodySlot: number;
   readonly springSlot: number;
@@ -62,7 +66,7 @@ export interface CNode {
   readonly particleColors: readonly string[];
   /** Idle wandering noise, if the node has `idle`. */
   readonly idleNoise: Noise | null;
-  /** Eyes: the moments (seconds) a blink starts. */
+  /** Eyes: the moments (seconds) a blink starts, scheduled and asked for, in order. */
   readonly blinks: readonly number[];
 }
 
@@ -191,6 +195,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const fades = new Map<number, FadeToKey[]>();
   const draws = new Map<number, DrawOnKey[]>();
   const pulses = new Map<number, PulseKey[]>();
+  const opens = new Map<number, OpenToKey[]>();
+  const askedBlinks = new Map<number, number[]>();
   const push = <T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
     if (list) list.push(item);
@@ -245,6 +251,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         need(node.type === 'link', 'links');
         push(pulses, index, key);
         break;
+      case 'openTo':
+        need(node.type === 'eye', 'eyes');
+        push(opens, index, key);
+        break;
+      case 'blink':
+        need(node.type === 'eye', 'eyes');
+        push(askedBlinks, index, key.at);
+        break;
       default:
         fail(`${where}: unknown timeline key kind ${JSON.stringify((key as { kind: unknown }).kind)}`);
     }
@@ -295,6 +309,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           if (node.body.kind === 'dynamic' && node.body.release > spec.seconds) {
             fail(`${where}: body "${node.id}" is released at ${node.body.release} s, after the shot ends`);
           }
+          if (node.body.kind === 'dynamic' && node.body.release < -spec.physics.prewarm - 1e-9) {
+            fail(
+              `${where}: body "${node.id}" is released at ${node.body.release} s, before the simulation starts ` +
+                `(physics.prewarm is ${spec.physics.prewarm} s); raise physics.prewarm or release it later`,
+            );
+          }
           bodyLayer = d.layer;
           bodySlot = bodies.length;
           bodies.push(d.index);
@@ -327,6 +347,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
             t += rng.range(BLINK.minGap, BLINK.maxGap);
           }
         }
+        // Blinks the timeline asks for join the schedule.
+        blinks = [...blinks, ...(askedBlinks.get(d.index) ?? [])].sort((a, b) => a - b);
         break;
       case 'link':
         colors['color'] = col(node, 'color', node.color);
@@ -355,6 +377,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       }
       case 'emitter':
         particleColors = node.colors.map((c, i) => col(node, `colors[${i}]`, c));
+        if (node.core) colors['core'] = col(node, 'core.color', node.core.color);
         if (node.attach) attachIndex = ref(node, 'attach', node.attach);
         emitterSlot = emitters.length;
         emitters.push(d.index);
@@ -401,6 +424,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       rot,
       scale,
       link: linkTrack,
+      lid: node.type === 'eye' ? buildLidTrack(node.open, opens.get(d.index) ?? []) : null,
       bodySlot,
       springSlot,
       emitterSlot,

@@ -5,7 +5,7 @@ import { ease } from '../core/easing.ts';
 import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
 import { arcBump, bumpScale, BUMP_SECONDS, moveProgress, popInScale, popOutScale } from './curves.ts';
-import type { BumpKey, DrawOnKey, FadeToKey, MoveToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from './intents.ts';
+import type { BumpKey, DrawOnKey, FadeToKey, MoveToKey, OpenToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from './intents.ts';
 
 /** A move never backs away or overshoots by more than this many units, however long it is. */
 export const MAX_ANTICIPATION_UNITS = 44;
@@ -205,6 +205,43 @@ export function buildOpacityTrack(base: number, keys: readonly FadeToKey[]): Opa
   for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
     // Like scaleTo, a fade takes over from the opacity reached at that moment.
     segs.push({ at: k.at, dur: k.dur, from: sampleOpacity({ base, segs }, k.at), to: k.to });
+  }
+  return { base, segs };
+}
+
+export interface LidSeg {
+  readonly at: number;
+  readonly dur: number;
+  readonly from: number;
+  readonly to: number;
+  readonly overshoot: number;
+}
+
+/** How far the lids of an eye are open over time. */
+export interface LidTrack {
+  /** Opening before the first openTo: 0 = shut, 1 = open. */
+  readonly base: number;
+  readonly segs: readonly LidSeg[];
+}
+
+/** Lid opening at time t: 0 = shut; it may pass 1 briefly while an opening overshoots. */
+export function sampleLid(track: LidTrack, t: number): number {
+  let seg: LidSeg | null = null;
+  for (const s of track.segs) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return track.base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  return Math.max(0, seg.from + (seg.to - seg.from) * overshootStep(u, seg.overshoot, 0.5));
+}
+
+export function buildLidTrack(base: number, keys: readonly OpenToKey[]): LidTrack {
+  const segs: LidSeg[] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    // Like fadeTo, an openTo takes over from the opening reached at that moment.
+    segs.push({ at: k.at, dur: k.dur, from: Math.min(1, sampleLid({ base, segs }, k.at)), to: k.to, overshoot: k.overshoot });
   }
   return { base, segs };
 }
