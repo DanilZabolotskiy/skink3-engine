@@ -22,3 +22,17 @@ python -I tools/metrics/strip.py <video> <start> <n> <step> <width> <cols> <out.
 | `roles.py` | `an/roles.json` | colours and shares per lightness role |
 | `still.py` | stdout | static share, holds > 1 s, longest hold, drift px/frame at 1080p (median, p75, p95) |
 | `dupes.py` | stdout | zero-difference frames inside motion runs |
+
+## Short clips
+
+`pass1.sh` takes one frame every 6 s, and `roles.py` skips the first three sampled frames of each video (the intro). A single shot of a few seconds leaves them nothing to measure. Sample such a clip densely with the same filter, and put three copies of the first sample in front for `roles.py` to skip:
+
+```
+mkdir -p $METRICS_DIR/an/<id>/s && cd $METRICS_DIR/an/<id>
+ffmpeg -hide_banner -loglevel error -i $METRICS_DIR/dl/<id>.mp4 -vf "scale=480:-2,fps=2" -q:v 3 "s/1%03d.jpg"
+for i in 1 2 3; do cp s/1001.jpg s/000$i.jpg; done
+python -I tools/metrics/roles.py $METRICS_DIR            # $METRICS_DIR/an must hold only the clips to measure
+python -I tools/metrics/palette.py $METRICS_DIR <id> 3
+```
+
+`still.py` and `dupes.py` read the video itself and need no sampling. A single continuously moving shot has no hard cuts and close to 0 % static frame pairs; the 3–9 % norm describes whole videos.

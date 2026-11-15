@@ -13,11 +13,11 @@
 
 | Layer | Choice | Version, license |
 |---|---|---|
-| Language and runtime | TypeScript on Node (built-in type stripping), `tsc` for checks | Node 26 |
+| Language and runtime | TypeScript on Node (built-in type stripping), `tsc` for checks | Node 26, TypeScript 7.0.2 |
 | Drawing | skia-canvas: Skia via the skia-safe crate with a Canvas 2D API; GPU through Vulkan (Windows, Linux) or Metal (macOS); CPU fallback | 4.0.0, MIT |
 | Rigid bodies | Rapier 2D, deterministic build ("cross-platform deterministic execution") | `@dimforge/rapier2d-deterministic-compat` 0.21.0, Apache-2.0 |
 | Other physics | own XPBD, PBF and boids in TypeScript; Rapier 0.36 soft bodies (ropes, cloth; September 2026) to be evaluated in phase 2 | — |
-| Encoding | ffmpeg: NVENC for drafts, x264/x265 for masters | 9.x |
+| Encoding | ffmpeg: x264 by default, NVENC as an option for faster drafts; x264/x265 for masters | 9.x |
 
 ### What skia-canvas 4.0 gives us (verified)
 
