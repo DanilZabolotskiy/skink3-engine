@@ -141,11 +141,11 @@ export interface CompiledShot {
   readonly cameraTrack: CameraTrack | null;
 }
 
-type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' }>;
+type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 'text' }>;
 
 /** True for the nodes that have a place of their own: a position, a rotation and a size in their parent's space. */
 export function isPlaced(node: SceneNode): node is Placed {
-  return node.type === 'shape' || node.type === 'group' || node.type === 'eye' || node.type === 'stroke';
+  return node.type === 'shape' || node.type === 'group' || node.type === 'eye' || node.type === 'stroke' || node.type === 'text';
 }
 
 function fail(message: string): never {
@@ -214,7 +214,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     const index = idIndex.get(id);
     if (index === undefined) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to "${id}", which does not exist (nodes: ${known()})`);
     const other = drafts[index]!;
-    if (!isPlaced(other.node)) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to ${other.node.type} "${id}"; it must be a shape, a group, an eye or a stroke`);
+    if (!isPlaced(other.node)) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to ${other.node.type} "${id}"; it must be a shape, a group, an eye, a stroke or a text`);
     if (sameLayer && other.layer !== drafts[idIndex.get(owner.id)!]!.layer) {
       fail(`${where}: ${owner.type} "${owner.id}" and its ${prop} "${id}" must be in the same layer`);
     }
@@ -278,13 +278,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     };
     switch (key.kind) {
       case 'moveTo':
-        need(isPlaced(node), 'shapes, groups, eyes and strokes');
+        need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
         if (node.type === 'shape' && node.body) fail(`${where}: moveTo cannot target "${node.id}": a rigid body is moved by the physics bake`);
         push(moves, index, key);
         break;
       case 'hop':
       case 'travel':
-        need(isPlaced(node), 'shapes, groups, eyes and strokes');
+        need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
         if (node.type === 'shape' && node.body) fail(`${where}: ${key.kind} cannot target "${node.id}": a rigid body is moved by the physics bake`);
         if (key.kind === 'travel' && (key.roll !== null || key.orient) && node.type === 'eye') {
           fail(`${where}: travel("${node.id}") cannot roll or orient an eye: an eye does not turn; put it in a group and move that`);
@@ -298,33 +298,33 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         push(levels, index, key);
         break;
       case 'squash':
-        need(isPlaced(node), 'shapes, groups, eyes and strokes');
+        need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
         push(squashes, index, key);
         break;
       case 'turnTo':
-        need(node.type === 'shape' || node.type === 'group' || node.type === 'stroke', 'shapes, groups and strokes');
+        need(node.type === 'shape' || node.type === 'group' || node.type === 'stroke' || node.type === 'text', 'shapes, groups, strokes and texts');
         if (node.type === 'shape' && node.body) fail(`${where}: turnTo cannot target "${node.id}": a rigid body is turned by the physics bake`);
         push(turns, index, key);
         break;
       case 'popIn':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
         push(popIns, index, key);
         break;
       case 'popOut':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
         push(popOuts, index, key);
         break;
       case 'scaleTo':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
         if (node.type === 'shape' && node.body) fail(`${where}: scaleTo cannot target "${node.id}": the size of a rigid body is fixed by the physics bake`);
         push(scales, index, key);
         break;
       case 'fadeTo':
-        need(node.type !== 'emitter', 'shapes, groups, eyes, strokes, labels and links');
+        need(node.type !== 'emitter', 'shapes, groups, eyes, strokes, texts, labels and links');
         push(fades, index, key);
         break;
       case 'bump':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
         push(bumps, index, { at: (key as BumpKey).at, amount: (key as BumpKey).amount });
         break;
       case 'drawOn':
@@ -455,6 +455,18 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         break;
       case 'stroke':
         colors['color'] = col(node, 'color', node.color);
+        break;
+      case 'text':
+        colors['ink'] = col(node, 'ink', node.ink);
+        if (node.box) colors['box'] = col(node, 'box', node.box);
+        for (const lang of Object.keys(spec.strings)) {
+          try {
+            resolveString(spec.strings, lang, node.text);
+          } catch (e) {
+            fail(`${where}: text "${node.id}": ${(e as Error).message}`);
+          }
+        }
+        stringKeys.add(node.text);
         break;
       case 'link':
         colors['color'] = col(node, 'color', node.color);

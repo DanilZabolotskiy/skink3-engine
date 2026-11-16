@@ -55,12 +55,13 @@ group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, 
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // a line; + dash: [dash, gap] (0: dots), drawn, at, rotation, scale, opacity
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /* = */ side: 'top', size: 38, maxWidth: 420, maxLines: 3 });
+text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // no pointer; + box: a colour, at, rotation, scale, opacity
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
 - Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. They are convex; a `group` composes them. `children` are drawn over their parent.
 - `stroke`: `smooth` 0 joins the points with straight lines; `arcPoints(center, r, from, to)` gives an arc or a ring (degrees).
-- `label`: the tail points at the edge of `target` on `side`; the text wraps, then shrinks, and is never cut. To place it elsewhere, point it at an empty group. List a `link` before its nodes.
+- `label`: the tail points at the edge of `target` on `side`; the text wraps, then shrinks, and is never cut. `text`: free-standing; as the child of a shape it lies on it; in a `layer` with `parallax: 0` it belongs to the frame (a title, a note). List a `link` before its nodes.
 
 ## Springs and rigid bodies (opt-in)
 

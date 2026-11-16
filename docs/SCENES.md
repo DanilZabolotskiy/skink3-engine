@@ -120,7 +120,7 @@ strings: {
 
 - Keys look like `label.core`: lower-case letters, digits, and `.`, `_`, `-` between parts.
 - Every key a scene uses must exist in **every** table, or `shot()` throws.
-- A render uses one language (`--lang`, default: the first table). Labels size and wrap themselves to that language's string.
+- A render uses one language (`--lang`, default: the first table). Labels and texts size and wrap themselves to that language's string.
 - The bundled font covers Latin, Latin Extended, Cyrillic and Vietnamese. Lines break at spaces only. Other scripts, right-to-left text and fallback fonts are not implemented yet.
 - Text never influences the bake: adding a language re-renders without re-baking.
 
@@ -430,6 +430,40 @@ The layout wraps the string, balances the lines, and shrinks the font if needed.
 - A label and its target must be in the same layer.
 - A label over ground or a wall gives a covers-node warning unless that shape is marked `backdrop: true`.
 
+### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, clipTo?, sound? })`
+
+Free-standing text: a title, a caption, a source line in a corner, a quotation, words on a card. It is a block of lines without a pointer. A `label` points at a thing; a `text` belongs to the frame, or to the shape it lies on.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `text` | required | a key of the shot's string tables, never the words themselves |
+| `ink` | required | palette reference: the colour of the letters |
+| `at`, `rotation`, `scale`, `opacity` | `[0, 0]`, `0`, `1`, `1` | as for a shape |
+| `size`, `minSize` | `38`, 62 % of `size` | preferred and smallest font size, in units |
+| `maxWidth`, `maxLines` | `600`, `3` | the widest a line may get before the text wraps, and the most lines |
+| `weight` | `800` | weight of the letters, 200 (light) to 1000 (black) |
+| `align` | `'center'` | where `at` is in the block, sideways, and how the lines are set: `'center'`: its middle; `'left'`: the lines start at `at`; `'right'`: they end there. Up and down the block is centred on `at` |
+| `box` | none | palette reference: a rounded box of that colour behind the lines, with the padding and the corners of a label |
+| `clipTo` | none | id of a shape of the same layer: the text is drawn only inside it |
+| `sound` | none | key of the text's voice (see Sound) |
+
+```ts
+// A title and a note that belong to the frame: a layer the camera neither moves nor zooms.
+layer({ id: 'frame', depth: 0, parallax: 0, nodes: [
+  text({ id: 'title', text: 'title.main', ink: 'light.cream', at: [0, -455], size: 60, maxWidth: 1100, maxLines: 2 }),
+  text({ id: 'note', text: 'note.data', ink: 'mid.mist', at: [-900, 490], align: 'left', size: 26, weight: 600 }),
+] }),
+// A word on a card: the child of the shape. It moves, turns, grows and fades with it.
+rect({ id: 'card', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children: [text({ id: 'tag', text: 'card.tag', ink: 'light.cream', maxWidth: 200 })] }),
+```
+
+- **The layout is a label's:** the string wraps at spaces, the lines are balanced, and the font shrinks down to `minSize` when the string is too long; nothing is ever cut. A translation may take more lines.
+- **It is placed like a shape:** it takes `moveTo`, `turnTo`, `scaleTo`, `popIn`, `popOut`, `fadeTo`, `bump` and `squash`, and may be the child of a shape or a group. It has no children and no light.
+- **Text of the frame** goes into a layer with `parallax: 0`, listed after the others: the camera does not move it, and a camera key does not zoom it.
+- **The text-fit checks hold it** in every language: a string that does not fit its lines, a text that leaves the frame while it is shown, and a text that lies over another text or over a label are errors. A text that lies on a shape is what it is for and is not reported.
+- A text on something that turns is turned with it; the check takes the upright box round it.
+- Its `popIn` is a `label` event (see Sound).
+
 ### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
@@ -672,9 +706,9 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 |---|---|
 | palette | a law above is broken |
 | strings | a used key is missing or empty in a language |
-| text fit: overflow | a label's string does not fit its `maxWidth` and `maxLines` even at `minSize` |
-| text fit: off-frame | a shown label comes closer than 12 units to the frame edge at any sampled frame |
-| text fit: overlap | two shown labels overlap at any sampled frame |
+| text fit: overflow | the string of a label or of a text does not fit its `maxWidth` and `maxLines` even at `minSize` |
+| text fit: off-frame | a shown label or text comes closer than 12 units to the frame edge at any sampled frame |
+| text fit: overlap | two shown labels or texts overlap at any sampled frame |
 | text fit: covers-node (**warning**) | a shown label covers a shape or an eye of its own layer other than its target (and the target's own children and parents), at any sampled frame |
 | sound (only with `--bank <bank.json>`) | a node, an intent or an `sfx()` names a sound key that the bank does not know (see Sound) |
 
@@ -798,7 +832,7 @@ Every key of the timeline is an event, and so are every recorded contact of the 
 | Kind | What makes it | Its moment |
 |---|---|---|
 | `appear`, `disappear` | `popIn`, `popOut` of a shape, a group or an eye | `at` |
-| `label` | `popIn` of a label | `at` |
+| `label` | `popIn` of a label or of a text | `at` |
 | `move` | `moveTo`, `travel`, the take-off of a `hop` | `at` |
 | `land` | the landing of a `hop` | `at + dur` |
 | `turn` | `turnTo` | `at` |
@@ -1126,4 +1160,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, titles or counters, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles or counters, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

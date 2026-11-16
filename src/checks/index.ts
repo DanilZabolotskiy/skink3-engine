@@ -66,7 +66,7 @@ export function formatReport(report: CheckReport): string {
   const lines: string[] = [];
   lines.push(`languages: ${report.languages.join(', ')}`);
   for (const s of report.labels) {
-    lines.push(`  label ${s.label} [${s.lang}]: ${s.lines} line(s), size ${s.size}, box ${s.width.toFixed(0)} x ${s.height.toFixed(0)}`);
+    lines.push(`  ${s.what} ${s.label} [${s.lang}]: ${s.lines} line(s), size ${s.size}, box ${s.width.toFixed(0)} x ${s.height.toFixed(0)}`);
   }
   // The sound keys are held against a bank only when one was given.
   for (const check of ['palette', 'strings', 'text-fit', ...(report.sound ? (['sound'] as const) : [])] as const) {

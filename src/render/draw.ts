@@ -12,7 +12,7 @@ import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathTable } from '../motion/paths.ts';
-import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem, StrokeItem } from '../scene/evaluate.ts';
+import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem, StrokeItem, TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
@@ -447,6 +447,30 @@ function textPath(ctx: CanvasRenderingContext2D, text: string, size: number, wei
     textPathCache.set(key, p);
   }
   return p;
+}
+
+/** Free-standing text: its box, if it has one, and its lines, placed, turned and scaled as its node is. */
+export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: Paint): void {
+  const b = item.block;
+  const { xf } = item;
+  ctx.save();
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  if (b.path) {
+    ctx.fillStyle = paint.tone('base', item.node.colors['box']!);
+    ctx.fill(b.path);
+  }
+  ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
+  for (const line of b.lines) {
+    const p = textPath(ctx, line.text, b.size, b.weight);
+    if (!p) continue;
+    ctx.save();
+    ctx.translate(line.x, line.y);
+    ctx.fill(p);
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 /**

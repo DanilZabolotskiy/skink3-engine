@@ -22,6 +22,7 @@ import {
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { outlineOf, reach } from '../shape/geometry.ts';
+import { textBlock, type TextBlock } from '../text/block.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
 import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
@@ -167,7 +168,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
 
   for (const n of c.nodes) {
     const node = n.node;
-    if (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke') continue;
+    if (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke' && node.type !== 'text') continue;
     const scale = node.scale * (n.scale ? sampleScale(n.scale, t) : 1);
     if (n.bodySlot >= 0) {
       const p = poses.body(n.bodySlot, frame);
@@ -266,6 +267,17 @@ export interface StrokeItem {
   readonly solid: number;
 }
 
+export interface TextItem {
+  readonly kind: 'text';
+  readonly node: CNode;
+  readonly xf: Xf;
+  readonly alpha: number;
+  readonly block: TextBlock;
+  readonly layout: TextLayout;
+  /** How far its pops and its lasting size have grown it: 1 at its authored size. */
+  readonly grown: number;
+}
+
 export interface LabelItem {
   readonly kind: 'label';
   readonly node: CNode;
@@ -324,7 +336,7 @@ export interface StretchItem {
   readonly items: readonly Item[];
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | GroupItem | ClipItem | StretchItem;
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem;
 export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem>;
 
 /** All items of a list with the groups, clips and stretches opened up, in draw order. */
@@ -372,6 +384,27 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
       maxLines: node.maxLines,
     });
     hit = { layout, geometry: labelGeometry(layout, node.side) };
+    cache.set(key, hit);
+  }
+  return hit;
+}
+
+const textCache = new WeakMap<CompiledShot, Map<string, { layout: TextLayout; block: TextBlock }>>();
+
+/** Layout and block of a free-standing text in a language (cached; the result depends on nothing else). */
+export function textLayout(c: CompiledShot, n: CNode, lang: string): { layout: TextLayout; block: TextBlock } {
+  if (n.node.type !== 'text') throw new Error(`"${n.id}" is not a text`);
+  let cache = textCache.get(c);
+  if (!cache) {
+    cache = new Map();
+    textCache.set(c, cache);
+  }
+  const key = `${lang}\u0000${n.id}`;
+  let hit = cache.get(key);
+  if (!hit) {
+    const node = n.node;
+    const layout = layoutText(resolveString(c.spec.strings, lang, node.text), { size: node.size, minSize: node.minSize, weight: node.weight, maxWidth: node.maxWidth, maxLines: node.maxLines });
+    hit = { layout, block: textBlock(layout, node.align, node.box !== null) };
     cache.set(key, hit);
   }
   return hit;
@@ -539,6 +572,12 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           items.push({ kind: 'eye', node: n, xf, look, open: lid * eyeOpen(n.blinks, t), alpha: a });
+          break;
+        }
+        case 'text': {
+          if (xf.scale <= HIDDEN) break;
+          const { layout, block } = textLayout(c, n, lang);
+          items.push({ kind: 'text', node: n, xf, alpha: a, block, layout, grown: n.scale ? sampleScale(n.scale, t) : 1 });
           break;
         }
         case 'stroke': {

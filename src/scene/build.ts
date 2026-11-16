@@ -18,6 +18,7 @@ import {
   regularPolygonShape,
   type ShapeSpec,
 } from '../shape/geometry.ts';
+import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { FINDING_KINDS_ALL } from './types.ts';
@@ -42,6 +43,7 @@ import type {
   ShapeNode,
   ShotSpec,
   StrokeNode,
+  TextNode,
   TurbulenceSpec,
 } from './types.ts';
 
@@ -521,6 +523,72 @@ export function label(o: {
     ink: color(where, 'ink', o.ink),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     follow: spring(where, 'follow', o.follow),
+  };
+}
+
+/**
+ * Free-standing text: a title, a caption, a note, words on a card. `text` is
+ * a key of the shot's string tables; the lines wrap, balance and shrink as a
+ * label's do, and the text-fit checks hold them. There is no pointer. It is
+ * placed like a shape: at `at`, turned and scaled, alone or as the child of a
+ * shape or a group, with which it moves, turns and fades. `box` puts a
+ * rounded box of that colour behind the lines.
+ */
+export function text(o: {
+  id: string;
+  /** String-table key, e.g. "title.main". */
+  text: string;
+  ink: ColorRef;
+  at?: Vec2;
+  rotation?: number;
+  scale?: number;
+  /** 0..1 at the start; default 1. */
+  opacity?: number;
+  /** Preferred font size; default 38. */
+  size?: number;
+  /** Smallest font size; default 62 % of size. */
+  minSize?: number;
+  /** Default 600. */
+  maxWidth?: number;
+  /** Default 3. */
+  maxLines?: number;
+  /** Weight of the letters, 200 to 1000; default 800. */
+  weight?: number;
+  /** Where `at` is in the block, sideways, and how the lines are set: 'left', 'center' (the default) or 'right'. */
+  align?: TextAlign;
+  /** A rounded box of this colour behind the lines; default none. */
+  box?: ColorRef;
+  /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
+  clipTo?: string;
+  /** Key of the node's voice in the bank of sounds. */
+  sound?: string;
+}): TextNode {
+  const where = `text("${o?.id}")`;
+  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'clipTo', 'sound']);
+  if (typeof o.text !== 'string' || !isStringKey(o.text)) {
+    fail(where, `text must be a string-table key such as "title.main", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
+  }
+  const align = o.align ?? 'center';
+  if (!TEXT_ALIGNS.includes(align)) fail(where, `align must be left, center or right, got ${JSON.stringify(align)}`);
+  const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 600);
+  return {
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...voice(where, o.sound),
+    type: 'text',
+    id: idOf(where, o.id),
+    text: o.text,
+    ink: color(where, 'ink', o.ink),
+    size,
+    minSize: o.minSize === undefined ? Math.round(size * 0.62) : num(where, 'minSize', o.minSize, 6, size),
+    maxWidth: o.maxWidth === undefined ? 600 : num(where, 'maxWidth', o.maxWidth, 40, 1800),
+    maxLines: o.maxLines === undefined ? 3 : num(where, 'maxLines', o.maxLines, 1, 12),
+    weight: o.weight === undefined ? 800 : num(where, 'weight', o.weight, 200, 1000),
+    align,
+    box: o.box === undefined ? null : color(where, 'box', o.box),
+    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
+    scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
   };
 }
 

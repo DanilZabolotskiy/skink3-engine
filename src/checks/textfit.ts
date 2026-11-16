@@ -1,13 +1,15 @@
-// Text fit: for every language of the string tables, every label must hold its
-// string, stay inside the frame while it is shown, and not cover another label.
-// A label that covers a node other than the one it points at is reported too,
-// as a warning: it is the most common layout mistake, but sometimes intended.
+// Text fit: for every language of the string tables, every label and every
+// free-standing text must hold its string, stay inside the frame while it is
+// shown, and not cover another of them. A label that covers a node other than
+// the one it points at is reported too, as a warning: it is the most common
+// layout mistake, but sometimes intended. A free-standing text is laid on
+// things on purpose, so it is not held to that.
 
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, labelLayout, type LabelItem, type LeafItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, labelLayout, textLayout, type LabelItem, type LeafItem, type TextItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
 import { outlineOf } from '../shape/geometry.ts';
 
@@ -22,7 +24,9 @@ export interface FitIssue {
 
 export interface FitStat {
   readonly lang: string;
+  /** Id of the label or of the text. */
   readonly label: string;
+  readonly what: 'label' | 'text';
   readonly lines: number;
   readonly size: number;
   readonly width: number;
@@ -43,6 +47,8 @@ const COVER_DEPTH = 3;
 
 interface Box {
   readonly id: string;
+  /** What it is, as a message names it. */
+  readonly what: 'label' | 'text';
   readonly x0: number;
   readonly y0: number;
   readonly x1: number;
@@ -100,12 +106,30 @@ function layerBox(item: LabelItem): Box {
   const b = item.geometry.box;
   const x0 = item.tip[0] + b.x * item.scale;
   const y0 = item.tip[1] + b.y * item.scale;
-  return { id: item.node.id, x0, y0, x1: x0 + b.w * item.scale, y1: y0 + b.h * item.scale };
+  return { id: item.node.id, what: 'label', x0, y0, x1: x0 + b.w * item.scale, y1: y0 + b.h * item.scale };
+}
+
+/** The box around a shown text in the space of its layer: upright, round the block however it is turned. */
+function textBox(item: TextItem): Box {
+  const b = item.block.box;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const corner of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]] as const) {
+    const p = xfApply(item.xf, corner);
+    x0 = Math.min(x0, p[0]);
+    y0 = Math.min(y0, p[1]);
+    x1 = Math.max(x1, p[0]);
+    y1 = Math.max(y1, p[1]);
+  }
+  return { id: item.node.id, what: 'text', x0, y0, x1, y1 };
 }
 
 function toStage(b: Box, view: { zoom: number; tx: number; ty: number }): Box {
   return {
     id: b.id,
+    what: b.what,
     x0: b.x0 * view.zoom + view.tx,
     y0: b.y0 * view.zoom + view.ty,
     x1: b.x1 * view.zoom + view.tx,
@@ -126,13 +150,14 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
   const issues: FitIssue[] = [];
   const stats: FitStat[] = [];
   const labels = c.nodes.filter((n) => n.node.type === 'label');
+  const texts = c.nodes.filter((n) => n.node.type === 'text');
   const relatedOf = new Map<string, Set<number>>();
   for (const n of labels) relatedOf.set(n.id, related(c, n));
 
   for (const lang of langs) {
     for (const n of labels) {
       const { layout, geometry } = labelLayout(c, n, lang);
-      stats.push({ lang, label: n.id, lines: layout.lines.length, size: layout.size, width: geometry.box.w, height: geometry.box.h });
+      stats.push({ lang, label: n.id, what: 'label', lines: layout.lines.length, size: layout.size, width: geometry.box.w, height: geometry.box.h });
       if (layout.overflow) {
         issues.push({
           lang,
@@ -141,6 +166,13 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
           severity: 'error',
           message: `label "${n.id}" [${lang}]: the string does not fit: ${layout.overflowReason}`,
         });
+      }
+    }
+    for (const n of texts) {
+      const { layout, block } = textLayout(c, n, lang);
+      stats.push({ lang, label: n.id, what: 'text', lines: layout.lines.length, size: layout.size, width: block.box.w, height: block.box.h });
+      if (layout.overflow) {
+        issues.push({ lang, label: n.id, kind: 'overflow', severity: 'error', message: `text "${n.id}" [${lang}]: the string does not fit: ${layout.overflowReason}` });
       }
     }
     const offFrame = new Set<string>();
@@ -154,11 +186,15 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
       for (const layer of state.layers) {
         const leaves = flatItems(layer.items);
         const shown = leaves.filter((i): i is LabelItem => i.kind === 'label' && i.scale >= SHOWN_SCALE && i.alpha >= SHOWN_ALPHA);
+        // A free-standing text is held to the frame and to the other texts and labels, not to the nodes it lies on.
+        for (const item of leaves) {
+          if (item.kind === 'text' && item.grown >= SHOWN_SCALE && item.alpha >= SHOWN_ALPHA) stageBoxes.push(toStage(textBox(item), layer.view));
+        }
         if (shown.length === 0) continue;
         for (const item of shown) {
           const box = layerBox(item);
           stageBoxes.push(toStage(box, layer.view));
-          const inner: Box = { id: box.id, x0: box.x0 + COVER_DEPTH, y0: box.y0 + COVER_DEPTH, x1: box.x1 - COVER_DEPTH, y1: box.y1 - COVER_DEPTH };
+          const inner: Box = { id: box.id, what: 'label', x0: box.x0 + COVER_DEPTH, y0: box.y0 + COVER_DEPTH, x1: box.x1 - COVER_DEPTH, y1: box.y1 - COVER_DEPTH };
           const skip = relatedOf.get(item.node.id)!;
           for (const other of leaves) {
             if (other.kind !== 'shape' && other.kind !== 'eye') continue;
@@ -183,7 +219,7 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
             label: b.id,
             kind: 'off-frame',
             severity: 'error',
-            message: `label "${b.id}" [${lang}]: leaves the frame by ${out.toFixed(0)} units at frame ${f} (${seconds(f)} s)`,
+            message: `${b.what} "${b.id}" [${lang}]: leaves the frame by ${out.toFixed(0)} units at frame ${f} (${seconds(f)} s)`,
           });
         }
       }
@@ -200,7 +236,7 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
               label: a.id,
               kind: 'overlap',
               severity: 'error',
-              message: `labels "${a.id}" and "${b.id}" [${lang}]: overlap at frame ${f} (${seconds(f)} s)`,
+              message: `${a.what === 'label' && b.what === 'label' ? 'labels' : a.what === 'text' && b.what === 'text' ? 'texts' : `${a.what} and ${b.what}`} "${a.id}" and "${b.id}" [${lang}]: overlap at frame ${f} (${seconds(f)} s)`,
             });
           }
         }

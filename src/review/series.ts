@@ -26,6 +26,7 @@ import {
   labelLayout,
   LEVEL_EMPTY,
   levelGeometry,
+  textLayout,
   opacities,
   SHUT,
   swayDirection,
@@ -45,11 +46,11 @@ export const IN_FRAME = 2;
 export const REGION_COLS = 3;
 export const REGION_ROWS = 2;
 
-/** A shape, a group, an eye, a stroke or a label over the whole shot. */
+/** A shape, a group, an eye, a stroke, a text or a label over the whole shot. */
 export interface PlacedSeries {
   readonly node: CNode;
   readonly id: string;
-  readonly type: 'shape' | 'group' | 'eye' | 'label' | 'stroke';
+  readonly type: 'shape' | 'group' | 'eye' | 'label' | 'stroke' | 'text';
   /** Its motion comes from the rigid-body solver: a body, or a label that points at one. */
   readonly solver: boolean;
   /**
@@ -305,8 +306,9 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       for (let i = 0; i < table.xs.length; i++) far = Math.max(far, Math.hypot(table.xs[i]!, table.ys[i]!));
       radius[n.index] = far + node.width / 2;
       turnRadius[n.index] = radius[n.index]!;
-    } else if (node.type === 'label') {
-      const box = labelLayout(c, n, lang).geometry.box;
+    } else if (node.type === 'label' || node.type === 'text') {
+      const box = node.type === 'label' ? labelLayout(c, n, lang).geometry.box : textLayout(c, n, lang).block.box;
+      if (node.type === 'text') turnRadius[n.index] = Math.hypot(Math.max(Math.abs(box.x), Math.abs(box.x + box.w)), Math.max(Math.abs(box.y), Math.abs(box.y + box.h)));
       radius[n.index] = Math.max(
         Math.hypot(box.x, box.y),
         Math.hypot(box.x + box.w, box.y),
@@ -318,7 +320,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   for (let i = N - 1; i >= 0; i--) {
     const n = c.nodes[i]!;
     const node = n.node;
-    if (n.parent < 0 || (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke')) continue;
+    if (n.parent < 0 || (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke' && node.type !== 'text')) continue;
     const offset = Math.hypot(node.at[0], node.at[1]);
     radius[n.parent] = Math.max(radius[n.parent]!, offset + radius[i]! * node.scale);
     turnRadius[n.parent] = Math.max(turnRadius[n.parent]!, offset + turnRadius[i]! * node.scale);
@@ -461,7 +463,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       faint[i] = own[i]! <= FAINT || (n.parent >= 0 && faint[n.parent] === 1) ? 1 : 0;
       if (faint[i]) continue;
       const xf = world[i]!;
-      if (node.type === 'shape' || node.type === 'label') drawn[i] = xf.scale > HIDDEN && (n.level === null || sampleLevel(n.level, t) > LEVEL_EMPTY) ? 1 : 0;
+      if (node.type === 'shape' || node.type === 'label' || node.type === 'text') drawn[i] = xf.scale > HIDDEN && (n.level === null || sampleLevel(n.level, t) > LEVEL_EMPTY) ? 1 : 0;
       else if (node.type === 'eye') drawn[i] = xf.scale > HIDDEN && (n.lid ? sampleLid(n.lid, t) : 1) > SHUT ? 1 : 0;
       else if (node.type === 'stroke') drawn[i] = xf.scale > HIDDEN && sampleDrawn(n.stroke!, t) > 1e-6 ? 1 : 0;
     }

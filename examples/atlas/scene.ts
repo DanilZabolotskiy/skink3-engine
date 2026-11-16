@@ -1,28 +1,37 @@
-// Atlas shot: lines and a camera that moves on cue, with neutral content.
+// Atlas shot: lines, words and a camera that moves on cue, with neutral content.
 //
 // A route draws itself across the frame behind a bead that travels along it;
 // its last stretch is dotted at first and then closes into a solid line. A
 // jagged line falls, a dashed outline runs round a block, and a ring fills
 // part of the way round. The camera pushes in on what lies ahead while it is
-// made certain, and pulls back to the whole picture.
+// made certain, and pulls back to the whole picture. A title and a note belong
+// to the frame and stay where they are; a word lies on the block and goes
+// where the block goes.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
-// profile, solidTo(), arcPoints(), and cameraTo().
+// profile, solidTo(), arcPoints(), cameraTo(), and text() in the frame's own
+// layer and on a shape.
 
-import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, shot, solidTo, stroke, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, shot, solidTo, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
 
 // The route: its first part is certain, its last part is not yet.
 const ROUTE: Vec2[] = [[-760, 250], [-520, 60], [-260, 150], [-40, -40], [200, 40]];
-const AHEAD: Vec2[] = [[200, 40], [380, 120], [560, -20], [700, -190]];
+const AHEAD: Vec2[] = [[200, 40], [380, 120], [560, -20], [690, -110]];
 const CHART: Vec2[] = [[-760, -330], [-690, -380], [-630, -300], [-560, -350], [-490, -240], [-420, -290], [-350, -170]];
 
-const strings: StringTables = { en: {}, 'x-long': {} };
+const strings: StringTables = {
+  en: { 'title.main': 'Ways to draw a line', 'note.data': 'Example data, made up', 'block.tag': 'Depot' },
+  // A pseudo-locale with long strings: the layout has to hold these too.
+  'x-long': { 'title.main': 'Several different ways in which a line can be drawn', 'note.data': 'Example data that was made up for this picture', 'block.tag': 'Central depot' },
+};
 
 const timeline: Key[] = [
   // The bead and the line behind it share a path, a start, a length and a profile.
+  popIn('title', { at: 0.3 }),
+  fadeTo('note', { at: 1, to: 1, dur: 0.8 }),
   popIn('bead', { at: 0.4 }),
   travel('bead', { at: 1, path: ROUTE, dur: 3, profile: 'ease' }),
   drawOn('route', { at: 1, dur: 3, profile: 'ease' }),
@@ -34,7 +43,7 @@ const timeline: Key[] = [
   drawOn('chart', { at: 0.6, dur: 2.2, profile: 'steady' }),
   fadeTo('fence', { at: 5.5, to: 1, dur: 0.8 }),
   // The camera: in on the stretch ahead while it closes, and back out to everything.
-  cameraTo({ at: 5.6, zoom: 1.7, to: [470, 20], dur: 1.4 }),
+  cameraTo({ at: 5.6, zoom: 1.7, to: [470, 90], dur: 1.4 }),
   cameraTo({ at: 8.3, zoom: 1, to: [0, 0], dur: 1.3 }),
 ];
 
@@ -60,10 +69,20 @@ export default shot({
         stroke({ id: 'ahead', points: AHEAD, color: 'accent.amber', width: 9, dash: [0, 22] }),
         circle({ id: 'bead', at: ROUTE[0]!, r: 20, fill: 'light.cream', glow: 0.6 }),
         stroke({ id: 'chart', points: CHART, color: 'accent.coral', width: 7, smooth: 0 }),
-        rect({ id: 'block', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo' }),
+        rect({ id: 'block', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children: [text({ id: 'tag', text: 'block.tag', ink: 'light.cream', size: 34, maxWidth: 200 })] }),
         stroke({ id: 'fence', at: [560, 300], points: [[-150, -105], [150, -105], [150, 105], [-150, 105]], closed: true, smooth: 0.25, color: 'mid.mist', width: 5, dash: [18, 14], opacity: 0 }),
         stroke({ id: 'ring', at: [-560, -40], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
         stroke({ id: 'share', at: [-560, -40], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
+      ],
+    }),
+    // What belongs to the frame: the camera neither moves nor zooms a layer with parallax 0.
+    layer({
+      id: 'frame',
+      depth: 0,
+      parallax: 0,
+      nodes: [
+        text({ id: 'title', text: 'title.main', ink: 'light.cream', at: [0, -455], size: 60, maxWidth: 1100, maxLines: 2 }),
+        text({ id: 'note', text: 'note.data', ink: 'mid.mist', at: [-900, 490], align: 'left', size: 26, weight: 600, opacity: 0 }),
       ],
     }),
   ],

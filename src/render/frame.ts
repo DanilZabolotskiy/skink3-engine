@@ -23,6 +23,7 @@ import {
   drawShapeGlow,
   drawStroke,
   drawStrokeGlow,
+  drawText,
   eraseGlow,
   makePaint,
   clipToShape,
@@ -126,6 +127,7 @@ function drawItems(
       case 'label': drawLabel(ctx, item, paint); break;
       case 'particles': drawParticles(ctx, item, paint); break;
       case 'stroke': drawStroke(ctx, item, paint); break;
+      case 'text': drawText(ctx, item, paint); break;
       case 'group': {
         const { canvas, ctx: gx } = layerCanvas(target);
         // A canvas of its own starts without the stretches it is nested in.

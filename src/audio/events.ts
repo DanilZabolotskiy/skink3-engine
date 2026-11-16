@@ -293,7 +293,7 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     const after = key.sound === false ? false : undefined;
     switch (key.kind) {
       case 'popIn':
-        placed(n.node.type === 'label' ? 'label' : 'appear', n, key.at, key.dur, key.sound);
+        placed(n.node.type === 'label' || n.node.type === 'text' ? 'label' : 'appear', n, key.at, key.dur, key.sound);
         break;
       case 'popOut':
         placed('disappear', n, key.at, key.dur, key.sound);

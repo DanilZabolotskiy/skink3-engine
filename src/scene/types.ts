@@ -15,6 +15,7 @@ import type { MoveProfile } from '../motion/curves.ts';
 import type { Key } from '../motion/intents.ts';
 import type { PathSpec } from '../motion/paths.ts';
 import type { ShapeSpec } from '../shape/geometry.ts';
+import type { TextAlign } from '../text/block.ts';
 import type { StringTables } from '../text/strings.ts';
 
 /** Design size of the stage in units. */
@@ -194,6 +195,34 @@ export interface StrokeNode extends NodeBase {
   readonly clipTo?: string | null;
 }
 
+/**
+ * Free-standing text: a block of lines from a string of the tables, without a
+ * pointer. It is placed like a shape (at, rotation, scale, a parent), so as
+ * the child of a shape it lies on it and moves, turns and grows with it.
+ */
+export interface TextNode extends NodeBase {
+  readonly type: 'text';
+  /** Key into the shot's string tables. Never the text itself. */
+  readonly text: string;
+  readonly ink: ColorRef;
+  /** Preferred font size in units; the layout may go down to `minSize`. */
+  readonly size: number;
+  readonly minSize: number;
+  /** Widest a line may get before the text wraps. */
+  readonly maxWidth: number;
+  readonly maxLines: number;
+  /** Weight of the letters, 200 (light) to 1000 (black). */
+  readonly weight: number;
+  /** Where the origin of the node is in the block, sideways, and how its lines are set. */
+  readonly align: TextAlign;
+  /** Colour of a rounded box behind the lines, or null: the lines alone. */
+  readonly box: ColorRef | null;
+  /** 0..1 at the start. */
+  readonly opacity: number;
+  /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
+}
+
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
 
 /** A rounded rectangle with a pointer tail, sized and wrapped to its string. */
@@ -308,7 +337,7 @@ export interface EmitterNode {
   readonly sound?: string;
 }
 
-export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode | StrokeNode;
+export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode | StrokeNode | TextNode;
 
 /** A depth layer. Depth 0 is the focus plane; positive is farther, negative is nearer. */
 export interface LayerSpec {

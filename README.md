@@ -18,7 +18,7 @@ In this genre, every movement on screen is usually keyframed by hand by a team o
 
 1. **Deterministic.** Frame *n* is a pure function of the scene, the bake cache and *n*. Everything stateful (physics, particles, springs) is baked beforehand with fixed seeds. Any frame can be rendered alone, chunks render in parallel, and a re-render matches pixel for pixel.
 2. **Simple forms, flawless motion.** Drawing must be perfect, so motion must be bug-free. The engine avoids objects whose motion viewers know precisely and would instantly judge as wrong. Humanoid limbs are rounded sticks with no hands, fingers or feet, and there are no human limb mechanics (stepping, grasping, gestures). The API has no such parts, so they cannot be drawn by accident. See [docs/PRINCIPLES.md](docs/PRINCIPLES.md).
-3. **Text is data.** Scenes never contain on-screen text, only keys into per-language string tables. Labels size and wrap themselves to the string, and a pre-render check reports overflow and overlaps in every language.
+3. **Text is data.** Scenes never contain on-screen text, only keys into per-language string tables. Labels and free-standing texts size and wrap themselves to the string, and a pre-render check reports overflow and overlaps in every language.
 4. **Measured look.** Palette and motion norms are numbers (share of dark pixels, saturation of shadows, camera drift, static-frame share) checked by `tools/metrics` on renders.
 
 ## Stack
@@ -58,7 +58,7 @@ node bin/skink3.mjs sfx examples/demo/scene.ts --bank <bank.json> --sheet   # an
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
 
-How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift. [examples/atlas/scene.ts](examples/atlas/scene.ts) is a third, for lines: a route that draws itself behind a bead, dots that close into a line, a dashed outline and a ring that fills to a share, with a camera that pushes in and pulls back on cue.
+How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift. [examples/atlas/scene.ts](examples/atlas/scene.ts) is a third, for lines: a route that draws itself behind a bead, dots that close into a line, a dashed outline and a ring that fills to a share, with a camera that pushes in and pulls back on cue, a title and a note that belong to the frame, and a word on a block.
 
 ### Using the engine from another repository
 
@@ -136,7 +136,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `pulse`, `openTo`, `blink`, `cameraTo`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
-| `src/text` | string tables, bundled font, auto-fit layout, label geometry, subtitles from word timings (.srt, .vtt, .ytt) |
+| `src/text` | string tables, bundled font, auto-fit layout, label geometry, the block of a free-standing text, subtitles from word timings (.srt, .vtt, .ytt) |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
 | `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
