@@ -64,7 +64,8 @@ function glowStrength(item: LeafItem): number {
     case 'particles':
       return item.node.node.type === 'emitter' ? item.node.node.glow : 0;
     case 'stroke':
-      return (item.node.node as StrokeNode).glow * item.alpha;
+      // As on a link: a light that runs along it always glows.
+      return (item.pulses ? Math.max((item.node.node as StrokeNode).glow, 1) : (item.node.node as StrokeNode).glow) * item.alpha;
     default:
       return 0;
   }

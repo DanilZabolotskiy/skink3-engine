@@ -66,16 +66,71 @@ export const PULSE_LENGTH = 0.24;
 /** Seconds the tail takes to arrive after the head has. */
 export const PULSE_TAIL_SECONDS = 0.14;
 
+/** How far the head of a pulse has gone, 0..1, at the share u of its duration: it leaves and arrives at speed, a little faster in between. */
+export function pulseProgress(u: number): number {
+  return u * 0.4 + (0.5 - 0.5 * Math.cos(Math.PI * u)) * 0.6;
+}
+
 /** Head and tail of a pulse along a link (0 = start, 1 = end), or null when it is not on the link. */
 export function pulseSpan(t: number, at: number, dur: number): { head: number; tail: number } | null {
   if (t < at || t > at + dur + PULSE_TAIL_SECONDS) return null;
   if (t <= at + dur) {
     const u = (t - at) / dur;
-    const eased = u * 0.4 + (0.5 - 0.5 * Math.cos(Math.PI * u)) * 0.6;
+    const eased = pulseProgress(u);
     return { head: eased, tail: Math.max(0, eased - PULSE_LENGTH) };
   }
   const x = (t - at - dur) / PULSE_TAIL_SECONDS;
   return { head: 1, tail: 1 - PULSE_LENGTH * (1 - x) };
+}
+
+/** A light on a stroke is never longer than this many units, unless its key gives a length. */
+export const PULSE_MAX_UNITS = 120;
+
+/** One light that runs along a stroke: the shares of the line it runs between, and how. */
+export interface StrokePulse {
+  readonly at: number;
+  readonly dur: number;
+  /** Shares of the length of the stroke: where the light starts and where it arrives. Past 1 on a closed stroke: another time round. */
+  readonly from: number;
+  readonly to: number;
+  /** How its speed is spread; null: as a pulse on a link goes. */
+  readonly profile: Exclude<MoveProfile, 'settle'> | null;
+  readonly ramp: number;
+  /** Length of the light in units of the stroke; null: PULSE_LENGTH of its way, at most PULSE_MAX_UNITS. */
+  readonly length: number | null;
+}
+
+/** The length of the light of a stroke's pulse, in units, on a stroke of the given length. */
+export function strokePulseLength(p: StrokePulse, strokeLength: number): number {
+  return p.length ?? Math.min(PULSE_LENGTH * Math.abs(p.to - p.from) * strokeLength, PULSE_MAX_UNITS);
+}
+
+/**
+ * Head and tail of a light on a stroke at time t, as distances along the line
+ * from its first point, in units; null while it is not on the line. The tail
+ * follows the head by the length of the light, and catches up after the head
+ * has arrived, as on a link. With `from` above `to` the light runs toward the
+ * first point, and the head is the smaller of the two.
+ */
+export function strokePulseSpan(p: StrokePulse, t: number, strokeLength: number): { head: number; tail: number; length: number } | null {
+  if (t < p.at || t > p.at + p.dur + PULSE_TAIL_SECONDS) return null;
+  const way = Math.abs(p.to - p.from) * strokeLength;
+  const dir = p.to >= p.from ? 1 : -1;
+  const length = strokePulseLength(p, strokeLength);
+  let head: number;
+  let tail: number;
+  if (t <= p.at + p.dur) {
+    const u = (t - p.at) / p.dur;
+    const [a, b] = p.profile === null ? [0, 0] : profileRamps(p.profile, p.ramp);
+    head = (p.profile === null ? pulseProgress(u) : rampProgress(u, a, b)) * way;
+    tail = Math.max(0, head - length);
+  } else {
+    const x = (t - p.at - p.dur) / PULSE_TAIL_SECONDS;
+    head = way;
+    tail = Math.max(0, way - length * (1 - x));
+  }
+  const start = p.from * strokeLength;
+  return { head: start + dir * head, tail: start + dir * tail, length };
 }
 
 /**

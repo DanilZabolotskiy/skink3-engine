@@ -191,6 +191,8 @@ export interface StrokeNode extends NodeBase {
    * first point. Left out: all of it, or none of it when the line has a drawOn.
    */
   readonly drawn?: number;
+  /** Colour of the lights that run along the stroke (pulse). Left out: the stroke's own colour. */
+  readonly pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
 }

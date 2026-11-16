@@ -12,6 +12,7 @@ import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
+import { PULSE_BUMP } from '../motion/intents.ts';
 import type {
   BendToKey,
   BumpKey,
@@ -255,6 +256,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const counts = new Map<number, CountToKey[]>();
   const bends = new Map<number, BendToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
+  const strokePulses = new Map<number, PulseKey[]>();
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
   const cameraKeys: CameraToKey[] = [];
@@ -361,10 +363,33 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         if (node.type === 'stroke' && node.dash === null) fail(`${where}: solidTo cannot target "${node.id}": the stroke has no dash to close`);
         push(solids, index, key);
         break;
-      case 'pulse':
-        need(node.type === 'link', 'links');
-        push(pulses, index, key);
+      case 'pulse': {
+        need(node.type === 'link' || node.type === 'stroke', 'links and strokes');
+        const w = `${where}: pulse("${node.id}")`;
+        if (node.type === 'link') {
+          const extra = (['from', 'to', 'profile', 'ramp', 'length', 'node'] as const).filter((name) => key[name] !== undefined);
+          if (extra.length > 0) fail(`${w}: ${extra.join(', ')} ${extra.length > 1 ? 'are' : 'is'} for a stroke; on a link a pulse runs from its first node to its second, which gets the bump`);
+          push(pulses, index, key);
+          break;
+        }
+        if (node.type !== 'stroke') break;
+        // A light along a stroke: between two shares of its length; a share above 1 is another time round a closed one.
+        const from = key.from ?? 0;
+        const to = key.to ?? 1;
+        if (!node.path.closed && (from > 1 || to > 1)) fail(`${w}: from and to are shares of the length of the stroke, 0 to 1; only round a closed stroke does a share above 1 run on (from ${from}, to ${to})`);
+        if (Math.abs(to - from) < 1e-6) fail(`${w}: the light runs nowhere: from and to are both ${from}`);
+        if (key.node === undefined) {
+          if (key.bump > 0 && key.bump !== PULSE_BUMP) fail(`${w}: a stroke has no far node to bump; name the node the light arrives at with node, or leave bump out`);
+        } else {
+          const at = idIndex.get(key.node);
+          if (at === undefined) fail(`${w}: node names "${key.node}", which does not exist (nodes: ${known()})`);
+          const hit = drafts[at]!.node;
+          if (!isPlaced(hit) && hit.type !== 'label') fail(`${w}: node names ${hit.type} "${key.node}"; the bump is for a shape, a group, an eye, a stroke, a text or a label`);
+          if (key.bump > 0) push(bumps, at, { at: key.at + key.dur, amount: key.bump });
+        }
+        push(strokePulses, index, key);
         break;
+      }
       case 'bendTo':
         need(node.type === 'link', 'links');
         push(bends, index, key);
@@ -481,6 +506,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         break;
       case 'stroke':
         colors['color'] = col(node, 'color', node.color);
+        if (node.pulseColor) colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
         break;
       case 'text':
         colors['ink'] = col(node, 'ink', node.ink);
@@ -581,7 +607,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       stretch: squashes.has(d.index) ? buildStretchTrack(squashes.get(d.index)!) : null,
       axis: axisScales.has(d.index) ? buildAxisTrack(axisScales.get(d.index)!) : null,
       count: node.type === 'text' && node.count ? countTrackOf(node.id, node.count.from, counts.get(d.index) ?? []) : null,
-      stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? []) : null,
+      stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? [], strokePulses.get(d.index) ?? []) : null,
       clipIndex,
       bodySlot,
       springSlot,

@@ -6,6 +6,7 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
+import { pathTable } from '../motion/paths.ts';
 import {
   sampleAxis,
   sampleBend,
@@ -21,6 +22,7 @@ import {
   sampleScale,
   sampleSolid,
   sampleStretch,
+  sampleStrokePulses,
   sampleTravelling,
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
@@ -277,6 +279,12 @@ export interface StrokeItem {
   readonly drawn: number;
   /** How far the gaps of its dashes are closed: 0 as authored, 1 a solid line. */
   readonly solid: number;
+  /**
+   * The lights that run along it at this frame: head and tail of each as
+   * distances along the line from its first point, and the length of the
+   * light, in units of the stroke. Left out while none runs.
+   */
+  readonly pulses?: readonly { readonly head: number; readonly tail: number; readonly length: number }[];
 }
 
 export interface TextItem {
@@ -635,7 +643,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           if (xf.scale <= HIDDEN) break;
           const drawn = sampleDrawn(n.stroke!, t);
           if (drawn <= 1e-6) break;
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1 });
+          // A stroke without a pulse is the item it always was.
+          const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(node.path).length, t) : [];
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}) });
           break;
         }
         case 'link': {

@@ -276,6 +276,26 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     drafts.push({ kind, frame, dur, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), size, speed: span > 0 ? grown / (span * FPS) : 0, x, y, seen });
   };
 
+  /** A light that arrives at the end of its way along a stroke: `from` and `to` are the shares of the line it ran between, in `span` seconds. */
+  const arrived = (n: CNode, start: number, from: number, to: number, span: number, asked: string | false | undefined): void => {
+    const frame = frameOf(start);
+    if (!inShot(frame) || n.node.type !== 'stroke') return;
+    const s = series.placed[n.index]!;
+    const view = series.views[n.layer]!;
+    const table = pathTable(n.node.path);
+    const k = s.scale[frame]! * view.zoom[frame]!;
+    const p = pathAt(table, to * table.length);
+    const rot = s.rot[frame]! * DEG;
+    const [x, y] = onScreen(n.layer, s.x[frame]! + (p.x * Math.cos(rot) - p.y * Math.sin(rot)) * s.scale[frame]!, s.y[frame]! + (p.x * Math.sin(rot) + p.y * Math.cos(rot)) * s.scale[frame]!, frame);
+    // As for a link: its size is its length on screen, its speed that of the light.
+    const size = table.length * k;
+    let seen = false;
+    for (let f = clamp(frame - 2); f <= frame; f++) {
+      if ((s.flags[f]! & DRAWN) !== 0 && (s.flags[f]! & IN_FRAME) !== 0 && s.alpha[f]! >= T.visibleAlpha) seen = true;
+    }
+    drafts.push({ kind: 'pulse', frame, dur: 0, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), size, speed: span > 0 ? (Math.abs(to - from) * size) / (span * FPS) : 0, x, y, seen });
+  };
+
   // 1. The timeline: every key is an event, or two.
   for (const key of c.spec.timeline) {
     if (key.kind === 'sfx') {
@@ -345,7 +365,8 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
         linked('connect', n, key.at + key.dur, 0, 'to', key.dur, after, 2);
         break;
       case 'pulse':
-        linked('pulse', n, key.at + key.dur, 0, 'to', key.dur, key.sound, 2);
+        if (n.node.type === 'stroke') arrived(n, key.at + key.dur, key.from ?? 0, key.to ?? 1, key.dur, key.sound);
+        else linked('pulse', n, key.at + key.dur, 0, 'to', key.dur, key.sound, 2);
         break;
       case 'openTo':
         placed('open', n, key.at, key.dur, key.sound);

@@ -404,9 +404,9 @@ bendTo('line', { at: 6.2, to: 0.22, dur: 1.2 }),   // and sags again, to the oth
 - **It swings past the new bend** by `overshoot` (0.25 of the change) and settles; `overshoot: 0` only arrives.
 - **Keys chain:** each starts from the bend reached at its moment.
 - The ends of the link stay on its two nodes; only its middle moves. A `bendTo` makes no event; the motion review counts a line whose bend changes as life in the frame.
-- It is a look: there is no rope and no weight. For a line that hangs between more than two points, use a `stroke`.
+- It is a look: there is no rope and no weight. For a line that hangs between more than two points, use a `stroke`; a `pulse` runs along a stroke too.
 
-### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, clipTo?, sound? })`
+### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, sound? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
 
@@ -422,6 +422,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 | `drawn` | all, or none | the share of the line that is drawn before its first `drawOn`, from its first point. Left out: all of it, and none of it when the stroke has a `drawOn` |
 | `at`, `rotation`, `scale`, `opacity` | `[0, 0]`, `0`, `1`, `1` | as for a shape |
 | `glow` | `0` | `0` to `1`: the line glows, with a halo around it |
+| `pulseColor` | `color` | colour of the lights that `pulse` sends along the stroke |
 | `clipTo` | none | id of a shape of the same layer: the stroke is drawn only inside it |
 | `sound` | none | key of the stroke's voice: what its `drawOn` sounds like (see Sound) |
 
@@ -443,6 +444,34 @@ drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),        // 62 % of the way round
 - **`arcPoints(center, r, from, to, { step? })`** returns the points of an arc of a circle: from the angle `from` to the angle `to` in degrees (0 is right of the centre, 90 below it; a larger `to` runs clockwise), a point every `step` degrees (15). A smooth stroke through them is the arc; with `closed: true` and the last point left out it is a ring. A share of a ring is an arc drawn on with `to`.
 - A stroke moves, turns, grows, pops and fades like a shape (`moveTo`, `turnTo`, `scaleTo`, `popIn`, `fadeTo` and the rest), and may be the child of a shape or a group. It has no children, no light and no physics. Its width scales with it.
 - The motion review knows a stroke as a node: a move of it is judged like any move, and a line that is being drawn, or whose dashes close, keeps its part of the frame alive.
+
+#### A light that runs along a stroke
+
+A `pulse` on a link runs from one node to another, along one bend. On a stroke the same light runs along the line, whatever its form: a wire that sags over several poles, a closed loop, a route with corners, a long straight line.
+
+```ts
+stroke({ id: 'wire', points: [[-820, -330], [-560, -250], [-300, -330], [-40, -250], [220, -330]], color: 'dark.indigo', pulseColor: 'accent.amber' }),
+stroke({ id: 'ring', at: [460, 0], points: arcPoints([0, 0], 150, 0, 345), closed: true, color: 'dark.indigo' }),
+// timeline
+pulse('wire', { at: 2, dur: 1.8 }),                                              // from its first point to its last
+pulse('wire', { at: 5, dur: 1.2, from: 1, to: 0.5, profile: 'ease' }),           // back from its last point to its middle, from rest to rest
+pulse('ring', { at: 1, dur: 6, to: 3, profile: 'steady', node: 'lamp' }),        // three times round at one speed; the lamp gets a bump when it arrives
+```
+
+| Option of `pulse` on a stroke | Default | Meaning |
+|---|---|---|
+| `at`, `dur` | required, `0.7` | when the light leaves, and the seconds it takes; it arrives exactly at `at + dur` |
+| `from`, `to` | `0`, `1` | the shares of the length of the stroke between which it runs: `0` is its first point, `1` its last. With `from` above `to` it runs toward the first point. Round a closed stroke a share above 1 runs on: `to: 3` is three times round |
+| `profile`, `ramp` | none, `0.3` | how its speed is spread, as for a move: `'steady'`, `'ease'`, `'in'`, `'out'`. Left out, it goes as the pulse of a link does: it leaves and arrives at speed, a little faster in between |
+| `length` | a quarter of its way, at most 120 | the length of the light, in units of the stroke |
+| `node`, `bump` | none, `0.14` | the node that gets a bump when the light arrives: a shape, a group, an eye, a stroke, a text or a label, in any layer. Without `node` nothing is bumped |
+
+- **It is the light of a link's pulse:** a bright head with a tail that narrows and fades, drawn over the line, in `pulseColor` (the stroke's own colour when it has none), and it glows whatever the `glow` of the stroke is. When the head has arrived the tail catches up.
+- **It shows on the part of the line that is drawn:** on a stroke that is half drawn on, the light ends where the line ends. A stroke that is not drawn at all, or is faded out, shows no light.
+- **Several lights** may run along one stroke at once, and a stroke may be dashed, placed, turned and scaled as ever: the light follows the line, and its width and its length scale with it.
+- The arrival is a `pulse` event (see Sound), at the place where the light arrives.
+- The motion review holds a light against its own length, as it does on a link: one that covers half of its length per frame or more is `too-fast`. Give it a longer `dur`, or a longer `length`. While a light runs, the stroke counts as life in the frame.
+- The options of this table are for a stroke: on a link a pulse runs from its first node to its second, which gets the bump.
 
 ### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
 
@@ -599,6 +628,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
+| `pulse(strokeId, { at, ... })` | stroke | `dur` (0.7), `from` (0), `to` (1), `profile`, `ramp` (0.3), `length`, `node`, `bump` (0.14) | sends the same light along the stroke, between two shares of its length; the node it names gets the bump (see A light that runs along a stroke) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
 | `blink(eyeId, { at })` | eye | | one blink at that moment, on top of the eye's own schedule |
 | `sfx(key, { at, ... })` | none, or a node | `node`, `gain` (1) | places a sound of the bank at a moment; it animates nothing. See Sound |
@@ -1010,7 +1040,7 @@ Every key of the timeline is an event, and so are every recorded contact of the 
 | `level` | `levelTo` | `at` |
 | `bump`, `squash` | `bump`, `squash` | `at` |
 | `draw`, `connect` | `drawOn`: the link or the stroke starts to be drawn, and the line reaches its far node, or the share it is drawn to | `at`, and `at + dur` |
-| `pulse` | a `pulse` arrives at the far node of its link | `at + dur` |
+| `pulse` | a `pulse` arrives at the far node of its link, or at the end of its way along a stroke | `at + dur` |
 | `open`, `blink` | `openTo`, `blink` | `at` |
 | `contact` | two rigid bodies hit each other | the frame of the impact |
 | `burst` | an emitter bursts: one of its `bursts`, or one set off by a contact (`onContact`) | `at`, or the frame of the contact |
@@ -1029,7 +1059,7 @@ An event has these fields:
 | `impulse` | a contact: its peak impulse, as the bake records it. A burst set off by a contact has it too |
 | `other`, `otherKey` | a contact: the other body and its sound key |
 | `count` | a burst: its particles |
-| `size` | largest size on screen during the action, in px of a 1080p frame: the diameter of the circle that holds the node and what is in it; the length of a link; for a burst the diameter of a disc as large as all its particles together |
+| `size` | largest size on screen during the action, in px of a 1080p frame: the diameter of the circle that holds the node and what is in it; the length of a link, and of a stroke that is drawn on or that a light runs along; for a burst the diameter of a disc as large as all its particles together |
 | `speed` | peak speed on screen during the action, in px per frame, the camera left out: of the node, of the end of a link that is drawn on, of a pulse |
 | `x`, `y` | where it is on screen at that moment, in px from the top-left corner of the frame |
 | `seen` | whether it is seen at some frame of the action |

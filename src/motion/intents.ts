@@ -176,8 +176,18 @@ export interface PulseKey extends Voiced {
   readonly target: string;
   readonly at: number;
   readonly dur: number;
-  /** Bump given to the node at the far end when the pulse arrives (0 = none). */
+  /** Bump given to the node at the far end when the pulse arrives (0 = none). On a stroke: to the node the key names. */
   readonly bump: number;
+  /** A stroke: the shares of its length between which the light runs. Left out: from its first point (0) to its last (1). */
+  readonly from?: number;
+  readonly to?: number;
+  /** A stroke: how the speed of the light is spread. Left out: as a pulse on a link goes. */
+  readonly profile?: Exclude<MoveProfile, 'settle'>;
+  readonly ramp?: number;
+  /** A stroke: the length of the light, in units of the stroke. Left out: a quarter of its way, at most 120 units. */
+  readonly length?: number;
+  /** A stroke: the node that gets the bump when the light arrives. */
+  readonly node?: string;
 }
 
 export interface ScaleToKey extends Voiced {
@@ -891,18 +901,67 @@ export function bendTo(linkId: string, opts: { at: number; to: number; dur?: num
   };
 }
 
-/** Send a glowing pulse along a link, from its `from` end to its `to` end. */
-export function pulse(linkId: string, opts: { at: number; dur?: number; bump?: number; sound?: string | false }): PulseKey {
-  const w = `pulse("${linkId}")`;
-  only(w, opts, ['at', 'dur', 'bump', 'sound']);
+/** The bump a pulse gives on arrival, unless its key says otherwise. */
+export const PULSE_BUMP = 0.14;
+
+/**
+ * Send a glowing pulse along a link, from its `from` end to its `to` end; the
+ * node at the far end gets a bump when it arrives.
+ *
+ * On a stroke the same light runs along the line: from its first point to
+ * its last, or between two shares of its length (`from`, `to`; `from` above
+ * `to` runs it the other way; on a closed stroke a share above 1 is another
+ * time round). `profile` spreads its speed as a move's is; left out, it goes
+ * as a pulse on a link does. `length` is the length of the light in units.
+ * `node` names the node that gets the bump when the light arrives.
+ *
+ *   pulse('wire', { at: 2, dur: 1.6 })
+ *   pulse('ring', { at: 4, dur: 3, to: 2, profile: 'steady', node: 'lamp' })
+ */
+export function pulse(
+  id: string,
+  opts: {
+    at: number;
+    dur?: number;
+    bump?: number;
+    /** A stroke: the share of its length where the light starts; default 0, its first point. */
+    from?: number;
+    /** A stroke: the share of its length where the light arrives; default 1, its last point. */
+    to?: number;
+    /** A stroke: how the speed of the light is spread; default: as a pulse on a link goes. */
+    profile?: Exclude<MoveProfile, 'settle'>;
+    ramp?: number;
+    /** A stroke: the length of the light in units; default a quarter of its way, at most 120. */
+    length?: number;
+    /** A stroke: the node that gets the bump when the light arrives. */
+    node?: string;
+    sound?: string | false;
+  },
+): PulseKey {
+  const w = `pulse("${id}")`;
+  only(w, opts, ['at', 'dur', 'bump', 'from', 'to', 'profile', 'ramp', 'length', 'node', 'sound']);
+  const profile = opts.profile === undefined ? undefined : profileOf(w, opts.profile, RAMPED, 'steady');
+  if (opts.ramp !== undefined && (profile === undefined || profile === 'steady')) throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
   return {
     kind: 'pulse',
-    target: target(w, linkId),
+    target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     dur: num(w, 'dur', opts.dur ?? 0.7, 0.05, 30),
-    bump: num(w, 'bump', opts.bump ?? 0.14, 0, 0.5),
+    bump: num(w, 'bump', opts.bump ?? PULSE_BUMP, 0, 0.5),
+    // A key that says none of this is the key a link always had.
+    ...(opts.from === undefined ? {} : { from: num(w, 'from', opts.from, 0, 1000) }),
+    ...(opts.to === undefined ? {} : { to: num(w, 'to', opts.to, 0, 1000) }),
+    ...(profile === undefined ? {} : { profile }),
+    ...(opts.ramp === undefined ? {} : { ramp: num(w, 'ramp', opts.ramp, 0.02, 0.5) }),
+    ...(opts.length === undefined ? {} : { length: num(w, 'length', opts.length, 1, 1e5) }),
+    ...(opts.node === undefined ? {} : { node: arrivalNode(w, opts.node) }),
     ...voiced(w, opts),
   };
+}
+
+function arrivalNode(where: string, value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) throw new IntentError(`${where}: node must be the id of the node that the light arrives at, got ${JSON.stringify(value)}`);
+  return value;
 }
 
 /**

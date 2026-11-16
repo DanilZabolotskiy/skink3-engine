@@ -9,6 +9,9 @@
 //   mechanical           yes             size              -            -          no
 //   too-fast             yes              yes          per emitter    pulses        no
 //
+// A light that runs along a stroke is judged as the pulse of a link is: too
+// fast when it covers half of its own length per frame or more.
+//
 // A rigid body gets its place and its turn from a solver: a contact is a
 // legitimate change of velocity within a frame, a nudge from a neighbour moves
 // it a few pixels at once, and a body that rolls or slides at a constant speed
@@ -26,7 +29,8 @@
 
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
-import { PULSE_LENGTH } from '../motion/curves.ts';
+import { PULSE_LENGTH, strokePulseLength } from '../motion/curves.ts';
+import { pathTable } from '../motion/paths.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { labelLayout } from '../scene/evaluate.ts';
 import { CAMERA_SUBJECT, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
@@ -677,6 +681,26 @@ export function detectMotion(series: MotionSeries): Finding[] {
       out.push(
         finding('too-fast', l.id, 'pulse', f0, Math.max(f0, f1), ratio, T.fastRatio, 'own length per frame',
           `a pulse crosses the link in ${count.toFixed(1)} frames: ${ratio.toFixed(2)} of its own length per frame (a pulse needs at least ${Math.ceil(limit)} frames)`),
+      );
+    }
+  }
+
+  // Strokes: a light that runs along the line too quick to follow. As on a link, it is held against its own length.
+  for (const s of series.placed) {
+    if (!s || s.node.node.type !== 'stroke' || !s.node.stroke) continue;
+    const length = pathTable(s.node.node.path).length;
+    for (const p of s.node.stroke.pulses) {
+      const way = Math.abs(p.to - p.from) * length;
+      const light = strokePulseLength(p, length);
+      const count = p.dur * FPS;
+      const ratio = way / count / light;
+      if (ratio < T.fastRatio) continue;
+      const f0 = Math.min(F - 1, Math.max(0, Math.ceil(p.at * FPS)));
+      const f1 = Math.min(F - 1, Math.floor((p.at + p.dur) * FPS));
+      if ((s.flags[f0]! & IN_FRAME) === 0 || !visibleAt(s, f0)) continue;
+      out.push(
+        finding('too-fast', s.id, 'pulse', f0, Math.max(f0, f1), ratio, T.fastRatio, 'own length per frame',
+          `a light of ${light.toFixed(0)} units runs ${way.toFixed(0)} units along the stroke in ${count.toFixed(1)} frames: ${ratio.toFixed(2)} of its own length per frame (it needs at least ${Math.ceil(way / (T.fastRatio * light))} frames)`),
       );
     }
   }

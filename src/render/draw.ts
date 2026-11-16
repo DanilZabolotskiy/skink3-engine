@@ -11,7 +11,7 @@ import { atmosphereTone, lightTone, shadowTone, withAlpha } from '../look/color.
 import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
-import { pathTable } from '../motion/paths.ts';
+import { pathAt, pathTable } from '../motion/paths.ts';
 import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem, StrokeItem, TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
@@ -347,18 +347,100 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   ctx.restore();
 }
 
-/** A stroke: a line along a path, solid or dashed, as far as it is drawn. */
+/**
+ * The lights that run along a stroke, as the pulses of a link: a tapered body
+ * that is widest and brightest at the head and fades to nothing at the tail,
+ * plus a bright head. They show on the part of the line that is drawn.
+ */
+function drawStrokePulses(ctx: CanvasRenderingContext2D, item: StrokeItem, width: number, headRadius: number, body: string, head: string, alpha: number): void {
+  const node = item.node.node as StrokeNode;
+  const table = pathTable(node.path);
+  const { xf } = item;
+  const whole = item.drawn >= 1 - 1e-9;
+  const drawnTo = table.length * item.drawn;
+  const within = (s: number): number => (whole ? s : Math.max(0, Math.min(drawnTo, s)));
+  ctx.save();
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  for (const p of item.pulses ?? []) {
+    const h = within(p.head);
+    const t = within(p.tail);
+    const span = Math.abs(h - t);
+    const headPoint = pathAt(table, h);
+    if (span > 1e-4 * p.length) {
+      // The middle line of the light, tail first; then its two sides, each as far out as the light is thick there.
+      const steps = Math.max(14, Math.min(64, Math.ceil(span / 5)));
+      const mid: Vec2[] = [];
+      for (let i = 0; i <= steps; i++) {
+        const q = pathAt(table, t + ((h - t) * i) / steps);
+        mid.push([q.x, q.y]);
+      }
+      const left: Vec2[] = [];
+      const right: Vec2[] = [];
+      for (let i = 0; i <= steps; i++) {
+        // The direction of the line there, taken across its neighbours, so that a corner is rounded off and not notched.
+        const a = mid[Math.max(0, i - 1)]!;
+        const b = mid[Math.min(steps, i + 1)]!;
+        const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const nx = l > 1e-9 ? -(b[1] - a[1]) / l : 0;
+        const ny = l > 1e-9 ? (b[0] - a[0]) / l : 1;
+        // Thickness and brightness follow the distance from the head, as on a link.
+        const near = 1 - Math.min(1, (span * (steps - i)) / steps / p.length);
+        const half = (width / 2) * (0.12 + 0.88 * near ** 1.5);
+        left.push([mid[i]![0] + nx * half, mid[i]![1] + ny * half]);
+        right.push([mid[i]![0] - nx * half, mid[i]![1] - ny * half]);
+      }
+      const tailPoint = mid[0]!;
+      const startNear = 1 - Math.min(1, span / p.length);
+      if (Math.hypot(headPoint.x - tailPoint[0], headPoint.y - tailPoint[1]) > 1e-3) {
+        const g = ctx.createLinearGradient(tailPoint[0], tailPoint[1], headPoint.x, headPoint.y);
+        g.addColorStop(0, withAlpha(body, alpha * startNear ** 1.5));
+        g.addColorStop(1, withAlpha(body, alpha));
+        ctx.fillStyle = g;
+      } else ctx.fillStyle = withAlpha(body, alpha);
+      ctx.beginPath();
+      left.forEach((q, i) => (i === 0 ? ctx.moveTo(q[0], q[1]) : ctx.lineTo(q[0], q[1])));
+      for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i]![0], right[i]![1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // The head itself, while it is on the part of the line that is drawn.
+    if (whole || (p.head >= -1e-9 && p.head <= drawnTo + 1e-9)) {
+      ctx.fillStyle = withAlpha(head, alpha);
+      ctx.beginPath();
+      ctx.arc(headPoint.x, headPoint.y, headRadius, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/** A stroke: a line along a path, solid or dashed, as far as it is drawn, and the lights that run along it. */
 export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
   ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
   strokeLine(ctx, item);
+  if (item.pulses) {
+    const node = item.node.node as StrokeNode;
+    const pulse = item.node.colors['pulseColor'] ?? item.node.colors['color']!;
+    drawStrokePulses(ctx, item, node.width * 1.5, node.width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
+  }
 }
 
-/** What a glowing stroke feeds the halo with: the line itself. It fades with the stroke. */
+/**
+ * What a stroke feeds the halo with: the line itself, as far as the stroke
+ * glows, and the lights that run along it, a little fatter. Both fade with the stroke.
+ */
 export function drawStrokeGlow(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
   const node = item.node.node as StrokeNode;
-  if (node.glow <= 0) return;
-  ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
-  strokeLine(ctx, item);
+  if (node.glow > 0) {
+    ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
+    strokeLine(ctx, item);
+  }
+  if (item.pulses) {
+    const pulse = paint.tone('base', item.node.colors['pulseColor'] ?? item.node.colors['color']!);
+    drawStrokePulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
+  }
 }
 
 /** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. */

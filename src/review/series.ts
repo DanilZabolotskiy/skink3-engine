@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
@@ -92,9 +92,10 @@ export interface PlacedSeries {
   readonly axis: { readonly sx: Float32Array; readonly sy: Float32Array } | null;
   /**
    * What else changes in the node by itself, as a length in the layer's units
-   * per frame: for a stroke, how much of it is drawn and how far its gaps are
-   * closed; for a counter, the number it shows, so that every change of it is
-   * a step. A step of it is a change a viewer sees. null for other nodes.
+   * per frame: for a stroke, how much of it is drawn, how far its gaps are
+   * closed and where the lights are that run along it; for a counter, the
+   * number it shows, so that every change of it is a step. A step of it is a
+   * change a viewer sees. null for other nodes.
    */
   readonly life: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
@@ -354,7 +355,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       n.stretch !== null ||
       n.axis !== null ||
       (n.count !== null && n.count.segs.length > 0) ||
-      (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length > 0) ||
+      (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length + n.stroke.pulses.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
     still[n.index] = animated ? 0 : 1;
@@ -576,7 +577,13 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         const k = 10 ** node.count.decimals;
         s.life[f] = Math.round(sampleCount(n.count, t) * k) * 16;
       }
-      if (s.life && node.type === 'stroke') s.life[f] = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * pathTable(node.path).length * xf.scale;
+      if (s.life && node.type === 'stroke') {
+        const length = pathTable(node.path).length;
+        let life = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * length;
+        // A light that runs along the line: where its head and its tail are.
+        if (n.stroke!.pulses.length > 0) for (const p of sampleStrokePulses(n.stroke!, length, t)) life += p.head + p.tail;
+        s.life[f] = life * xf.scale;
+      }
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;

@@ -4,7 +4,22 @@
 import { ease } from '../core/easing.ts';
 import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
-import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, speedDistance, type MoveProfile, type SpeedKeys } from './curves.ts';
+import {
+  arcBump,
+  bumpScale,
+  BUMP_SECONDS,
+  DEFAULT_RAMP,
+  moveProgress,
+  popInScale,
+  popOutScale,
+  profileRamps,
+  rampProgress,
+  speedDistance,
+  strokePulseSpan,
+  type MoveProfile,
+  type SpeedKeys,
+  type StrokePulse,
+} from './curves.ts';
 import type {
   BendToKey,
   BumpKey,
@@ -622,6 +637,8 @@ export interface StrokeTrack {
   /** How far the gaps are closed before the first solidTo. */
   readonly solidBase: number;
   readonly solids: readonly FadeSeg[];
+  /** Lights that run along the line, in order of time; empty: none. */
+  readonly pulses: readonly StrokePulse[];
 }
 
 /** The share of a stroke that is drawn at time t, 0..1 from its first point. */
@@ -648,17 +665,31 @@ export function sampleSolid(track: StrokeTrack, t: number): number {
  * start; left out, a stroke with a drawOn starts undrawn and one without is
  * whole. Keys chain: each starts from what is reached at its moment.
  */
-export function buildStrokeTrack(drawn: number | undefined, solid: number, draws: readonly DrawOnKey[], solids: readonly SolidToKey[]): StrokeTrack {
+export function buildStrokeTrack(drawn: number | undefined, solid: number, draws: readonly DrawOnKey[], solids: readonly SolidToKey[], pulses: readonly PulseKey[] = []): StrokeTrack {
   const base = drawn ?? (draws.length > 0 ? 0 : 1);
   const segs: StrokeTrack['draws'][number][] = [];
   for (const k of draws.slice().sort((a, b) => a.at - b.at)) {
-    segs.push({ at: k.at, dur: k.dur, from: sampleDrawn({ base, draws: segs, solidBase: solid, solids: [] }, k.at), to: k.to ?? 1, profile: k.profile ?? 'ease', ramp: k.ramp ?? DEFAULT_RAMP });
+    segs.push({ at: k.at, dur: k.dur, from: sampleDrawn({ base, draws: segs, solidBase: solid, solids: [], pulses: [] }, k.at), to: k.to ?? 1, profile: k.profile ?? 'ease', ramp: k.ramp ?? DEFAULT_RAMP });
   }
   const closes: FadeSeg[] = [];
   for (const k of solids.slice().sort((a, b) => a.at - b.at)) {
     closes.push({ at: k.at, dur: k.dur, from: sampleOpacity({ base: solid, segs: closes }, k.at), to: k.to });
   }
-  return { base, draws: segs, solidBase: solid, solids: closes };
+  const lights = pulses
+    .map((k): StrokePulse => ({ at: k.at, dur: k.dur, from: k.from ?? 0, to: k.to ?? 1, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP, length: k.length ?? null }))
+    .sort((a, b) => a.at - b.at);
+  return { base, draws: segs, solidBase: solid, solids: closes, pulses: lights };
+}
+
+/** The lights that are on a stroke at time t: head and tail of each as distances along the line, in units. */
+export function sampleStrokePulses(track: StrokeTrack, strokeLength: number, t: number): { head: number; tail: number; length: number }[] {
+  const out: { head: number; tail: number; length: number }[] = [];
+  for (const p of track.pulses) {
+    if (p.at > t) break;
+    const span = strokePulseSpan(p, t, strokeLength);
+    if (span && Math.abs(span.head - span.tail) > 1e-9) out.push(span);
+  }
+  return out;
 }
 
 /** Bumps that pulses give to the node at the far end of their link. */

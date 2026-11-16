@@ -423,8 +423,9 @@ export function link(o: {
  * places it runs through, in its own space; they are joined as the path of a
  * travel is (`smooth` 1: a smooth curve; 0: straight lines), open or closed.
  * `dash: [dash, gap]` makes it dashed (a dash of 0 is a dot). drawOn() draws
- * it on from its first point, solidTo() closes its gaps. It is placed like a
- * shape and may be the child of a shape or a group.
+ * it on from its first point, solidTo() closes its gaps, pulse() sends a
+ * light along it. It is placed like a shape and may be the child of a shape
+ * or a group.
  */
 export function stroke(o: {
   id: string;
@@ -449,13 +450,15 @@ export function stroke(o: {
   opacity?: number;
   /** 0..1: the line glows (a halo around it); default 0. */
   glow?: number;
+  /** Colour of the lights that pulse() sends along the stroke; default: the stroke's own colour. */
+  pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
   clipTo?: string;
   /** Key of the node's voice in the bank of sounds. */
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'clipTo', 'sound']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound']);
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
   const closed = o.closed === undefined ? false : flag(where, 'closed', o.closed);
   if (closed && o.points.length < 3) fail(where, 'a closed stroke needs at least three points');
@@ -471,6 +474,8 @@ export function stroke(o: {
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
+    // Written only when it is given: a stroke without it is the data it always was.
+    ...(o.pulseColor === undefined ? {} : { pulseColor: color(where, 'pulseColor', o.pulseColor) }),
     ...voice(where, o.sound),
     type: 'stroke',
     id: idOf(where, o.id),
