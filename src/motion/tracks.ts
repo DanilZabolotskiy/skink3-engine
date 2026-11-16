@@ -4,7 +4,7 @@
 import { ease } from '../core/easing.ts';
 import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
-import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, type MoveProfile } from './curves.ts';
+import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, speedDistance, type MoveProfile, type SpeedKeys } from './curves.ts';
 import type {
   BumpKey,
   CountToKey,
@@ -56,6 +56,8 @@ export interface MoveSeg {
   readonly roll: number | null;
   readonly orient: boolean;
   readonly only: boolean;
+  /** Paths: a speed that changes on the way, or null. */
+  readonly speeds: SpeedKeys | null;
 }
 
 export interface PosTrack {
@@ -81,7 +83,7 @@ export function buildPosTrack(id: string, base: Vec2, keys: readonly (MoveToKey 
           'start it later or shorten the previous move',
       );
     }
-    const plain = { anticipation: 0, overshoot: 0, arc: 0, profile: 'steady' as MoveProfile, ramp: 0, height: 0, path: null, loops: 1, roll: null, orient: false, only: false };
+    const plain = { anticipation: 0, overshoot: 0, arc: 0, profile: 'steady' as MoveProfile, ramp: 0, height: 0, path: null, loops: 1, roll: null, orient: false, only: false, speeds: null };
     if (k.kind === 'moveTo') {
       // Keys made before profiles existed carry none: they are settle moves.
       segs.push({ ...plain, kind: 'move', at: k.at, dur: k.dur, from, to: k.to, anticipation: k.anticipation, overshoot: k.overshoot, arc: k.arc, profile: k.profile ?? 'settle', ramp: k.ramp ?? 0 });
@@ -93,7 +95,7 @@ export function buildPosTrack(id: string, base: Vec2, keys: readonly (MoveToKey 
       const table = pathTable(k.path);
       const start: Vec2 = [table.xs[0]!, table.ys[0]!];
       const end: Vec2 = k.path.closed ? start : [table.xs[table.xs.length - 1]!, table.ys[table.ys.length - 1]!];
-      segs.push({ ...plain, kind: 'path', at: k.at, dur: k.dur, from: start, to: end, profile: k.profile, ramp: k.ramp, path: k.path, loops: k.loops, roll: k.roll, orient: k.orient, only: k.only });
+      segs.push({ ...plain, kind: 'path', at: k.at, dur: k.dur, from: start, to: end, profile: k.profile, ramp: k.ramp, path: k.path, loops: k.loops, roll: k.roll, orient: k.orient, only: k.only, speeds: k.speeds ?? null });
       from = end;
     }
     free = k.at + k.dur;
@@ -103,6 +105,8 @@ export function buildPosTrack(id: string, base: Vec2, keys: readonly (MoveToKey 
 
 /** Progress (0..1) of a segment with a profile other than settle. */
 function plainProgress(seg: MoveSeg, u: number): number {
+  // Keys of speed: the share of the way covered by then. The way is what the keys cover in the whole duration.
+  if (seg.speeds) return Math.min(1, speedDistance(seg.speeds, u * seg.dur) / speedDistance(seg.speeds, seg.dur));
   if (seg.profile === 'steady' || seg.profile === 'settle') return u;
   const [a, b] = profileRamps(seg.profile, seg.ramp);
   return rampProgress(u, a, b);

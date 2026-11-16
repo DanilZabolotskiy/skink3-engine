@@ -10,7 +10,7 @@ export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
 export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo, countTo } from './motion/intents.ts';
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
-export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile } from './motion/curves.ts';
+export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile, type SpeedKeys } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { definePalette, checkPalette, resolveColor, PALETTE_LAWS, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, Palette, PaletteIssue, PaletteSpec, Role } from './look/palette.ts';

@@ -117,6 +117,51 @@ export function rampProgress(u: number, a: number, b: number): number {
   return v * (a / 2 + (u - a));
 }
 
+/** Speed keys of a travel: [seconds after its start, units per second], in order of time, the first at 0. */
+export type SpeedKeys = readonly (readonly [number, number])[];
+
+/**
+ * How far something has gone after `t` seconds when its speed is given by
+ * keys. Between two keys the speed goes from one to the other along a smooth
+ * step, so it has no kink; after the last key it stays.
+ */
+export function speedDistance(keys: SpeedKeys, t: number): number {
+  if (t <= 0) return 0;
+  let d = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const [t0, v0] = keys[i]!;
+    const next = keys[i + 1];
+    if (!next) return d + v0 * (t - t0);
+    const [t1, v1] = next;
+    const span = t1 - t0;
+    if (t >= t1) {
+      // A smooth step is as much above its middle as below it: the mean of the two speeds.
+      d += (span * (v0 + v1)) / 2;
+      continue;
+    }
+    const x = (t - t0) / span;
+    // The integral of the smooth step 3x^2 - 2x^3.
+    return d + v0 * (t - t0) + (v1 - v0) * span * (x * x * x - (x * x * x * x) / 2);
+  }
+  return d;
+}
+
+/** The seconds it takes to cover `length` units at the speeds of the keys. */
+export function speedDuration(keys: SpeedKeys, length: number): number {
+  const last = keys[keys.length - 1]!;
+  const before = speedDistance(keys, last[0]);
+  if (length >= before) return last[0] + (length - before) / last[1];
+  // Inside the keys: the distance only grows with time, so halving finds the moment.
+  let lo = 0;
+  let hi = last[0];
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (speedDistance(keys, mid) < length) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+}
+
 /** The ramps (at the start, at the end) of a profile other than settle, as shares of the duration. */
 export function profileRamps(profile: Exclude<MoveProfile, 'settle'>, ramp: number): [number, number] {
   switch (profile) {

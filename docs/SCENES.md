@@ -563,7 +563,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 |---|---|---|---|
 | `moveTo(id, { at, to, ... })` | placed: shape, group, eye, stroke, text | `dur` (1.1), `anticipation` (0.08), `overshoot` (0.07), `arc` (0.12), `profile` (`'settle'`), `ramp` (0.3), `arrive` instead of `at` | backs away a little, travels along an arc, shoots past the destination, settles. Starts from wherever the node is. `anticipation` and `overshoot` are fractions of the distance (capped at 44 and 38 units); `arc` is the bulge as a fraction of the distance (capped at 150 units), positive toward the top of the frame (to the left for a move straight up or down). Other profiles: see Moves |
 | `hop(id, { at, to, ... })` | placed | `dur` (0.6), `height` (80), `land` instead of `at` | a jump: leaves at `at`, flies a parabola `height` units high, lands at `at + dur`. See Moves |
-| `travel(id, { at, path, ... })` | placed | `speed` or `dur`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
+| `travel(id, { at, path, ... })` | placed | `speed`, `dur` or `speeds`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
 | `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
@@ -671,6 +671,23 @@ const path: Vec2[] = [[-1180, -260], [-860, -300], [-600, -60], [-300, 150]];
 - A flow reads as a flow when it enters and leaves: start the path outside the frame or behind a `cover`, and end it there. `only: true` spares the fades; a flow that should already run at frame 0 starts its first keys before 0.
 - A node is turned by `roll` or `orient`, or by `turnTo`, not by both.
 - `pathLength`, `pathTable` and `pathAt` are exported for scene code that needs the length of a path or a point on it.
+
+### A travel whose speed changes
+
+A `travel` keeps one speed on its steady stretch. With `speeds` its speed is keyed over time: a flow that runs faster where its way narrows, things on a belt that go faster and faster.
+
+```ts
+travel('bead', { at: 1, path: [[-500, 0], [500, 0]], speeds: [[0, 100], [2, 300]] }),            // 100 units a second, 300 from the third second on
+travel('drop', { at: 4, path: BELT, speeds: [[0, 60], [2, 180], [4, 420]], only: true }),         // faster and faster, and gone at the end
+```
+
+- `speeds` is a list of keys `[seconds, speed]`: seconds after the start of the travel, and units per second. The first key is at 0: the speed the travel starts with. At least two keys, in order of time.
+- **Between two keys the speed changes smoothly** from one to the other, without a kink; after the last key it stays. Half-way between two keys it is half-way between their speeds.
+- **The travel ends when the path is covered** (`loops` times round a closed one): its length in time follows from the speeds. `speeds` stands in for `speed`, `dur`, `profile` and `ramp`.
+- A speed is at least 0.001: to start almost from rest, start with a small one.
+- `roll`, `orient` and `only` work as they do at one speed: a wheel turns as far as it has gone.
+- A `drawOn` cannot follow such a travel exactly: it has profiles, not keys of speed.
+- The motion review judges it as any travel: a start at nearly its top speed from rest in view is an `abrupt-start`.
 
 ### A turn at a speed
 

@@ -3,7 +3,7 @@
 // overshoot and settle; see curves.ts and tracks.ts.
 
 import type { Vec2 } from '../core/math.ts';
-import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, type MoveProfile } from './curves.ts';
+import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
 import { pathLength, type PathSpec } from './paths.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
 
@@ -70,6 +70,11 @@ export interface TravelKey extends Voiced {
   readonly orient: boolean;
   /** The node is drawn only while it travels. */
   readonly only: boolean;
+  /**
+   * A speed that changes on the way: [seconds after the start, units per second], joined smoothly. Left out: one
+   * speed with the eased ends of the profile.
+   */
+  readonly speeds?: SpeedKeys;
 }
 
 export interface PopInKey extends Voiced {
@@ -474,12 +479,18 @@ export function travel(
     orient?: boolean;
     /** The node is drawn only while it travels: hidden before `at` and after it arrives. */
     only?: boolean;
+    /**
+     * A speed that changes on the way, instead of `speed` or `dur`: [[seconds after the start, units per second], ...],
+     * the first at 0. Between two keys the speed changes smoothly; after the last it stays. The travel ends when the
+     * path is covered.
+     */
+    speeds?: SpeedKeys;
     /** false: the intent is silent. A key: the sound of its start, instead of what the bank gives its kind. */
     sound?: string | false;
   },
 ): TravelKey {
   const w = `travel("${id}")`;
-  only(w, opts, ['at', 'path', 'speed', 'dur', 'profile', 'ramp', 'smooth', 'closed', 'loops', 'roll', 'orient', 'only', 'sound']);
+  only(w, opts, ['at', 'path', 'speed', 'dur', 'profile', 'ramp', 'smooth', 'closed', 'loops', 'roll', 'orient', 'only', 'speeds', 'sound']);
   if (!Array.isArray(opts.path) || opts.path.length < 2) throw new IntentError(`${w}: path must be a list of at least two points [x, y]`);
   const closed = opts.closed ?? false;
   if (closed && opts.path.length < 3) throw new IntentError(`${w}: a closed path needs at least three points`);
@@ -492,13 +503,28 @@ export function travel(
   if (!closed && loops !== 1) throw new IntentError(`${w}: loops needs closed: true`);
   const length = pathLength(path) * loops;
   if (!(length > 1e-6)) throw new IntentError(`${w}: the path has no length`);
+  let speeds: [number, number][] | undefined;
+  if (opts.speeds !== undefined) {
+    if (opts.speed !== undefined || opts.dur !== undefined || opts.profile !== undefined || opts.ramp !== undefined) {
+      throw new IntentError(`${w}: speeds says how fast the travel goes at every moment; leave speed, dur, profile and ramp out`);
+    }
+    if (!Array.isArray(opts.speeds) || opts.speeds.length < 2) throw new IntentError(`${w}: speeds must be a list of at least two keys [seconds, units per second]`);
+    speeds = opts.speeds.map((k, i) => {
+      if (!Array.isArray(k) || k.length !== 2) throw new IntentError(`${w}: speeds[${i}] must be [seconds, units per second]`);
+      return [num(w, `speeds[${i}][0]`, k[0], 0, 3600), num(w, `speeds[${i}][1]`, k[1], 1e-3, 1e5)] as [number, number];
+    });
+    if (speeds[0]![0] !== 0) throw new IntentError(`${w}: the first key of speeds is at 0 seconds: the speed the travel starts with`);
+    for (let i = 1; i < speeds.length; i++) {
+      if (!(speeds[i]![0] > speeds[i - 1]![0])) throw new IntentError(`${w}: the keys of speeds must be in order of time; key ${i} is at ${speeds[i]![0]} s, after ${speeds[i - 1]![0]} s`);
+    }
+  }
   const profile = profileOf(w, opts.profile, RAMPED, 'steady');
   if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
   const ramp = num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5);
-  if ((opts.speed === undefined) === (opts.dur === undefined)) throw new IntentError(`${w}: give either speed (units per second) or dur (seconds)`);
+  if (!speeds && (opts.speed === undefined) === (opts.dur === undefined)) throw new IntentError(`${w}: give either speed (units per second) or dur (seconds), or speeds (keys of speed over time)`);
   const [a, b] = profileRamps(profile, ramp);
   // `speed` is the speed of the steady stretch; the eased ends cover less ground in their time.
-  const dur = opts.dur !== undefined ? opts.dur : length / (num(w, 'speed', opts.speed, 1e-3, 1e5) * (1 - (a + b) / 2));
+  const dur = speeds ? speedDuration(speeds, length) : opts.dur !== undefined ? opts.dur : length / (num(w, 'speed', opts.speed, 1e-3, 1e5) * (1 - (a + b) / 2));
   if (opts.roll !== undefined && opts.orient) throw new IntentError(`${w}: use either roll or orient, not both`);
   return {
     kind: 'travel',
@@ -512,6 +538,7 @@ export function travel(
     roll: opts.roll === undefined ? null : num(w, 'roll', opts.roll, 0.5, 1e5),
     orient: opts.orient ?? false,
     only: opts.only ?? false,
+    ...(speeds ? { speeds } : {}),
     ...voiced(w, opts),
   };
 }
