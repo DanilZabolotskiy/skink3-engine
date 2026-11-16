@@ -14,6 +14,7 @@ import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
 import { PULSE_BUMP } from '../motion/intents.ts';
 import type {
+  BackgroundToKey,
   BendToKey,
   BumpKey,
   CameraToKey,
@@ -59,6 +60,7 @@ import {
   type StrokeTrack,
 } from '../motion/tracks.ts';
 import { COUNT_MARK } from '../text/count.ts';
+import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
 import { resolveString } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
@@ -151,6 +153,8 @@ export interface CompiledShot {
   readonly clips: boolean;
   /** The camera keys of the shot, or null: the camera does only what the shot's `camera` says. */
   readonly cameraTrack: CameraTrack | null;
+  /** The background keys of the shot, or null: the background is what the shot says on every frame. */
+  readonly backgroundTrack: BackgroundTrack | null;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 'text' }>;
@@ -260,7 +264,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
   const cameraKeys: CameraToKey[] = [];
-  const push = <T>(map: Map<number, T[]>, index: number, item: T): void => {
+  const backgroundKeys: BackgroundToKey[] = [];
+  const push =<T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
     if (list) list.push(item);
     else map.set(index, [item]);
@@ -283,6 +288,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       // A key of the camera: it has no node.
       if (key.at > spec.seconds) fail(`${where}: cameraTo starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
       cameraKeys.push(key);
+      continue;
+    }
+    if (key.kind === 'backgroundTo') {
+      // A key of the background: it has no node either.
+      if (key.at > spec.seconds) fail(`${where}: backgroundTo starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      backgroundKeys.push(key);
       continue;
     }
     const index = idIndex.get(key.target);
@@ -664,6 +675,37 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   // hand, change neither the bake nor a pixel.
   const sceneHash = hashOf({ ...(voiced ? withoutSound(spec) : spec), palette: spec.palette.spec, strings: null, intended: undefined });
 
+  const background = {
+    inner: resolveColorOrFail(palette, spec.background.inner, `${where} background.inner`),
+    outer: resolveColorOrFail(palette, spec.background.outer, `${where} background.outer`),
+  };
+  const atmosphere = resolveColorOrFail(palette, spec.atmosphere, `${where} atmosphere`);
+  // The keys of the background, with their colours resolved. A shot without any has no track.
+  const backgroundTrack =
+    backgroundKeys.length === 0
+      ? null
+      : buildBackgroundTrack(
+          { ...background, center: spec.background.center, radius: spec.background.radius, atmosphere, vignette: spec.vignette },
+          backgroundKeys.map((k) => {
+            const colour = (name: 'inner' | 'outer' | 'atmosphere'): Record<string, string> =>
+              k[name] === undefined ? {} : { [name]: resolveColorOrFail(palette, k[name], `${where}: backgroundTo at ${k.at} s: ${name}`) };
+            return {
+              at: k.at,
+              dur: k.dur,
+              profile: k.profile,
+              ramp: k.ramp,
+              to: {
+                ...colour('inner'),
+                ...colour('outer'),
+                ...colour('atmosphere'),
+                ...(k.center === undefined ? {} : { center: k.center }),
+                ...(k.radius === undefined ? {} : { radius: k.radius }),
+                ...(k.vignette === undefined ? {} : { vignette: k.vignette }),
+              },
+            };
+          }),
+        );
+
   return {
     spec,
     frames,
@@ -675,16 +717,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     emitters,
     light: lightVector(spec.light),
     cameraNoise: new Noise(spec.seed, 'camera'),
-    background: {
-      inner: resolveColorOrFail(palette, spec.background.inner, `${where} background.inner`),
-      outer: resolveColorOrFail(palette, spec.background.outer, `${where} background.outer`),
-    },
-    atmosphere: resolveColorOrFail(palette, spec.atmosphere, `${where} atmosphere`),
+    background,
+    atmosphere,
     stringKeys: [...stringKeys],
     sceneHash,
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
     cameraTrack: cameraKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys) : null,
+    backgroundTrack,
   };
 }
 

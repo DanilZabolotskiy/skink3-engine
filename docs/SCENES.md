@@ -134,7 +134,7 @@ strings: {
 | `seed` | integer | required | seed of everything random in the shot |
 | `palette` | `Palette` | required | from `definePalette` |
 | `strings` | tables | required | language → key → text |
-| `background` | `{ inner, outer, center?, radius? }` | center `[0.5, 0.46]`, radius `0.72` | radial gradient between two palette colours; centre in fractions of the frame, radius in frame widths |
+| `background` | `{ inner, outer, center?, radius? }` | center `[0.5, 0.46]`, radius `0.72` | radial gradient between two palette colours; centre in fractions of the frame, radius in frame widths. `backgroundTo` changes it over time, with `atmosphere` and `vignette` (see A background that changes) |
 | `atmosphere` | colour | required | the colour far layers fade toward |
 | `layers` | `layer()[]` | required | in any order; drawn farthest first |
 | `timeline` | keys | `[]` | in any order; nested arrays are flattened |
@@ -219,6 +219,40 @@ cameraTo({ at: 11, zoom: 4000, dur: 3, profile: 'out' }),          // ... that s
 - On a camera `path` the keys act from where the path has carried the camera; after a key the path goes on, as large on screen as before.
 - A camera key is no node's intent: it has no target, no sound and makes no event. The motion review judges it as it judges the camera: a `'steady'` key from rest is an `abrupt-start` and an `abrupt-stop` on `(camera)`; mark it with `intended` when it is meant.
 - Scaling a group instead of the camera leaves the other layers and their parallax behind; use a camera key.
+
+### A background that changes
+
+`background`, `atmosphere` and `vignette` are set once for the shot. `backgroundTo` changes them at a moment, while everything in the shot goes on: an evening sky turns into a night sky, a warm light into a cold one, and the subject stays where it is.
+
+```ts
+shot({
+  background: { inner: 'deep.dusk', outer: 'deep.plum', center: [0.5, 0.7] }, atmosphere: 'mid.rose', vignette: 0.6,
+  // ...
+  timeline: [
+    backgroundTo({ at: 3, dur: 3, inner: 'deep.night', outer: 'deep.abyss', atmosphere: 'mid.ocean', center: [0.5, 0.3] }),   // on a word, over three seconds
+    backgroundTo({ at: 9, dur: 0.4, vignette: 0.85 }),                                                                         // later, the corners close in
+  ],
+});
+```
+
+| Option of `backgroundTo` | Default | Meaning |
+|---|---|---|
+| `at` | required | seconds: when the change starts |
+| `dur` | `2` | seconds it takes, 0.1 at least |
+| `inner`, `outer` | as they are | palette references: the colours of the gradient at its centre and at its edge when the key ends |
+| `center`, `radius` | as they are | the centre of the gradient in fractions of the frame, and its radius in frame widths, when the key ends |
+| `atmosphere` | as it is | palette reference: the colour far layers fade toward when the key ends |
+| `vignette` | as it is | 0..1: how far the corners darken when the key ends |
+| `profile`, `ramp` | `'ease'`, `0.3` | how the change is spread, as for a move: `'ease'` from rest to rest, `'steady'`, `'in'`, `'out'` |
+
+- Give at least one of the six; what a key leaves out stays as it is. **Keys chain:** each takes over from what the background is at its moment, also when the key before it is still under way.
+- **Colours run round the colour wheel:** hue along the short way, saturation and value straight, as the tint of a layer does. A warm sky that turns cold never passes through gray; it passes through the hues between.
+- **The vignette follows `outer`:** on every frame the corners darken toward the outer colour of that frame.
+- **The tint of every layer follows `atmosphere`:** far layers are tinted toward the atmosphere of each frame, so the whole depth of the picture turns with the sky. Nodes of the stage (tint 0) keep their colours.
+- A shot without a `backgroundTo` is drawn as it always was. Before the first key the background is exactly what the shot says.
+- A background key is no node's intent: it has no target, no sound and makes no event. Like every key it may start before the shot (a negative `at`): the change is then under way at frame 0.
+- The motion review counts a background that changes as life in every part of the frame, while it changes fast enough to be seen; `skink3 motion` prints when that is ("background: changes at 3.20-5.80 s"). A change of a few dark colours over many seconds is too slow to count.
+- For another set and another subject, cut to another shot. There are no transitions between shots yet.
 
 ### Physics style
 
@@ -625,6 +659,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
 | `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
+| `backgroundTo({ at, ... })` | the background | `dur` (2), `inner`, `outer`, `center`, `radius`, `atmosphere`, `vignette`, `profile` (`'ease'`), `ramp` (0.3) | changes the gradient of the shot, the colour far layers fade toward and the vignette at a moment; keys chain (see A background that changes) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
@@ -1070,7 +1105,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo`, a `countTo`, a `bendTo` and a `cameraTo` are no events.
+- A `solidTo`, a `countTo`, a `bendTo`, a `cameraTo` and a `backgroundTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 
@@ -1353,7 +1388,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 `evaluate` wraps what it draws in three kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape) and `'stretch'` (a node that is being squashed). `flatItems` opens all three.
 
-For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration into subtitle cues (lines of a set length, breaks at the ends of sentences and at pauses), and `formatSrt`, `formatVtt` and `formatYtt` write them out; see `src/text/subtitles.ts`.
+For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration (`[{ w: 'Hello.', start: 0, end: 0.4 }, ...]`) into subtitle cues: lines of a set length, breaks at the ends of sentences and at pauses. Its options, with their defaults: `maxChars` (42) a line, `maxLines` (2) a cue, and `pause` (0.5), the seconds of silence at which a cue ends. `formatSrt`, `formatVtt` and `formatYtt` write the cues out; see `src/text/subtitles.ts`.
 
 For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, `takePeak(take)` measures the loudest point of a take, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption`, `tileRing` and `tileArrow` are what is on it). See `src/audio`.
 

@@ -64,6 +64,12 @@ export interface MotionReport {
    * move at all. Particles that stand still are a dead background.
    */
   readonly particles: readonly { readonly id: string; readonly layer: string; readonly inFrame: number; readonly speedPx: number; readonly movingShare: number }[];
+  /**
+   * A shot whose background is keyed (backgroundTo): the stretches of frames
+   * in which it changes fast enough to be seen. Left out in a shot whose
+   * background stays as it is.
+   */
+  readonly background?: readonly { readonly from: number; readonly to: number }[];
   /** The warnings, worst first. */
   readonly findings: readonly Finding[];
   /** Number of warnings by kind (kinds without any are left out). */
@@ -181,6 +187,21 @@ export function buildReport(series: MotionSeries): MotionReport {
     };
   });
 
+  // The stretches in which a keyed background changes visibly.
+  let background: { from: number; to: number }[] | null = null;
+  if (series.background) {
+    background = [];
+    let start = -1;
+    for (let f = 1; f <= series.frames; f++) {
+      const changes = f < series.frames && series.background[f]! >= T.aliveBackground;
+      if (changes && start < 0) start = f - 1;
+      if (!changes && start >= 0) {
+        background.push({ from: start, to: f - 1 });
+        start = -1;
+      }
+    }
+  }
+
   return {
     version: 1,
     shot: c.spec.id,
@@ -205,6 +226,7 @@ export function buildReport(series: MotionSeries): MotionReport {
     },
     layers,
     particles,
+    ...(background === null ? {} : { background }),
     findings,
     byKind,
     honoured,
@@ -294,6 +316,14 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
       `particles: ${report.particles
         .map((p) => (p.inFrame === 0 ? `${p.id} never in frame` : `${p.id} ${p.speedPx.toFixed(2)} px per frame (${p.inFrame} in frame, moving ${Math.round(100 * p.movingShare)} % of the time)`))
         .join('; ')}`,
+    );
+  }
+
+  if (report.background) {
+    lines.push(
+      report.background.length === 0
+        ? 'background: keyed, but it never changes fast enough to be seen'
+        : `background: changes at ${report.background.map((b) => `${seconds(b.from)}-${seconds(b.to)} s`).join(', ')}`,
     );
   }
 

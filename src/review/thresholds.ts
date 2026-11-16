@@ -182,6 +182,11 @@ export const THRESHOLDS = {
     unit: 'opacity per frame',
     why: 'A fade slower than full range in four seconds does not read as change.',
   },
+  aliveBackground: {
+    value: 0.0005,
+    unit: 'share of the range per frame',
+    why: 'The colours of a background lie close together, so its change is small in numbers: a sky that turns by an eighth of the range of a channel in four seconds still reads as change; slower than that it is a hold.',
+  },
   holdSeconds: {
     value: 4,
     unit: 's',

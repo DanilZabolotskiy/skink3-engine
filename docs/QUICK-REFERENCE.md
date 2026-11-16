@@ -27,7 +27,7 @@ const scene = shot({
 export default scene;
 ```
 
-Colours: palette references only; on-screen text: keys of `strings` (every key in every language); random numbers: `Rng` only. A mistake, or an option that is not taken, is refused with a message that says what to change.
+Colours: palette references only. On-screen text: keys of `strings`, every key in every language. Random numbers: `Rng` only. A mistake or an option that is not taken is refused, with what to change.
 
 ## Shot, camera, layers
 
@@ -35,12 +35,13 @@ Colours: palette references only; on-screen text: keys of `strings` (every key i
 shot({ ...scene, /* = */ light: { from: 'top-left' }, vignette: 0.5, camera: { at: [0, 0], drift: { speed: 0.5, heading: 0, wander: 10, period: 7 }, pushIn: { from: 1, to: 1.05 }, focus: { far: 6, near: 60 } } });
 shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } });
 cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // zoom, to, or both; keys chain
+backgroundTo({ at: 3, inner: 'deep.abyss', /* = */ dur: 2, profile: 'ease', ramp: 0.3 }); // + outer, center, radius, atmosphere, vignette; keys chain
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
 - `drift.speed`: units per frame along `heading` (the norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers the path once.
-- `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to`: where the camera looks at the end. Drift, wander and push-in stay on top.
+- `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to`: where it looks at the end. Drift, wander and push-in stay on top.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
 
 ## Nodes
@@ -51,7 +52,7 @@ capsule({ id: 'arm', fill: 'accent.amber', length: 46, r: 8, /* = */ origin: 'ce
 polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /* = */ radius: 8 }); // 0.16 r; or points: [[x, y], ...], radius: 0
 rect({ id: 'tray', fill: 'dark.indigo', w: 240, h: 50, /* = */ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'accent.amber', r: 50, /* = */ points: 9, wobble: 0.14, seed: 1 });
-region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // a free-form outline, concave allowed; no body
+region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // free-form, concave allowed; no body
 group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: no turning with its parent
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, at, rotation, scale
@@ -95,7 +96,7 @@ levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke
 bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // it pulls taut (0), or sags
-pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node. On a stroke: + from, to (shares), profile, length, node (it gets the bump)
+pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node. On a stroke: + from, to (shares), profile, length, node (bumped)
 openTo('pupil', { at: 0.5, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
 stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
@@ -120,18 +121,17 @@ rect({ id: 'wall', fill: 'dark.indigo', w: 240, h: 300, cover: true, backdrop: t
 ```ts
 circle({ id: 'marble', fill: 'accent.amber', r: 30, sound: 'marble' }); // the node's voice: the bank's sound "marble.<kind>", or "marble"
 popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names the sound of its start
-sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a word; + node: it is panned to that node
+sfx('chime', { at: 6.5, /* = */ gain: 1 }); // placed by hand, as on a word; + node: panned to it
 ```
 
-- `skink3 sfx` makes the track from the shot's events (every intent, contact and burst) and the production's bank: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes. What a bank can set for a sound (`rules`, `apart`, a fit to a move): see Sound.
+- `skink3 sfx` makes the track from the shot's events (every intent, contact and burst) and the production's bank: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes.
 - You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`): a tile per sound, its frame, its node ringed, an arrow along a move.
 
-## Words, subtitles, generated content
+## Words, generated content
 
-No key is anchored to a word: work out `at` from the word times of the narration; `arrive`, `land` and `at + dur` are exact.
+No key is anchored to a word: work out `at` from the word times of the narration; `arrive`, `land` and `at + dur` are exact. Subtitles from those times: `cuesFromWords` (Programmatic use).
 
 ```ts
-cuesFromWords([{ w: 'Hello.', start: 0, end: 0.4 }], { /* = */ maxChars: 42, maxLines: 2, pause: 0.5 }); // subtitle cues, for formatSrt, formatVtt, formatYtt
 new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuffle, next, sign, gauss, stream
 ```
 
@@ -154,7 +154,7 @@ sfx      the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 4
 common   --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
-Output: `./out/<shot id>/`; cache: `./cache/`; every command bakes when it must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
+Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
 
 ## Reading the reviews
 
@@ -185,7 +185,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path and its keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, a light along a stroke); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

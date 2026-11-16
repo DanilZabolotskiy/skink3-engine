@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { palette } from '../examples/demo/palette.ts';
 import {
   arcPoints,
+  backgroundTo,
   bendTo,
   blink,
   bump,
@@ -56,6 +57,7 @@ const INTENTS: Record<string, (extra: object) => unknown> = {
   blink: (x) => blink('a', { at: 1, ...x }),
   countTo: (x) => countTo('a', { at: 1, to: 5, ...x }),
   cameraTo: (x) => cameraTo({ at: 1, zoom: 2, ...x }),
+  backgroundTo: (x) => backgroundTo({ at: 1, inner: 'deep.night', ...x }),
   sfx: (x) => sfx('chime', { at: 1, ...x }),
   stagger: (x) => stagger(['a', 'b'], { at: 1, each: 0.1, ...x }, (id, at) => popIn(id, { at })),
 };

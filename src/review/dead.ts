@@ -3,10 +3,11 @@
 //
 // "Alive" means that something visible there changes by itself: a node moves,
 // turns, grows, fades or blinks, a pulse runs along a link, a link or a stroke
-// is being drawn, the dashes of a stroke close, a link sags or pulls taut, a
-// particle travels. The camera is left out on purpose: its drift
-// slides the whole picture, and a picture that only slides is still a hold.
-// An area with nothing in it counts as dead too.
+// is being drawn, the dashes of a stroke close, a light runs along a stroke, a
+// link sags or pulls taut, a particle travels, or the background itself
+// changes (which is seen everywhere). The camera is left out on purpose: its
+// drift slides the whole picture, and a picture that only slides is still a
+// hold. An area with nothing in it counts as dead too.
 //
 // The frame is cut into a grid of 3 x 2 regions. A thing is counted in every
 // region that the circle around it touches, which errs toward "alive".
@@ -63,6 +64,10 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
   }
   for (const e of series.emitters) {
     for (let f = 1; f < F; f++) alive[f] = alive[f]! | e.regions[f]!;
+  }
+  // A background that changes is seen in every part of the frame.
+  if (series.background) {
+    for (let f = 1; f < F; f++) if (series.background[f]! >= T.aliveBackground) alive[f] = (1 << REGIONS) - 1;
   }
   if (F > 1) alive[0] = alive[1]!;
   return alive;

@@ -302,6 +302,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   const out = newCanvas(scratch, width, height, opts.gpu);
   const ctx = out.getContext('2d');
   const spec = c.spec;
+  // The background of this frame: what the shot says, or what its keys have made of it by now.
+  const bg = state.background ?? { inner: c.background.inner, outer: c.background.outer, center: spec.background.center, radius: spec.background.radius, atmosphere: c.atmosphere, vignette: spec.vignette };
 
   // In a shot with covers or clips, a glowing shape lights its surroundings only as far as it can be seen.
   const hides = c.covers.length > 0 || c.clips;
@@ -312,19 +314,19 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     .map((x) => ({
       layer: x.layer,
       leaves: flatItems(x.layer.items),
-      paint: makePaint(c.light, c.atmosphere, x.layer.layer.tint),
+      paint: makePaint(c.light, bg.atmosphere, x.layer.layer.tint),
       seen: hides ? seenShares(x.layer.items) : null,
     }));
 
   // 1. Background gradient.
   ctx.save();
   ctx.scale(k, k);
-  const bx = spec.background.center[0] * STAGE_W;
-  const by = spec.background.center[1] * STAGE_H;
-  const bg = ctx.createRadialGradient(bx, by, 0, bx, by, spec.background.radius * STAGE_W);
-  bg.addColorStop(0, c.background.inner);
-  bg.addColorStop(1, c.background.outer);
-  ctx.fillStyle = bg;
+  const bx = bg.center[0] * STAGE_W;
+  const by = bg.center[1] * STAGE_H;
+  const sky = ctx.createRadialGradient(bx, by, 0, bx, by, bg.radius * STAGE_W);
+  sky.addColorStop(0, bg.inner);
+  sky.addColorStop(1, bg.outer);
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, STAGE_W, STAGE_H);
 
   // 2. Background lift: every glowing shape brightens what is behind it.
@@ -410,14 +412,14 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   }
 
   // 4. Vignette toward the background's outer colour (never toward gray or black).
-  if (spec.vignette > 0) {
+  if (bg.vignette > 0) {
     ctx.save();
     const cx = width / 2;
     const cy = height / 2;
     const half = Math.hypot(cx, cy);
     const g = ctx.createRadialGradient(cx, cy, half * 0.45, cx, cy, half);
-    g.addColorStop(0, withAlpha(c.background.outer, 0));
-    g.addColorStop(1, withAlpha(c.background.outer, spec.vignette));
+    g.addColorStop(0, withAlpha(bg.outer, 0));
+    g.addColorStop(1, withAlpha(bg.outer, bg.vignette));
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, width, height);
     ctx.restore();

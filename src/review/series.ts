@@ -17,6 +17,7 @@ import { pulseSpan } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
 import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
+import { backgroundStep } from '../scene/background.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
   computeWorld,
@@ -166,6 +167,13 @@ export interface MotionSeries {
   readonly emitters: readonly EmitterSeries[];
   /** By spring slot. */
   readonly springs: readonly SpringSeries[];
+  /**
+   * A shot whose background is keyed (backgroundTo): how far the background
+   * changes from the frame before to each frame, as a share of the full range
+   * of its values (a channel of a colour, the vignette, the place and the size
+   * of the gradient). Left out in a shot whose background stays as it is.
+   */
+  readonly background?: Float32Array;
 }
 
 export interface SampleOptions {
@@ -688,6 +696,11 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     });
   }
 
+  if (c.backgroundTrack) {
+    const background = f32();
+    for (let f = 1; f < frames; f++) background[f] = backgroundStep(c.backgroundTrack, (f - 1) / FPS, f / FPS);
+    return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, background };
+  }
   return { shot: c, frames, lang, camera, views, placed, links, emitters, springs };
 }
 

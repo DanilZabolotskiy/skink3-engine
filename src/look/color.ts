@@ -167,3 +167,18 @@ export function atmosphereTone(hex: string, atmosphere: string, amount: number):
   const pale = c.s * (1 - ATMOSPHERE_DESATURATION * a);
   return toHex(hsvToRgb({ h, s: pale + (to.s - pale) * a, v: c.v + (to.v - c.v) * a }));
 }
+
+/**
+ * A colour `t` of the way from one colour to another, round the colour wheel:
+ * hue along the short way, saturation and value straight, so a change of
+ * colour never passes through gray. A colour without saturation has no hue of
+ * its own and takes the other's. At 0 it is `a` itself, at 1 `b` itself.
+ */
+export function blendAround(a: string, b: string, t: number): string {
+  if (t <= 0 || a === b) return a;
+  if (t >= 1) return b;
+  const from = hexToHsv(a);
+  const to = hexToHsv(b);
+  const h = from.s < 1e-6 ? to.h : to.s < 1e-6 ? from.h : from.h + angleDiffDeg(from.h, to.h) * t;
+  return toHex(hsvToRgb({ h, s: from.s + (to.s - from.s) * t, v: from.v + (to.v - from.v) * t }));
+}

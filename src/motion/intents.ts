@@ -277,6 +277,31 @@ export interface CameraToKey extends Voiced {
   readonly ramp: number;
 }
 
+/**
+ * A change of the background of the shot at a moment: its gradient, the colour
+ * far layers fade toward, and its vignette. It has no node: it is a key of the
+ * timeline that the background reads. What a key leaves out stays as it is.
+ */
+export interface BackgroundToKey extends Voiced {
+  readonly kind: 'backgroundTo';
+  /** A background key has no node. */
+  readonly target: null;
+  readonly at: number;
+  readonly dur: number;
+  /** Palette references: the colours of the gradient at its centre and at its edge when the key ends. */
+  readonly inner?: string;
+  readonly outer?: string;
+  /** The centre of the gradient as fractions of the frame, and its radius in frame widths, when the key ends. */
+  readonly center?: Vec2;
+  readonly radius?: number;
+  /** Palette reference: the colour far layers fade toward when the key ends. */
+  readonly atmosphere?: string;
+  /** How far the corners darken toward the outer colour when the key ends, 0..1. */
+  readonly vignette?: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
 export interface SfxKey {
   readonly kind: 'sfx';
@@ -309,6 +334,7 @@ export type Key =
   | BlinkKey
   | CountToKey
   | CameraToKey
+  | BackgroundToKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -1039,6 +1065,61 @@ export function cameraTo(opts: { at: number; dur?: number; zoom?: number; to?: V
     dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
     ...(opts.zoom === undefined ? {} : { zoom: num(w, 'zoom', opts.zoom, 0.01, 10000) }),
     ...(opts.to === undefined ? {} : { to: point(w, 'to', opts.to) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Change the background of the shot at a moment, while everything in it goes
+ * on: one sky turns into another. `inner` and `outer` are the colours of its
+ * gradient (palette references), `center` and `radius` its place and size,
+ * `atmosphere` the colour far layers fade toward, `vignette` how far the
+ * corners darken. Give at least one; what is left out stays as it is. The
+ * colours run round the colour wheel, hue along the short way, so a change
+ * never passes through gray; the corners darken toward the outer colour of
+ * each frame, and every layer is tinted toward the atmosphere of each frame.
+ * Keys chain: each takes over from what the background is at its moment.
+ *
+ *   backgroundTo({ at: 6, dur: 3, inner: 'deep.sea', outer: 'deep.abyss', atmosphere: 'mid.ocean' })
+ */
+export function backgroundTo(opts: {
+  at: number;
+  dur?: number;
+  inner?: string;
+  outer?: string;
+  center?: Vec2;
+  radius?: number;
+  atmosphere?: string;
+  vignette?: number;
+  profile?: Exclude<MoveProfile, 'settle'>;
+  ramp?: number;
+}): BackgroundToKey {
+  const w = 'backgroundTo';
+  only(w, opts, ['at', 'dur', 'inner', 'outer', 'center', 'radius', 'atmosphere', 'vignette', 'profile', 'ramp']);
+  const given = (['inner', 'outer', 'center', 'radius', 'atmosphere', 'vignette'] as const).filter((name) => opts[name] !== undefined);
+  if (given.length === 0) throw new IntentError(`${w}: give what changes: inner, outer, center, radius, atmosphere or vignette`);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  const ref = (name: 'inner' | 'outer' | 'atmosphere'): string => {
+    const value = opts[name];
+    if (typeof value !== 'string' || !/^[a-z]+\.\S+$/.test(value)) {
+      throw new IntentError(`${w}: ${name} must be a palette reference "role.name" such as "deep.night", got ${JSON.stringify(value)}. Raw colour values are not accepted in scenes`);
+    }
+    return value;
+  };
+  return {
+    kind: 'backgroundTo',
+    target: null,
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    // A tenth of a second at least: a background does not change within a frame.
+    dur: num(w, 'dur', opts.dur ?? 2, 0.1, 600),
+    ...(opts.inner === undefined ? {} : { inner: ref('inner') }),
+    ...(opts.outer === undefined ? {} : { outer: ref('outer') }),
+    ...(opts.center === undefined ? {} : { center: point(w, 'center', opts.center) }),
+    ...(opts.radius === undefined ? {} : { radius: num(w, 'radius', opts.radius, 0.05, 5) }),
+    ...(opts.atmosphere === undefined ? {} : { atmosphere: ref('atmosphere') }),
+    ...(opts.vignette === undefined ? {} : { vignette: num(w, 'vignette', opts.vignette, 0, 1) }),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

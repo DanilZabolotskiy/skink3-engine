@@ -65,6 +65,8 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number): Paint 
         return v;
       },
     };
+    // While a background changes, every frame has an atmosphere of its own: the cache is emptied before it grows without end.
+    if (paints.size >= 512) paints.clear();
     paints.set(key, paint);
   }
   return paint;

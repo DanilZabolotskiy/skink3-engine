@@ -32,6 +32,7 @@ import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountS
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
 import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
+import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
 import type { LabelSide } from './types.ts';
 
@@ -390,6 +391,8 @@ export interface FrameState {
   readonly lang: string;
   readonly camera: CameraState;
   readonly layers: readonly LayerState[];
+  /** The background at this frame, in a shot whose background is keyed (backgroundTo). Left out: it is what the shot says. */
+  readonly background?: BackgroundState;
 }
 
 const labelCache = new WeakMap<CompiledShot, Map<string, { layout: TextLayout; geometry: LabelGeometry }>>();
@@ -690,5 +693,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     return { layer, view: layerView(camera, layer.parallax), items: prune(root) };
   });
 
+  // A shot whose background is not keyed is the state it always was.
+  if (c.backgroundTrack) return { frame, time: t, lang, camera, layers, background: sampleBackground(c.backgroundTrack, t) };
   return { frame, time: t, lang, camera, layers };
 }
