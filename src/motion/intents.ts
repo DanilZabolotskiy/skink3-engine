@@ -277,6 +277,20 @@ export interface CameraToKey extends Voiced {
   readonly ramp: number;
 }
 
+/** Change the outline of a region, or the line of a stroke, into another: every point runs to a new place. */
+export interface ReshapeKey extends Voiced {
+  readonly kind: 'reshape';
+  readonly target: string;
+  readonly at: number;
+  readonly dur: number;
+  /** The new outline: as many points as the node has, each where the point of the same place in the list goes. */
+  readonly points: readonly Vec2[];
+  /** The smoothing of the outline when the key ends, 0..1. Left out: as it is. */
+  readonly smooth?: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /**
  * A change of the background of the shot at a moment: its gradient, the colour
  * far layers fade toward, and its vignette. It has no node: it is a key of the
@@ -335,6 +349,7 @@ export type Key =
   | CountToKey
   | CameraToKey
   | BackgroundToKey
+  | ReshapeKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -1065,6 +1080,41 @@ export function cameraTo(opts: { at: number; dur?: number; zoom?: number; to?: V
     dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
     ...(opts.zoom === undefined ? {} : { zoom: num(w, 'zoom', opts.zoom, 0.01, 10000) }),
     ...(opts.to === undefined ? {} : { to: point(w, 'to', opts.to) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Change the outline of a region, or the line of a stroke, into another one:
+ * a square softens into a coast, two banks smooth into one. `points` is the
+ * new outline: as many points as the node has, given the same way round and
+ * from the same place, because the point at each place in the list runs
+ * straight to the point at that place in the new one. `smooth` changes how
+ * the points are joined (0: straight edges, 1: a smooth curve). The change
+ * lasts; several keys chain from the outline reached at their moment. A
+ * region stays one shape with one light all the way; it may not cross itself
+ * on the way.
+ *
+ *   reshape('isle', { at: 2, dur: 1.6, points: COAST, smooth: 1 })
+ */
+export function reshape(
+  id: string,
+  opts: { at: number; points: readonly Vec2[]; dur?: number; smooth?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): ReshapeKey {
+  const w = `reshape("${id}")`;
+  only(w, opts, ['at', 'points', 'dur', 'smooth', 'profile', 'ramp']);
+  if (!Array.isArray(opts.points) || opts.points.length < 2) throw new IntentError(`${w}: points must be the new outline: a list of points [x, y], as many as the node has`);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'reshape',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    // A tenth of a second at least: an outline does not change within a frame.
+    dur: num(w, 'dur', opts.dur ?? 1.2, 0.1, 600),
+    points: opts.points.map((p, i) => point(w, `points[${i}]`, p)),
+    ...(opts.smooth === undefined ? {} : { smooth: num(w, 'smooth', opts.smooth, 0, 1) }),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

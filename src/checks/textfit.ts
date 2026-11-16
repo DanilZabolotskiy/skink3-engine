@@ -9,7 +9,7 @@ import { xfApply, type Vec2 } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, labelLayout, textLayout, type LabelItem, type LeafItem, type TextItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemShape, labelLayout, textLayout, type LabelItem, type LeafItem, type TextItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
 import { outlineOf } from '../shape/geometry.ts';
 
@@ -60,7 +60,7 @@ const seconds = (frame: number): string => (frame / FPS).toFixed(2);
 /** The outline of a drawn node in the space of its layer, or null if it has none. */
 function nodeOutline(item: LeafItem): Vec2[] | null {
   if (item.kind === 'shape' && item.node.node.type === 'shape') {
-    return outlineOf(item.node.node.shape).map((p) => xfApply(item.xf, p));
+    return outlineOf(itemShape(item)).map((p) => xfApply(item.xf, p));
   }
   if (item.kind === 'eye' && item.node.node.type === 'eye') {
     const r = item.node.node.r * item.xf.scale;

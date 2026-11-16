@@ -32,13 +32,13 @@ import { FPS } from '../core/time.ts';
 import { PULSE_LENGTH, strokePulseLength } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { labelLayout } from '../scene/evaluate.ts';
+import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
 import { CAMERA_SUBJECT, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
 import { reach, shapeExtent } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'particles' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'particles' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -118,7 +118,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale' | 'level';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -198,6 +198,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   rotation: { moved: 'turned by', what: 'rotation (travel of its edge)' },
   scale: { moved: 'changed size by', what: 'scale (travel of its edge)' },
   level: { moved: 'moved', what: 'level (travel of its surface)' },
+  outline: { moved: 'changed by', what: 'outline (travel of its points)' },
 };
 
 
@@ -435,7 +436,8 @@ function sizeAlong(series: MotionSeries, s: PlacedSeries, f: number, ux: number,
     const sin = Math.sin(-rot);
     const lx = ux * cos - uy * sin;
     const ly = ux * sin + uy * cos;
-    return (reach(node.shape, [lx, ly]) + reach(node.shape, [-lx, -ly])) * k;
+    const shape = shapeOf(s.node, f / FPS);
+    return (reach(shape, [lx, ly]) + reach(shape, [-lx, -ly])) * k;
   }
   if (node.type === 'eye') return 2 * node.r * k;
   if (node.type === 'label') {
@@ -638,6 +640,22 @@ export function detectMotion(series: MotionSeries): Finding[] {
           mechanical(s.id, lvl, st, s, F, flat);
         }
       }
+      // A region or a stroke whose outline is keyed: the travel of its points is judged like a move.
+      if (s.outline) {
+        const form = chan('outline', F);
+        const zoomOf = series.views[s.node.layer]!.zoom;
+        let largest = 0;
+        for (let f = 1; f < F; f++) {
+          form.b[f] = (s.outline[f]! - s.outline[f - 1]!) * zoomOf[f]!;
+          form.d[f] = Math.abs(form.b[f]!);
+          if (form.d[f]! > largest) largest = form.d[f]!;
+        }
+        if (largest >= quiet) {
+          jumps(s.id, form, okSeen, F, mine);
+          abrupt(s.id, form, st, F, NO_FRAMES, eased);
+          mechanical(s.id, form, st, s, F, flat);
+        }
+      }
       // A constant-speed move starts and stops abruptly by nature, and a jump is
       // a start and a stop at once: one finding says it.
       const leaps = mine.filter((j) => j.kind === 'jump');
@@ -688,8 +706,9 @@ export function detectMotion(series: MotionSeries): Finding[] {
   // Strokes: a light that runs along the line too quick to follow. As on a link, it is held against its own length.
   for (const s of series.placed) {
     if (!s || s.node.node.type !== 'stroke' || !s.node.stroke) continue;
-    const length = pathTable(s.node.node.path).length;
     for (const p of s.node.stroke.pulses) {
+      // The line as it is when the light sets off.
+      const length = pathTable(strokePathOf(s.node, p.at)).length;
       const way = Math.abs(p.to - p.from) * length;
       const light = strokePulseLength(p, length);
       const count = p.dur * FPS;

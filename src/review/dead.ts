@@ -2,7 +2,7 @@
 // frame, or in all of it.
 //
 // "Alive" means that something visible there changes by itself: a node moves,
-// turns, grows, fades or blinks, a pulse runs along a link, a link or a stroke
+// turns, grows, fades, blinks or changes its outline, a pulse runs along a link, a link or a stroke
 // is being drawn, the dashes of a stroke close, a light runs along a stroke, a
 // link sags or pulls taut, a particle travels, or the background itself
 // changes (which is seen everywhere). The camera is left out on purpose: its
@@ -47,6 +47,7 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
           (s.open !== null && Math.abs(s.open[f]! - s.open[f - 1]!) * s.radius * k >= T.alivePx) ||
           (s.level !== null && Math.abs(s.level[f]! - s.level[f - 1]!) * zoom >= T.alivePx) ||
           (s.life !== null && Math.abs(s.life[f]! - s.life[f - 1]!) * zoom >= T.alivePx) ||
+          (s.outline !== null && Math.abs(s.outline[f]! - s.outline[f - 1]!) * zoom >= T.alivePx) ||
           (s.axis !== null && Math.max(Math.abs(s.axis.sx[f]! - s.axis.sx[f - 1]!), Math.abs(s.axis.sy[f]! - s.axis.sy[f - 1]!)) * s.radius * k >= T.alivePx);
       }
       if (moves) alive[f] = alive[f]! | regionsOf(s.x[g]! * zoom + view.tx[g]!, s.y[g]! * zoom + view.ty[g]!, r);

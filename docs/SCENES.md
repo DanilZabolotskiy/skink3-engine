@@ -391,6 +391,7 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 - A closed `stroke` with the same points and the same `smooth` lies exactly on its edge: a coastline, a dashed border.
 - **One shape, one light:** the shadow, the rim and the highlight follow the whole form, into its bays. Its middle, for the light and the glow, is the middle of the largest circle that fits inside it.
 - A label points at its edge, things can be clipped to it (`clipTo`), it can be a `cover`, a `backdrop` or have a `level`.
+- Its outline can change over time: `reshape` runs every point to a new place (see An outline that changes).
 - **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
 ### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound? })`
@@ -661,6 +662,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
 | `backgroundTo({ at, ... })` | the background | `dur` (2), `inner`, `outer`, `center`, `radius`, `atmosphere`, `vignette`, `profile` (`'ease'`), `ramp` (0.3) | changes the gradient of the shot, the colour far layers fade toward and the vignette at a moment; keys chain (see A background that changes) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
+| `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `pulse(strokeId, { at, ... })` | stroke | `dur` (0.7), `from` (0), `to` (1), `profile`, `ramp` (0.3), `length`, `node`, `bump` (0.14) | sends the same light along the stroke, between two shares of its length; the node it names gets the bump (see A light that runs along a stroke) |
@@ -834,6 +836,39 @@ scaleTo('drop', { at: 7, to: [1.25, 0.8], pivot: [0, 40] }),        // it sags: 
 - A label points at the edge the shape has now, and a link ends there. What else reads the outline of the node keeps its authored proportions: a shape that others are clipped to, a cover, the frame checks.
 - For shapes, groups, eyes, strokes and texts; not for a label, and not for a rigid body.
 - The motion review judges the change as a change of size: with `overshoot: 0` it starts at full speed and is reported as an `abrupt-start`.
+
+### An outline that changes
+
+The `points` of a `region` and of a `stroke` are set once; `scaleTo` changes proportions, not form, and a cross-fade of two shapes dissolves one into the other. `reshape` turns one form into another in place: a square softens into the coast of an island, two banks of earth smooth into one long low embankment.
+
+```ts
+// A square as eight points, clockwise from its top-left corner, and a coast with as many, from the same place.
+const SQUARE: Vec2[] = [[-100, -100], [0, -100], [100, -100], [100, 0], [100, 100], [0, 100], [-100, 100], [-100, 0]];
+const COAST: Vec2[] = [[-160, -60], [0, -140], [150, -90], [220, 10], [120, 110], [-20, 70], [-140, 120], [-230, 20]];
+region({ id: 'isle', fill: 'dark.indigo', points: SQUARE, smooth: 0 }),
+stroke({ id: 'shore', points: SQUARE, closed: true, smooth: 0, color: 'accent.aqua', dash: [0, 16] }),
+// timeline
+reshape('isle', { at: 2, dur: 2.4, points: COAST, smooth: 1 }),     // every corner runs to its place on the coast, and the edges round off
+reshape('shore', { at: 2, dur: 2.4, points: COAST, smooth: 1 }),    // the dotted line on its edge goes with it
+```
+
+| Option of `reshape` | Default | Meaning |
+|---|---|---|
+| `at` | required | seconds: when the change starts |
+| `points` | required | the new outline: as many points as the node has. The point at each place in the list runs straight to the point at that place in the new list |
+| `dur` | `1.2` | seconds it takes, 0.1 at least |
+| `smooth` | as it is | how the points are joined when the key ends: `0` straight edges, `1` a smooth curve. It runs there with the points |
+| `profile`, `ramp` | `'ease'`, `0.3` | how the change is spread, as for a move: `'ease'` from rest to rest, `'steady'`, `'in'`, `'out'` |
+
+- **For a `region` and a `stroke`.** Other shapes have no list of points: build the form as a region (a square is four points with `smooth: 0`; give it more points along its sides so that it can become a coast).
+- **Point for point.** Give the new outline the same way round as the first and from the same place. A region keeps its points clockwise whichever way they are given, so two outlines given the same way round match; one given the other way round is read backwards.
+- **The change lasts, and keys chain:** each starts from the outline reached at its moment, also when the key before it is still under way. To come back, reshape to the first points.
+- **A region stays a region all the way.** Its outline may not cross itself and may not turn inside out, at the end or on the way; the shot is refused with the share of the way at which it would. Move the points, or reshape in two steps.
+- **One shape, one light, all the way:** the shadow, the rim, the highlight and the glow are those of the outline of each frame. Between two outlines the middle and the size the light works with run evenly from those of the first to those of the second.
+- **What reads the outline follows it:** a label points at the edge it has now, a link ends there, what is clipped to it is drawn inside it, a cover hides what it covers now, and a `level` fills the form it has.
+- A stroke that is half drawn on stays half drawn: its share is of the line it has. Its dashes and the lights that run along it follow the line.
+- It plays on top of the moves, turns, sizes and fades of the node. Children of a region keep their places.
+- A `reshape` makes no event. The motion review judges it as a move, on the channel `outline`: the travel of the point that goes farthest. `'steady'` between two rests in view is `mechanical`; while an outline changes, the node counts as life in the frame.
 
 ### Opacity
 
@@ -1105,7 +1140,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo`, a `countTo`, a `bendTo`, a `cameraTo` and a `backgroundTo` are no events.
+- A `solidTo`, a `countTo`, a `bendTo`, a `reshape`, a `cameraTo` and a `backgroundTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 

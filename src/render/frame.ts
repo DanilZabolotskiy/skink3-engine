@@ -10,7 +10,7 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -73,7 +73,7 @@ function glowStrength(item: LeafItem): number {
 
 /** Radius (in layer units) that sets how wide the halo of an item is. */
 function glowReach(item: LeafItem): number {
-  if (item.kind === 'shape') return shapeExtent((item.node.node as ShapeNode).shape).outer * item.xf.scale;
+  if (item.kind === 'shape') return shapeExtent(itemShape(item)).outer * item.xf.scale;
   return 12;
 }
 
@@ -232,8 +232,8 @@ function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
   return hit;
 }
 
-function outlineInLayer(item: { readonly node: { readonly node: unknown }; readonly xf: ShapeItem['xf'] }): Vec2[] {
-  return outlineOf((item.node.node as ShapeNode).shape).map((p) => xfApply(item.xf, p));
+function outlineInLayer(item: ShapeItem | ClipItem): Vec2[] {
+  return outlineOf(itemShape(item)).map((p) => xfApply(item.xf, p));
 }
 
 /**
@@ -263,9 +263,8 @@ function seenShares(items: readonly Item[]): Map<LeafItem, number> {
   walk(items, []);
   const out = new Map<LeafItem, number>();
   for (const g of glowing) {
-    const node = g.item.node.node as ShapeNode;
-    const { center } = shapeExtent(node.shape);
-    const ring = outlineOf(node.shape);
+    const { center } = shapeExtent(itemShape(g.item));
+    const ring = outlineOf(itemShape(g.item));
     const points: Vec2[] = [xfApply(g.item.xf, center)];
     for (let i = 0; i < 8; i++) {
       const p = ring[Math.floor((i * ring.length) / 8)]!;
@@ -342,7 +341,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       const v = layer.view;
       const x = item.xf.x * v.zoom + v.tx;
       const y = item.xf.y * v.zoom + v.ty;
-      const r = shapeExtent(node.shape).outer * item.xf.scale * v.zoom * GLOW.liftRadius;
+      const r = shapeExtent(itemShape(item)).outer * item.xf.scale * v.zoom * GLOW.liftRadius;
       if (r < 1) continue;
       const color = paint.tone('base', item.node.colors['fill']!);
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);

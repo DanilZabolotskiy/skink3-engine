@@ -24,6 +24,7 @@ import type { Bake } from '../physics/cache.ts';
 import { DRAWN, IN_FRAME, sampleMotion, screenAt, type LinkSeries, type MotionSeries, type PlacedSeries } from '../review/series.ts';
 import { T } from '../review/thresholds.ts';
 import { BLINK, type CNode, type CompiledShot } from '../scene/compile.ts';
+import { strokePathOf } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
 
 /**
@@ -260,7 +261,7 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     if (!inShot(frame) || n.node.type !== 'stroke' || !n.stroke) return;
     const s = series.placed[n.index]!;
     const view = series.views[n.layer]!;
-    const table = pathTable(n.node.path);
+    const table = pathTable(strokePathOf(n, frame / FPS));
     const k = s.scale[frame]! * view.zoom[frame]!;
     // Where the line ends at that moment: a hair along it, so that the start of a drawing has a place too.
     const p = pathAt(table, Math.max(1e-6, sampleDrawn(n.stroke, frame / FPS) * table.length));
@@ -282,7 +283,7 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     if (!inShot(frame) || n.node.type !== 'stroke') return;
     const s = series.placed[n.index]!;
     const view = series.views[n.layer]!;
-    const table = pathTable(n.node.path);
+    const table = pathTable(strokePathOf(n, frame / FPS));
     const k = s.scale[frame]! * view.zoom[frame]!;
     const p = pathAt(table, to * table.length);
     const rot = s.rot[frame]! * DEG;
@@ -306,8 +307,8 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
       drafts.push({ kind: 'sfx', frame, dur: 0, node: key.target, key: from ? keyOf(from) : null, sound: key.sound, gain: key.gain, size: 0, speed: 0, x, y, seen: true });
       continue;
     }
-    // The keys of the camera and of the background are no event, and neither are the running of a counter and the bending of a link.
-    if (key.kind === 'cameraTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo') continue;
+    // The keys of the camera and of the background are no event, and neither are the running of a counter, the bending of a link and a change of an outline.
+    if (key.kind === 'cameraTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo' || key.kind === 'reshape') continue;
     const n = c.byId.get(key.target)!;
     // A muted intent is silent in all it does; a key it names is the sound of its start.
     const after = key.sound === false ? false : undefined;

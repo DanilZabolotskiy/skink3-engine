@@ -218,6 +218,33 @@ function crosses(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
 }
 
 /**
+ * What is wrong with an outline through `points` as a region, or null when it
+ * is sound: its points must not coincide, must enclose an area, and the curve
+ * through them must not cross itself. `turn` is the way round the points are
+ * to run (1: clockwise on screen, -1: the other way, 0: either).
+ */
+export function regionFault(points: readonly Vec2[], smooth: number, turn: -1 | 0 | 1 = 0): string | null {
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
+    if (!(Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-6)) return 'two neighbouring points coincide';
+  }
+  const area = signedArea(points);
+  if (!(Math.abs(area) > 1e-6) || area * turn < 0) return 'the points enclose no area';
+  // The outline as it is drawn must not cross itself: a shape has one inside.
+  const ring: Vec2[] = [];
+  for (const s of regionSegments({ kind: 'polygon', points, radius: 0, smooth })) for (let k = 0; k < 12; k++) ring.push(cubicAt(s, k / 12));
+  const m = ring.length;
+  for (let i = 0; i < m; i++) {
+    for (let j = i + 2; j < m; j++) {
+      if (i === 0 && j === m - 1) continue;
+      if (crosses(ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!)) return `the outline crosses itself near point ${Math.floor(i / 12)} and point ${Math.floor(j / 12)}`;
+    }
+  }
+  return null;
+}
+
+/**
  * A free-form closed outline through `points`, concave allowed. The outline
  * may not cross itself; the points are kept clockwise on screen whichever way
  * they are given.
@@ -226,26 +253,15 @@ export function regionShape(points: readonly Vec2[], smooth = 1): RegionSpec {
   need(points.length >= 3, 'region: at least 3 points are required');
   need(points.length <= 200, `region: at most 200 points, got ${points.length}`);
   need(smooth >= 0 && smooth <= 1, `region: smooth must be in 0..1, got ${smooth}`);
-  for (let i = 0; i < points.length; i++) {
-    const a = points[i]!;
-    const b = points[(i + 1) % points.length]!;
-    need(Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-6, 'region: two neighbouring points coincide');
-  }
-  const area = signedArea(points);
-  need(Math.abs(area) > 1e-6, 'region: the points enclose no area');
-  const cw = (area > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
-  const spec: RegionSpec = { kind: 'polygon', points: cw, radius: 0, smooth };
-  // The outline as it is drawn must not cross itself: a shape has one inside.
-  const ring: Vec2[] = [];
-  for (const s of regionSegments(spec)) for (let k = 0; k < 12; k++) ring.push(cubicAt(s, k / 12));
-  const m = ring.length;
-  for (let i = 0; i < m; i++) {
-    for (let j = i + 2; j < m; j++) {
-      if (i === 0 && j === m - 1) continue;
-      need(!crosses(ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!), `region: the outline crosses itself near point ${Math.floor(i / 12)} and point ${Math.floor(j / 12)}; move the points apart or lower smooth`);
-    }
-  }
-  return spec;
+  const cw = (signedArea(points) > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
+  const fault = regionFault(cw, smooth);
+  need(fault === null, `region: ${fault}${fault !== null && fault.startsWith('the outline crosses itself') ? '; move the points apart or lower smooth' : ''}`);
+  return { kind: 'polygon', points: cw, radius: 0, smooth };
+}
+
+/** True when the points run clockwise on screen. */
+export function isClockwise(points: readonly Vec2[]): boolean {
+  return signedArea(points) > 0;
 }
 
 /** The same shape, `k` times larger. */
@@ -435,7 +451,16 @@ export interface ShapeExtent {
   readonly outer: number;
 }
 
-const extentCache = new Map<ShapeSpec, ShapeExtent>();
+const extentCache = new WeakMap<ShapeSpec, ShapeExtent>();
+
+/**
+ * Gives a shape its extent instead of having it worked out: for an outline
+ * that is half-way between two others, whose middle and sizes are taken
+ * half-way between theirs, so that they change evenly from frame to frame.
+ */
+export function seedShapeExtent(spec: ShapeSpec, extent: ShapeExtent): void {
+  extentCache.set(spec, extent);
+}
 
 export function shapeExtent(spec: ShapeSpec): ShapeExtent {
   const hit = extentCache.get(spec);

@@ -14,7 +14,7 @@ import type { SpringParams } from '../core/dynamics.ts';
 import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { pathTable } from '../motion/paths.ts';
+import { pathTable, type PathSpec } from '../motion/paths.ts';
 import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
@@ -29,12 +29,15 @@ import {
   levelGeometry,
   textLayout,
   opacities,
+  shapeOf,
   SHUT,
+  strokePathOf,
   swayDirection,
   type PoseSource,
 } from '../scene/evaluate.ts';
+import { outlineTravel, restForms } from '../scene/outline.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
-import { outlineOf, shapeExtent } from '../shape/geometry.ts';
+import { outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 import { T } from './thresholds.ts';
 
@@ -99,6 +102,12 @@ export interface PlacedSeries {
    * change a viewer sees. null for other nodes.
    */
   readonly life: Float32Array | null;
+  /**
+   * Regions and strokes whose outline is keyed (reshape): how far the outline
+   * has changed by each frame, as the way of the point that travels farthest,
+   * in the layer's units. It only grows; null for other nodes.
+   */
+  readonly outline: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -222,13 +231,13 @@ function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
  * a cover drawn after it, or outside the shape the node is clipped to. A node
  * that shows at one point is still seen.
  */
-function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, drawn: Uint8Array): void {
+function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, drawn: Uint8Array, t: number): void {
   const polys = new Map<number, { poly: Vec2[]; x0: number; y0: number; x1: number; y1: number }>();
   const polyOf = (index: number): { poly: Vec2[]; x0: number; y0: number; x1: number; y1: number } => {
     let hit = polys.get(index);
     if (!hit) {
       const node = c.nodes[index]!.node;
-      const poly = node.type === 'shape' ? outlineOf(node.shape).map((p) => xfApply(world[index]!, p)) : [];
+      const poly = node.type === 'shape' ? outlineOf(shapeOf(c.nodes[index]!, t)).map((p) => xfApply(world[index]!, p)) : [];
       let x0 = Infinity;
       let y0 = Infinity;
       let x1 = -Infinity;
@@ -253,8 +262,8 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
     const xf = world[i]!;
     const points: Vec2[] = [];
     if (node.type === 'shape') {
-      const { center } = shapeExtent(node.shape);
-      const ring = outlineOf(node.shape);
+      const { center } = shapeExtent(shapeOf(n, t));
+      const ring = outlineOf(shapeOf(n, t));
       points.push(xfApply(xf, center));
       for (let k = 0; k < 8; k++) points.push(xfApply(xf, ring[Math.floor((k * ring.length) / 8)]!));
     } else {
@@ -306,16 +315,21 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   for (const n of c.nodes) {
     const node = n.node;
     if (node.type === 'shape') {
-      const ext = shapeExtent(node.shape);
-      radius[n.index] = Math.hypot(ext.center[0], ext.center[1]) + ext.outer;
+      // A region whose outline is keyed: the largest of the outlines it rests in.
+      for (const shape of n.outline ? (restForms(n.outline) as ShapeSpec[]) : [node.shape]) {
+        const ext = shapeExtent(shape);
+        radius[n.index] = Math.max(radius[n.index]!, Math.hypot(ext.center[0], ext.center[1]) + ext.outer);
+      }
       turnRadius[n.index] = node.shape.kind === 'circle' ? 0 : radius[n.index]!;
     } else if (node.type === 'eye') {
       radius[n.index] = node.r;
     } else if (node.type === 'stroke') {
       // The farthest point of the line from its origin, with half its width.
-      const table = pathTable(node.path);
       let far = 0;
-      for (let i = 0; i < table.xs.length; i++) far = Math.max(far, Math.hypot(table.xs[i]!, table.ys[i]!));
+      for (const path of n.outline ? (restForms(n.outline) as PathSpec[]) : [node.path]) {
+        const table = pathTable(path);
+        for (let i = 0; i < table.xs.length; i++) far = Math.max(far, Math.hypot(table.xs[i]!, table.ys[i]!));
+      }
       radius[n.index] = far + node.width / 2;
       turnRadius[n.index] = radius[n.index]!;
     } else if (node.type === 'label' || node.type === 'text') {
@@ -362,6 +376,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       (n.level !== null && (n.level.segs.length > 0 || (node.type === 'shape' && (node.level?.wave?.amp ?? 0) > 0))) ||
       n.stretch !== null ||
       n.axis !== null ||
+      n.outline !== null ||
       (n.count !== null && n.count.segs.length > 0) ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length + n.stroke.pulses.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
@@ -395,6 +410,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       level: n.level ? f32() : null,
       axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
       life: type === 'stroke' || n.count !== null ? f32() : null,
+      outline: n.outline ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -483,7 +499,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       else if (node.type === 'stroke') drawn[i] = xf.scale > HIDDEN && sampleDrawn(n.stroke!, t) > 1e-6 ? 1 : 0;
     }
     // What lies wholly behind a cover, or wholly outside the shape it is clipped to, is not seen.
-    if (hides) markHidden(c, world, alpha, drawn);
+    if (hides) markHidden(c, world, alpha, drawn, t);
     // A group is on screen while something in it is.
     for (let i = N - 1; i >= 0; i--) {
       const n = c.nodes[i]!;
@@ -586,12 +602,13 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.life[f] = Math.round(sampleCount(n.count, t) * k) * 16;
       }
       if (s.life && node.type === 'stroke') {
-        const length = pathTable(node.path).length;
+        const length = pathTable(strokePathOf(n, t)).length;
         let life = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * length;
         // A light that runs along the line: where its head and its tail are.
         if (n.stroke!.pulses.length > 0) for (const p of sampleStrokePulses(n.stroke!, length, t)) life += p.head + p.tail;
         s.life[f] = life * xf.scale;
       }
+      if (s.outline && n.outline) s.outline[f] = outlineTravel(n.outline, t) * xf.scale;
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;
@@ -641,6 +658,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     if (s.open) s.open.fill(s.open[0]!);
     if (s.level) s.level.fill(s.level[0]!);
     if (s.life) s.life.fill(s.life[0]!);
+    if (s.outline) s.outline.fill(s.outline[0]!);
   }
 
   // Particles: the bake keeps the velocity of every stored particle beside its place.

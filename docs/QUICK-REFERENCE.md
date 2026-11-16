@@ -96,6 +96,7 @@ levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke
 bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // it pulls taut (0), or sags
+reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a region or a stroke, point for point; + smooth
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node. On a stroke: + from, to (shares), profile, length, node (bumped)
 openTo('pupil', { at: 0.5, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
@@ -185,7 +186,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, an outline that changes, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

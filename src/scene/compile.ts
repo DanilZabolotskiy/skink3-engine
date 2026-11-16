@@ -29,6 +29,7 @@ import type {
   PopInKey,
   PopOutKey,
   PulseKey,
+  ReshapeKey,
   ScaleToKey,
   SolidToKey,
   SquashKey,
@@ -60,7 +61,9 @@ import {
   type StrokeTrack,
 } from '../motion/tracks.ts';
 import { COUNT_MARK } from '../text/count.ts';
+import { isRegion } from '../shape/geometry.ts';
 import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
+import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
 import { resolveString } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
@@ -93,6 +96,8 @@ export interface CNode {
   readonly count: CountTrack | null;
   /** Strokes: how much of the line is drawn and how far its dashes are closed, over time. */
   readonly stroke: StrokeTrack | null;
+  /** Regions and strokes with a reshape: their outline over time; null for a node that keeps the outline it was given. */
+  readonly outline: OutlineTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -261,6 +266,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const bends = new Map<number, BendToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
+  const reshapes = new Map<number, ReshapeKey[]>();
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
   const cameraKeys: CameraToKey[] = [];
@@ -404,6 +410,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'bendTo':
         need(node.type === 'link', 'links');
         push(bends, index, key);
+        break;
+      case 'reshape':
+        if (!(node.type === 'stroke' || (node.type === 'shape' && isRegion(node.shape)))) {
+          fail(`${where}: reshape cannot target ${node.type === 'shape' ? node.shape.kind : node.type} "${node.id}"; it applies to regions and strokes, whose outline is a list of points`);
+        }
+        push(reshapes, index, key);
         break;
       case 'openTo':
         need(node.type === 'eye', 'eyes');
@@ -583,6 +595,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     let rot: RotTrack | null = null;
     let scale: ScaleTrack | null = null;
     let linkTrack: LinkTrack | null = null;
+    let outline: OutlineTrack | null = null;
     try {
       if (isPlaced(node)) {
         pos = buildPosTrack(node.id, node.at, moves.get(d.index) ?? []);
@@ -597,6 +610,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (node.type === 'link') {
         linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? [], bends.get(d.index) ?? [], node.bend);
       }
+      // A node without a reshape has no track: it is the shape it was given.
+      const reshaped = reshapes.get(d.index);
+      if (reshaped && node.type === 'stroke') outline = buildOutlineTrack(node.id, node.path, reshaped);
+      else if (reshaped && node.type === 'shape' && isRegion(node.shape)) outline = buildOutlineTrack(node.id, node.shape, reshaped);
     } catch (e) {
       fail(`${where}: ${(e as Error).message}`);
     }
@@ -619,6 +636,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       axis: axisScales.has(d.index) ? buildAxisTrack(axisScales.get(d.index)!) : null,
       count: node.type === 'text' && node.count ? countTrackOf(node.id, node.count.from, counts.get(d.index) ?? []) : null,
       stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? [], strokePulses.get(d.index) ?? []) : null,
+      outline,
       clipIndex,
       bodySlot,
       springSlot,

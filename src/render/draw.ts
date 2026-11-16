@@ -12,7 +12,7 @@ import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
-import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem, StrokeItem, TextItem } from '../scene/evaluate.ts';
+import { itemPath, itemShape, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
@@ -72,12 +72,12 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number): Paint 
   return paint;
 }
 
-/** The outline of a shape as a path in the space of its layer. */
-export function placedPath(item: { readonly node: { readonly node: unknown }; readonly xf: ShapeItem['xf'] }): Path2D {
+/** The outline of a shape as a path in the space of its layer: the shape it has at the frame of the item. */
+export function placedPath(item: ShapeItem | ClipItem): Path2D {
   const { xf } = item;
   const cos = Math.cos(xf.rot) * xf.scale;
   const sin = Math.sin(xf.rot) * xf.scale;
-  return shapePath((item.node.node as ShapeNode).shape).transform(cos, sin, -sin, cos, xf.x, xf.y);
+  return shapePath(itemShape(item)).transform(cos, sin, -sin, cos, xf.x, xf.y);
 }
 
 function polygonPath(points: readonly Vec2[], upTo = points.length): Path2D {
@@ -114,7 +114,7 @@ export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint:
   if (node.lit) {
     // The surface catches the light: a pale line along it, inside the shape.
     ctx.clip(placedPath(item));
-    const width = Math.max(2, Math.min(5, shapeExtent(node.shape).inner * 0.06)) * item.xf.scale;
+    const width = Math.max(2, Math.min(5, shapeExtent(itemShape(item)).inner * 0.06)) * item.xf.scale;
     ctx.strokeStyle = paint.tone('rim', item.node.colors['fill']!);
     // Half of the stroke lies above the surface, where nothing is drawn.
     ctx.lineWidth = 2 * width;
@@ -128,7 +128,8 @@ function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint)
   const node = item.node.node as ShapeNode;
   const { xf } = item;
   const base = item.node.colors['fill']!;
-  const path = shapePath(node.shape);
+  const shape = itemShape(item);
+  const path = shapePath(shape);
   ctx.save();
   ctx.translate(xf.x, xf.y);
   ctx.rotate(xf.rot);
@@ -138,7 +139,7 @@ function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint)
   if (node.lit) {
     // The light direction in the shape's own space: the crescents stay on the
     // correct side however the shape is turned.
-    const parts = litParts(node.shape, vrot(paint.light, -xf.rot));
+    const parts = litParts(shape, vrot(paint.light, -xf.rot));
     ctx.fillStyle = paint.tone('shadow1', base);
     ctx.fill(parts.shadow);
     ctx.fillStyle = paint.tone('shadow2', base);
@@ -173,7 +174,7 @@ export function drawShapeGlow(ctx: CanvasRenderingContext2D, item: ShapeItem, pa
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
   ctx.fillStyle = withAlpha(paint.tone('glow', item.node.colors['fill']!), node.glow * item.alpha);
-  ctx.fill(shapePath(node.shape));
+  ctx.fill(shapePath(itemShape(item)));
   ctx.restore();
 }
 
@@ -182,7 +183,6 @@ export function drawShapeGlow(ctx: CanvasRenderingContext2D, item: ShapeItem, pa
  * erased from the glow drawn so far, as far as the cover is opaque.
  */
 export function eraseGlow(ctx: CanvasRenderingContext2D, item: ShapeItem): void {
-  const node = item.node.node as ShapeNode;
   const { xf } = item;
   ctx.save();
   if (item.level) {
@@ -195,7 +195,7 @@ export function eraseGlow(ctx: CanvasRenderingContext2D, item: ShapeItem): void 
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
   ctx.fillStyle = `rgba(0,0,0,${Math.min(1, Math.max(0, item.alpha)).toFixed(4)})`;
-  ctx.fill(shapePath(node.shape));
+  ctx.fill(shapePath(itemShape(item)));
   ctx.restore();
 }
 
@@ -314,7 +314,7 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
  */
 function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   const node = item.node.node as StrokeNode;
-  const table = pathTable(node.path);
+  const table = pathTable(itemPath(item));
   const { xf } = item;
   const upTo = table.length * item.drawn;
   const whole = item.drawn >= 1 - 1e-9;
@@ -355,8 +355,7 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
  * plus a bright head. They show on the part of the line that is drawn.
  */
 function drawStrokePulses(ctx: CanvasRenderingContext2D, item: StrokeItem, width: number, headRadius: number, body: string, head: string, alpha: number): void {
-  const node = item.node.node as StrokeNode;
-  const table = pathTable(node.path);
+  const table = pathTable(itemPath(item));
   const { xf } = item;
   const whole = item.drawn >= 1 - 1e-9;
   const drawnTo = table.length * item.drawn;

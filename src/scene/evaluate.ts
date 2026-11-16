@@ -6,7 +6,7 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { pathTable } from '../motion/paths.ts';
+import { pathTable, type PathSpec } from '../motion/paths.ts';
 import {
   sampleAxis,
   sampleBend,
@@ -26,7 +26,7 @@ import {
   sampleTravelling,
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
-import { outlineOf, reach } from '../shape/geometry.ts';
+import { outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
 import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -34,6 +34,7 @@ import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
 import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
+import { regionAt, strokePathAt } from './outline.ts';
 import type { LabelSide } from './types.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
@@ -78,16 +79,28 @@ const SIDE_DIR: Readonly<Record<LabelSide, Vec2>> = {
   right: [1, 0],
 };
 
+/** The shape of a shape node at time t: the one it was given, or what its reshape keys have made of it by then. */
+export function shapeOf(n: CNode, t: number): ShapeSpec {
+  if (n.node.type !== 'shape') throw new Error(`"${n.id}" is not a shape`);
+  return n.outline ? regionAt(n.outline, t) : n.node.shape;
+}
+
+/** The path of a stroke at time t: the one it was given, or what its reshape keys have made of it by then. */
+export function strokePathOf(n: CNode, t: number): PathSpec {
+  if (n.node.type !== 'stroke') throw new Error(`"${n.id}" is not a stroke`);
+  return n.outline ? strokePathAt(n.outline, t) : n.node.path;
+}
+
 /** How far a node reaches from its origin in a world direction at time t, in units of its layer. */
 function reachOf(n: CNode, xf: Xf, dir: Vec2, t: number): number {
   const node = n.node;
   if (node.type === 'shape') {
     const local = vrot(dir, -xf.rot);
     const axis = n.axis ? sampleAxis(n.axis, t) : null;
-    if (!axis) return reach(node.shape, local) * xf.scale;
+    if (!axis) return reach(shapeOf(n, t), local) * xf.scale;
     // A shape whose width and height were changed: its outline as it is drawn.
     let best = -Infinity;
-    for (const p of outlineOf(node.shape)) best = Math.max(best, (p[0] * axis.sx + axis.cx) * local[0] + (p[1] * axis.sy + axis.cy) * local[1]);
+    for (const p of outlineOf(shapeOf(n, t))) best = Math.max(best, (p[0] * axis.sx + axis.cx) * local[0] + (p[1] * axis.sy + axis.cy) * local[1]);
     return best * xf.scale;
   }
   if (node.type === 'eye') return node.r * xf.scale;
@@ -132,7 +145,7 @@ export function levelGeometry(n: CNode, xf: Xf, t: number): LevelGeometry {
   let right = -Infinity;
   let top = Infinity;
   let bottom = -Infinity;
-  for (const p of outlineOf(node.shape)) {
+  for (const p of outlineOf(shapeOf(n, t))) {
     const x = xf.x + p[0] * cos - p[1] * sin;
     const y = xf.y + p[0] * sin + p[1] * cos;
     if (x < left) left = x;
@@ -247,6 +260,8 @@ export interface ShapeItem {
    * layer's space, of everything below its surface. The shape is drawn inside it.
    */
   readonly level?: readonly Vec2[];
+  /** A region whose outline is keyed (reshape): the shape it has at this frame. Left out: the shape of its node. */
+  readonly shape?: ShapeSpec;
 }
 
 export interface EyeItem {
@@ -286,6 +301,8 @@ export interface StrokeItem {
    * light, in units of the stroke. Left out while none runs.
    */
   readonly pulses?: readonly { readonly head: number; readonly tail: number; readonly length: number }[];
+  /** A stroke whose line is keyed (reshape): the path it has at this frame. Left out: the path of its node. */
+  readonly path?: PathSpec;
 }
 
 export interface TextItem {
@@ -345,6 +362,8 @@ export interface ClipItem {
   readonly xf: Xf;
   /** When the shape is a content with a level that is not full: the polygon below its surface. The items are drawn inside both. */
   readonly level?: readonly Vec2[];
+  /** When the outline of the shape is keyed (reshape): the shape it has at this frame. */
+  readonly shape?: ShapeSpec;
   readonly items: readonly Item[];
 }
 
@@ -365,6 +384,20 @@ export interface StretchItem {
   readonly height: number;
   readonly axes?: { readonly rot: number; readonly scale: number; readonly sx: number; readonly sy: number; readonly cx: number; readonly cy: number };
   readonly items: readonly Item[];
+}
+
+/** The shape an item is drawn with, or clips to, at its frame. */
+export function itemShape(item: { readonly node: CNode; readonly shape?: ShapeSpec }): ShapeSpec {
+  if (item.shape) return item.shape;
+  if (item.node.node.type !== 'shape') throw new Error(`"${item.node.id}" is not a shape`);
+  return item.node.node.shape;
+}
+
+/** The path a stroke is drawn along at its frame. */
+export function itemPath(item: StrokeItem): PathSpec {
+  if (item.path) return item.path;
+  if (item.node.node.type !== 'stroke') throw new Error(`"${item.node.id}" is not a stroke`);
+  return item.node.node.path;
 }
 
 export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem;
@@ -527,6 +560,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
 
   const { own, alpha } = opacities(c, t);
 
+  // A region whose outline is keyed carries the shape it has at this frame; any other item is what it always was.
+  const reshaped = (n: CNode): { shape?: ShapeSpec } => (n.outline ? { shape: shapeOf(n, t) } : {});
+
   const layers = c.layers.map((layer): LayerState => {
     const root: Item[] = [];
     // Open groups: the items of a faded node and of its subtree go into its group.
@@ -560,11 +596,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             continue;
           }
           inner = [];
-          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, level: levelClip(g), items: inner });
-          else items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, items: inner });
+          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, level: levelClip(g), ...reshaped(clipNode), items: inner });
+          else items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, ...reshaped(clipNode), items: inner });
         } else {
           inner = [];
-          items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, items: inner });
+          items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, ...reshaped(clipNode), items: inner });
         }
         open.push({ end: n.subtreeEnd, items: inner });
         items = inner;
@@ -605,11 +641,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             const g = levelGeometry(n, xf, t);
             if (g.level <= LEVEL_EMPTY) break;
             if (g.level < 1 - 1e-6) {
-              items.push({ kind: 'shape', node: n, xf, alpha: a, level: levelClip(g) });
+              items.push({ kind: 'shape', node: n, xf, alpha: a, level: levelClip(g), ...reshaped(n) });
               break;
             }
           }
-          items.push({ kind: 'shape', node: n, xf, alpha: a });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -647,8 +683,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const drawn = sampleDrawn(n.stroke!, t);
           if (drawn <= 1e-6) break;
           // A stroke without a pulse is the item it always was.
-          const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(node.path).length, t) : [];
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}) });
+          const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline ? { path: strokePathOf(n, t) } : {}) });
           break;
         }
         case 'link': {
