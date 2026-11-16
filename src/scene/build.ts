@@ -558,21 +558,38 @@ export function text(o: {
   align?: TextAlign;
   /** A rounded box of this colour behind the lines; default none. */
   box?: ColorRef;
+  /**
+   * Makes the text a counter. Its string holds "{n}" where the number goes; the number starts at this value (or at
+   * `from`, with `decimals` places after the decimal sign) and countTo() runs it.
+   */
+  count?: number | { from: number; decimals?: number };
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
   clipTo?: string;
   /** Key of the node's voice in the bank of sounds. */
   sound?: string;
 }): TextNode {
   const where = `text("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'clipTo', 'sound']);
+  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'count', 'clipTo', 'sound']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "title.main", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
   const align = o.align ?? 'center';
   if (!TEXT_ALIGNS.includes(align)) fail(where, `align must be left, center or right, got ${JSON.stringify(align)}`);
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 600);
+  let count: TextNode['count'];
+  if (o.count !== undefined) {
+    if (typeof o.count === 'number') count = { from: num(where, 'count', o.count, -1e15, 1e15), decimals: 0 };
+    else {
+      if (o.count === null || typeof o.count !== 'object') fail(where, `count must be a number, or { from, decimals }, got ${JSON.stringify(o.count)}`);
+      checkKeys(`${where} count`, o.count, ['from', 'decimals']);
+      const decimals = o.count.decimals === undefined ? 0 : num(where, 'count.decimals', o.count.decimals, 0, 6);
+      if (!Number.isInteger(decimals)) fail(where, `count.decimals must be a whole number, got ${decimals}`);
+      count = { from: num(where, 'count.from', o.count.from, -1e15, 1e15), decimals };
+    }
+  }
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...(count === undefined ? {} : { count }),
     ...voice(where, o.sound),
     type: 'text',
     id: idOf(where, o.id),

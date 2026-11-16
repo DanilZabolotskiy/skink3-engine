@@ -430,7 +430,7 @@ The layout wraps the string, balances the lines, and shrinks the font if needed.
 - A label and its target must be in the same layer.
 - A label over ground or a wall gives a covers-node warning unless that shape is marked `backdrop: true`.
 
-### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, clipTo?, sound? })`
+### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, count?, clipTo?, sound? })`
 
 Free-standing text: a title, a caption, a source line in a corner, a quotation, words on a card. It is a block of lines without a pointer. A `label` points at a thing; a `text` belongs to the frame, or to the shape it lies on.
 
@@ -444,6 +444,7 @@ Free-standing text: a title, a caption, a source line in a corner, a quotation, 
 | `weight` | `800` | weight of the letters, 200 (light) to 1000 (black) |
 | `align` | `'center'` | where `at` is in the block, sideways, and how the lines are set: `'center'`: its middle; `'left'`: the lines start at `at`; `'right'`: they end there. Up and down the block is centred on `at` |
 | `box` | none | palette reference: a rounded box of that colour behind the lines, with the padding and the corners of a label |
+| `count` | none | makes the text a counter: a number, or `{ from, decimals }` (see A counter) |
 | `clipTo` | none | id of a shape of the same layer: the text is drawn only inside it |
 | `sound` | none | key of the text's voice (see Sound) |
 
@@ -463,6 +464,36 @@ rect({ id: 'card', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children
 - **The text-fit checks hold it** in every language: a string that does not fit its lines, a text that leaves the frame while it is shown, and a text that lies over another text or over a label are errors. A text that lies on a shape is what it is for and is not reported.
 - A text on something that turns is turned with it; the check takes the upright box round it.
 - Its `popIn` is a `label` event (see Sound).
+
+#### A counter
+
+A text with `count` is a counter: a number that runs between values over time. Its string says where the number goes with `{n}`; the words round it are the language's.
+
+```ts
+strings: { en: { 'count.way': '{n} km' }, de: { 'count.way': '{n} km' }, fr: { 'count.way': '{n} km' } },
+text({ id: 'way', text: 'count.way', ink: 'accent.amber', at: [900, -455], align: 'right', size: 40, count: 0 }),
+// timeline
+countTo('way', { at: 1, to: 1280, dur: 3 }),                           // it runs to 1280 in three seconds, from rest to rest
+countTo('way', { at: 7, to: 1281, dur: 0.1 }),                         // a tick
+countTo('grains', { at: 2, to: 2e9, dur: 4, profile: 'steady', ratio: true }),   // digit after digit at an even pace
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `count` of `text` | none | a number: where the counter starts. Or `{ from, decimals }`: `decimals` (0, up to 6) are the places it shows after the decimal sign |
+| `countTo(id, { at, to, ... })` | | runs the number to `to` |
+| `dur` | `1` | seconds the run takes; a short one is a tick |
+| `profile`, `ramp` | `'ease'`, `0.3` | how the pace is spread: `'ease'` from rest to rest, `'steady'`, `'in'`, `'out'` |
+| `ratio` | `false` | `true`: the number grows as a ratio, so it gains its digits at an even pace. Both ends above 0 |
+
+- **Keys chain:** each `countTo` starts from the number reached at its moment.
+- **The number is written the way the language writes numbers:** the grouping of its digits and its decimal sign follow the language of the render (`1,280` in English, `1.280` in German, a no-break space in French), with Latin digits. A language tag that is no language, such as a pseudo-locale, is written as English.
+- **The string must hold `{n}` once, in every language.** A unit, a sign or a word before or after it belongs to the string: `'{n} km'`, `'Total: {n}'`.
+- **Its digits stand in cells of one width,** so a running number does not tremble. The text is set anew only when the number gains or loses a digit.
+- **The layout is made for the widest value** the counter starts from or is sent to: the font size, the lines and the box do not change while it runs, and the text-fit checks hold the counter at that value from the first frame on.
+- Everything else is a `text`: place, alignment, a box, the intents of a placed node.
+- A `countTo` makes no event. The motion review counts a running number as life in the frame.
+- Digits do not roll like an odometer: a digit is replaced by the next.
 
 ### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound? })`
 
@@ -520,6 +551,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
+| `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
@@ -893,7 +925,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo` and a `cameraTo` are no events.
+- A `solidTo`, a `countTo` and a `cameraTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 
@@ -1182,4 +1214,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles or counters, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

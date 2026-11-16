@@ -217,6 +217,12 @@ export interface TextNode extends NodeBase {
   readonly align: TextAlign;
   /** Colour of a rounded box behind the lines, or null: the lines alone. */
   readonly box: ColorRef | null;
+  /**
+   * Makes the text a counter: its string holds "{n}", the place of a number
+   * that starts at `from` and runs where countTo sends it, written with
+   * `decimals` places after the decimal sign, the way the language writes numbers.
+   */
+  readonly count?: { readonly from: number; readonly decimals: number };
   /** 0..1 at the start. */
   readonly opacity: number;
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */

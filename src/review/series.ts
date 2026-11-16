@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import { sampleAxis, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
+import { sampleAxis, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
@@ -93,7 +93,8 @@ export interface PlacedSeries {
   /**
    * What else changes in the node by itself, as a length in the layer's units
    * per frame: for a stroke, how much of it is drawn and how far its gaps are
-   * closed. A step of it is a change a viewer sees. null for other nodes.
+   * closed; for a counter, the number it shows, so that every change of it is
+   * a step. A step of it is a change a viewer sees. null for other nodes.
    */
   readonly life: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
@@ -352,6 +353,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       (n.level !== null && (n.level.segs.length > 0 || (node.type === 'shape' && (node.level?.wave?.amp ?? 0) > 0))) ||
       n.stretch !== null ||
       n.axis !== null ||
+      (n.count !== null && n.count.segs.length > 0) ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
@@ -383,7 +385,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       open: type === 'eye' ? f32() : null,
       level: n.level ? f32() : null,
       axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
-      life: type === 'stroke' ? f32() : null,
+      life: type === 'stroke' || n.count !== null ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -568,6 +570,11 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         const a = sampleAxis(n.axis, t);
         s.axis.sx[f] = a ? a.sx : 1;
         s.axis.sy[f] = a ? a.sy : 1;
+      }
+      if (s.life && node.type === 'text' && node.count && n.count) {
+        // The number as it is shown: a change of its last place is a change on screen.
+        const k = 10 ** node.count.decimals;
+        s.life[f] = Math.round(sampleCount(n.count, t) * k) * 16;
       }
       if (s.life && node.type === 'stroke') s.life[f] = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * pathTable(node.path).length * xf.scale;
 

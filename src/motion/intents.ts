@@ -205,6 +205,19 @@ export interface BlinkKey extends Voiced {
   readonly at: number;
 }
 
+/** Run the number of a counter to a value. */
+export interface CountToKey extends Voiced {
+  readonly kind: 'countTo';
+  readonly target: string;
+  readonly at: number;
+  readonly to: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+  /** The number grows as a ratio, by digits at an even pace, instead of by equal steps. Left out: equal steps. */
+  readonly ratio?: boolean;
+}
+
 /**
  * A move of the camera at a moment: to a zoom, to a place, or both. It has no
  * node: it is a key of the timeline that the camera reads.
@@ -252,6 +265,7 @@ export type Key =
   | PulseKey
   | OpenToKey
   | BlinkKey
+  | CountToKey
   | CameraToKey
   | SfxKey;
 
@@ -740,6 +754,35 @@ export function sfx(key: string, opts: { at: number; node?: string; gain?: numbe
     at: num(w, 'at', opts.at, 0, MAX_T),
     sound: key,
     gain: num(w, 'gain', opts.gain ?? 1, 0, 8),
+  };
+}
+
+/**
+ * Run the number of a counter (a text with `count`) to `to`, over `dur`
+ * seconds, along a profile: 'ease' from rest to rest (the default), 'steady'
+ * at one pace, 'in', 'out'. Keys chain from the value reached. A short key is
+ * a tick. With `ratio: true` the number grows as a ratio: it gains its
+ * digits at an even pace (both ends must be above 0).
+ *
+ *   countTo('total', { at: 2, to: 1500, dur: 3 })
+ */
+export function countTo(id: string, opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; ratio?: boolean }): CountToKey {
+  const w = `countTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp', 'ratio']);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  if (opts.ratio !== undefined && typeof opts.ratio !== 'boolean') throw new IntentError(`${w}: ratio must be true or false`);
+  const to = num(w, 'to', opts.to, -1e15, 1e15);
+  if (opts.ratio === true && !(to > 0)) throw new IntentError(`${w}: with ratio the number runs between values above 0; to is ${to}`);
+  return {
+    kind: 'countTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to,
+    dur: num(w, 'dur', opts.dur ?? 1, 0.02, 3600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+    ...(opts.ratio === true ? { ratio: true } : {}),
   };
 }
 

@@ -8,7 +8,7 @@
 export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, stroke, text, intended } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
-export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo } from './motion/intents.ts';
+export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo, countTo } from './motion/intents.ts';
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';

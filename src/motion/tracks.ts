@@ -7,6 +7,7 @@ import type { Vec2 } from '../core/math.ts';
 import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, type MoveProfile } from './curves.ts';
 import type {
   BumpKey,
+  CountToKey,
   DrawOnKey,
   FadeToKey,
   HopKey,
@@ -352,6 +353,39 @@ export function sampleScale(track: ScaleTrack, t: number): number {
     if (tau < BUMP_SECONDS) extra += bumpScale(tau, b.amount);
   }
   return s * sampleGrow(track.grows, t) * (1 + extra);
+}
+
+/** The number of a counter over time. */
+export interface CountTrack {
+  /** The number before the first countTo. */
+  readonly base: number;
+  readonly segs: readonly { readonly at: number; readonly dur: number; readonly from: number; readonly to: number; readonly profile: Exclude<MoveProfile, 'settle'>; readonly ramp: number; readonly ratio: boolean }[];
+}
+
+/** The number of a counter at time t, before it is rounded to the places it shows. */
+export function sampleCount(track: CountTrack, t: number): number {
+  let seg: CountTrack['segs'][number] | null = null;
+  for (const s of track.segs) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return track.base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  const [a, b] = profileRamps(seg.profile, seg.ramp);
+  const p = rampProgress(u, a, b);
+  return seg.ratio ? seg.from * (seg.to / seg.from) ** p : seg.from + (seg.to - seg.from) * p;
+}
+
+/** The track of a counter. Keys chain: each starts from the number reached at its moment. */
+export function buildCountTrack(id: string, base: number, keys: readonly CountToKey[]): CountTrack {
+  const segs: CountTrack['segs'][number][] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    const from = sampleCount({ base, segs }, k.at);
+    if (k.ratio === true && !(from > 0)) throw new TrackError(`countTo("${id}") at ${k.at} s: with ratio the number runs between values above 0, and it starts from ${from}`);
+    segs.push({ at: k.at, dur: k.dur, from, to: k.to, profile: k.profile, ramp: k.ramp, ratio: k.ratio === true });
+  }
+  return { base, segs };
 }
 
 /** One lasting change of size along the node's own axes. */

@@ -7,13 +7,14 @@
 // made certain, and pulls back to the whole picture. A title and a note belong
 // to the frame and stay where they are; a word lies on the block and goes
 // where the block goes. Three bars grow from their feet, and one comes down
-// again in two steps.
+// again in two steps. A counter runs with the route.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
 // profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
-// and on a shape, and scaleTo() along one axis with a pivot.
+// and on a shape, scaleTo() along one axis with a pivot, and a counter with
+// countTo().
 
-import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, cameraTo, circle, countTo, drawOn, fadeTo, layer, popIn, rect, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -24,9 +25,9 @@ const AHEAD: Vec2[] = [[200, 40], [380, 120], [560, -20], [690, -110]];
 const CHART: Vec2[] = [[-760, -330], [-690, -380], [-630, -300], [-560, -350], [-490, -240], [-420, -290], [-350, -170]];
 
 const strings: StringTables = {
-  en: { 'title.main': 'Ways to draw a line', 'note.data': 'Example data, made up', 'block.tag': 'Depot' },
+  en: { 'title.main': 'Ways to draw a line', 'note.data': 'Example data, made up', 'block.tag': 'Depot', 'count.way': '{n} km' },
   // A pseudo-locale with long strings: the layout has to hold these too.
-  'x-long': { 'title.main': 'Several different ways in which a line can be drawn', 'note.data': 'Example data that was made up for this picture', 'block.tag': 'Central depot' },
+  'x-long': { 'title.main': 'Several different ways in which a line can be drawn', 'note.data': 'Example data that was made up for this picture', 'block.tag': 'Central depot', 'count.way': '{n} kilometres so far' },
 };
 
 const timeline: Key[] = [
@@ -36,6 +37,9 @@ const timeline: Key[] = [
   popIn('bead', { at: 0.4 }),
   travel('bead', { at: 1, path: ROUTE, dur: 3, profile: 'ease' }),
   drawOn('route', { at: 1, dur: 3, profile: 'ease' }),
+  // The counter runs with the line, and on when the stretch ahead is made certain.
+  countTo('way', { at: 1, to: 1280, dur: 3, profile: 'ease' }),
+  countTo('way', { at: 7, to: 1940, dur: 1.2 }),
   // What lies ahead appears as dots, and is made a line later.
   drawOn('ahead', { at: 4.2, dur: 1.4 }),
   solidTo('ahead', { at: 7, dur: 1.2 }),
@@ -89,6 +93,7 @@ export default shot({
       nodes: [
         text({ id: 'title', text: 'title.main', ink: 'light.cream', at: [0, -455], size: 60, maxWidth: 1100, maxLines: 2 }),
         text({ id: 'note', text: 'note.data', ink: 'mid.mist', at: [-900, 490], align: 'left', size: 26, weight: 600, opacity: 0 }),
+        text({ id: 'way', text: 'count.way', ink: 'accent.amber', at: [900, -455], align: 'right', size: 40, count: 0 }),
       ],
     }),
   ],

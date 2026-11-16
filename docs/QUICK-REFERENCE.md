@@ -55,7 +55,7 @@ group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, 
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // a line; + dash: [dash, gap] (0: dots), drawn, at, rotation, scale, opacity
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /* = */ side: 'top', size: 38, maxWidth: 420, maxLines: 3 });
-text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // no pointer; + box: a colour, at, rotation, scale, opacity
+text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // no pointer; + box: a colour, count, at, rotation, scale, opacity
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
@@ -89,6 +89,7 @@ popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /* = */ dur: 0.35 });
 bump('c', { at: 2, /* = */ amount: 0.14 }); // a kick of the size, 0.7 s
 squash('buddy', { at: 5, /* = */ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
+countTo('total', { at: 2, to: 1500, /* = */ dur: 1, profile: 'ease' }); // a text with count: 0 and "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share; keys chain), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke

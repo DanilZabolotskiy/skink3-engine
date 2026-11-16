@@ -462,7 +462,7 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: P
     ctx.fill(b.path);
   }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
-  for (const line of b.lines) {
+  for (const line of item.lines) {
     const p = textPath(ctx, line.text, b.size, b.weight);
     if (!p) continue;
     ctx.save();
