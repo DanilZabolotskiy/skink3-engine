@@ -2,8 +2,8 @@
 
 What a scene can use, in short. Open [SCENES.md](SCENES.md) or a review document only at a section the index names. What is in neither is not built.
 
-- A test runs the `ts` blocks. What follows `/* = */` is a default (tested too) and may be left out.
-- Units: a stage of 1920 x 1080, origin in the centre, y down; `[x, y]` (a `Vec2`) in the parent's space; seconds, 60 frames each; degrees clockwise, 0 right.
+- A test runs the `ts` blocks. What follows `/* = */` is a default (tested too): it may be left out.
+- Units: a stage of 1920 x 1080, origin in the centre, y down; `[x, y]` (a `Vec2`) in the parent's space; seconds of 60 frames; degrees clockwise, 0 right.
 
 ## A scene module
 
@@ -27,20 +27,20 @@ const scene = shot({
 export default scene;
 ```
 
-Colours: palette references only; on-screen text: keys of `strings` (every key in every language); random numbers: `Rng` only. A mistake, or an option that is not taken, is rejected with a message that says what to change.
+Colours: palette references only; on-screen text: keys of `strings` (every key in every language); random numbers: `Rng` only. A mistake, or an option that is not taken, is refused with a message that says what to change.
 
 ## Shot, camera, layers
 
 ```ts
 shot({ ...scene, /* = */ light: { from: 'top-left' }, vignette: 0.5, camera: { at: [0, 0], drift: { speed: 0.5, heading: 0, wander: 10, period: 7 }, pushIn: { from: 1, to: 1.05 }, focus: { far: 6, near: 60 } } });
-shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } }); // opt-in
+shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } });
 cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // zoom, to, or both; keys chain
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
-- `drift.speed`: units per frame along `heading`; the norm is 0.3 to 0.7 px per frame. `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
+- `drift.speed`: units per frame along `heading` (the norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers the path once.
-- `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to` is where the camera looks at the end. Drift, wander and push-in stay on top.
+- `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to`: where the camera looks at the end. Drift, wander and push-in stay on top.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
 
 ## Nodes
@@ -60,7 +60,7 @@ text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, max
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
-- Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. All but `region` are convex; a `group` composes them. `children` are drawn over their parent.
+- Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. All but `region` are convex; a `group` composes them.
 - `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `label`: its tail points at the edge of `target` on `side`; the text wraps, then shrinks, never cut. `text`: free-standing; as a child of a shape it lies on it; in a `layer` with `parallax: 0` it belongs to the frame.
 
@@ -80,7 +80,7 @@ A dynamic body waits, touching nothing, until `release` (seconds; down to minus 
 
 ```ts
 moveTo('dot', { at: 1.2, to: [260, -40], /* = */ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance
-moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive: when it first reaches `to`, instead of at:
+moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive, instead of at: when it first reaches `to`
 hop('buddy', { at: 4.3, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur:, or speeds: [[s, speed], ...]); + roll: r, a wheel of that radius
 turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); speed: degrees per second, instead of to
@@ -113,7 +113,7 @@ rect({ id: 'wall', fill: 'dark.indigo', w: 240, h: 300, cover: true, backdrop: t
 ```
 
 - An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
-- `cover`: glow drawn before it does not shine through; the motion review does not judge what is wholly behind it. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape. `level` (or a number, 0 to 1): it fills from the bottom, `wave` ripples it, its children ride on the surface.
+- `cover`: glow drawn before it does not shine through. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape. `level` (or a number, 0 to 1): it fills from the bottom, `wave` ripples it, its children ride on the surface.
 
 ## Sound (opt-in)
 
@@ -123,8 +123,7 @@ popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names 
 sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a word; + node: it is panned to that node
 ```
 
-- `skink3 sfx` makes the track from the events of the shot (every intent, contact and burst) and a bank the production brings: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes.
-- The bank can give a sound `rules` of its own, set it `apart` (a pour as a shower) or fit it to a move (`anchor`, `pan`, `pick`): see Sound.
+- `skink3 sfx` makes the track from the shot's events (every intent, contact and burst) and the production's bank: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes. What a bank can set for a sound (`rules`, `apart`, a fit to a move): see Sound.
 - You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`): a tile per sound, its frame, its node ringed, an arrow along a move.
 
 ## Words, subtitles, generated content
@@ -140,19 +139,19 @@ new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuff
 
 ```
 npx skink3 <command> <scene.ts> [options]     (in the engine: node bin/skink3.mjs)
-check    palette, strings, text fit in every language; both reviews in short   [--bank bank.json]
+check    palette, strings, text fit in every language; both reviews in short  [--bank bank.json]
 bake     [--force]
-still    frames as PNG   --frame n[,n] | --time s[,s]   [--hash]
-strip    frames side by side   --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
-sheet    a contact sheet   [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
+still    frames as PNG  --frame n[,n] | --time s[,s]  [--hash]
+strip    frames side by side  --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
+sheet    a contact sheet  [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render   [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion   [--pictures [--top 3]]
 physics  [--pictures [--top 3]]
-trail    a ghost trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
-graph    a speed graph   --node id | --camera   [--from f] [--to f] | [--time s,s]
+trail    a ghost trail  --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
+graph    a speed graph  --node id | --camera  [--from f] [--to f] | [--time s,s]
 events   every intent, contact and burst of the shot, as JSON
-sfx      the sound track, a WAV   --bank bank.json   [--sheet [--cols 4] [--tile 480]]
-common   --lang tag (the first table)   --width px (1920)   --cpu   --out file   --cache dir
+sfx      the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 480]]
+common   --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
 Output: `./out/<shot id>/`; cache: `./cache/`; every command bakes when it must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
@@ -168,7 +167,7 @@ Each kind of finding (a warning), and the usual fix:
 - `too-fast`: over half its size per frame, it strobes: slower, or larger.
 - `spring-ringing`: still swinging 2.5 s after its target stopped: raise `z` or `f`.
 - `spring-no-overshoot`: a bouncy spring that only lags: lower `f` or `z`, or drop it.
-- `dead-area`: nothing moves by itself for 4 s (the camera does not count): add an `idle`, a pulse, particles.
+- `dead-area`: nothing moves by itself for 4 s (not the camera): add an `idle`, a pulse, particles.
 - `overlap`: bodies in each other: released inside another, or poured too fast.
 - `tunnelling`: through a wall or gap: thicker walls that overlap, less load.
 - `escape`: below every fixed body: widen the ground, or mark it.
@@ -178,10 +177,10 @@ Each kind of finding (a warning), and the usual fix:
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
 
-Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with its reason:
+Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
 ```ts
-shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // the window is optional; subjects may be '(camera)', '(frame)', '(frame:top-left)'
+shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // the window is optional; also '(camera)', '(frame)', '(frame:top-left)'
 ```
 
 ## Index
@@ -195,9 +194,7 @@ PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**, *
 ## Other exports
 
 ```
-constants  STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES PALETTE_LAWS CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES
-           DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
-errors     SceneError IntentError PaletteError
-functions  hexToHsv lightness mix(a, b, t) resolveColor checkPalette ease(name, t) moveTimes(options) profilePeak
-           rampProgress pathLength pathTable pathAt(table, distance) frameToSeconds secondsToFrame new Noise(seed, name)
+constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES PALETTE_LAWS CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
+errors: SceneError IntentError PaletteError
+functions (see Generating content in a scene): hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt frameToSeconds secondsToFrame Noise
 ```

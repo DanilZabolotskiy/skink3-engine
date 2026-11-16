@@ -833,6 +833,20 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 
 `Rng` has `next()`, `range(lo, hi)`, `int(lo, hi)`, `sign()`, `pick(list)`, `gauss()`, `shuffle(list)` and `stream(name)` for an independent sub-stream.
 
+Other helpers a scene may call:
+
+| Helper | What it gives |
+|---|---|
+| `mix(a, b, t)` | the blend of two `#RRGGBB` colours, `t` of the way from `a` to `b` |
+| `hexToHsv(hex)`, `lightness(hex)` | the hue, saturation and value of a colour; its CIE L* |
+| `resolveColor(palette, ref)`, `checkPalette(palette)` | the colour of a palette reference; the laws a palette breaks |
+| `ease(name, t)` | an easing of `EASINGS` at `t` in 0..1 |
+| `rampProgress(u, a, b)`, `profilePeak(profile, ramp)` | the progress of a plain profile with eased ends of the shares `a` and `b`; its peak speed as a multiple of the mean |
+| `moveTimes(options)` | the moments of a move (see Moves) |
+| `pathLength(path)`, `pathTable(path)`, `pathAt(table, distance)` | the length of a free-form path `{ points, closed, smooth }`, its table, and the point at a distance along it |
+| `new Noise(seed, name)` | seeded smooth noise between -1 and 1: `n1(x)`, `n2(x, y)` |
+| `frameToSeconds(frame)`, `secondsToFrame(seconds)` | a frame as a moment, and the frame that shows a moment |
+
 ## Checks
 
 `skink3 check <scene>` runs, for every language of the string tables:
