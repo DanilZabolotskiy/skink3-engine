@@ -17,7 +17,7 @@ Rules that the API enforces:
 |---|---|
 | No on-screen text in scene code | a label takes a string-table **key**; anything that is not a key (for example a sentence) is rejected |
 | No raw colours | every colour is a palette reference `"role.name"`; hex values are rejected |
-| Simple forms only | the shapes are circle, capsule, rounded convex polygon and blob; there are no hands, fingers, feet or limb mechanics to call |
+| Simple forms only | the shapes are circle, capsule, rounded convex polygon, blob and a free-form region; there are no hands, fingers, feet or limb mechanics to call |
 | Unique ids, valid references | duplicate ids, unknown targets and cross-layer references are rejected |
 | Determinism | the engine never uses `Math.random` or the clock; a scene that generates content must use the seeded `Rng` (see below) |
 
@@ -279,8 +279,9 @@ All shape factories take these options:
 | `polygon` | `sides`, `r`, `radius?` or `points`, `radius?` | a rounded **convex** polygon: regular (3–12 sides on a circle of radius `r`, corner radius default `0.16 × r`; the first corner points up) or from explicit corners (corner radius default 0: sharp) |
 | `rect` | `w`, `h`, `radius?` | rounded rectangle centred on its position; `radius` (default 22 % of the short side) must stay below half the short side (use a capsule for a pill) |
 | `blob` | `r`, `points?` (9), `wobble?` (0.14), `seed?` (1) | a soft irregular outline; the same seed gives the same blob |
+| `region` | `points`, `smooth?` (1) | a free-form closed outline through its points, concave allowed (see below); not a rigid body |
 
-Concave forms are composed from several shapes in a `group`.
+A concave form is a `region`, or several shapes composed in a `group`.
 
 How a glow is drawn, so that its reach can be planned: a halo around the shape, blurred by 0.2 and by 0.9 of the shape's outer radius (at least 5 and 18 units, at most 14 and 64), and a lift of the background in a soft disc 5.5 outer radii wide. Both grow with the shape, so a long glowing capsule lights a wide part of the sky; both are scaled by `glow` and by the opacity. A shape that waits outside the frame still lifts the part of the frame its disc reaches.
 
@@ -334,6 +335,28 @@ levelTo('content', { at: 2, to: 0.8, dur: 6 }),
 - The shape keeps its light, its glow and its opacity; a pale line marks the surface when the shape is `lit`.
 - The vessel is a shape of its own, drawn before or after the content; the content is usually a little smaller.
 - A rigid body cannot have a level.
+
+#### `region({ id, fill, points, smooth?, ... })`
+
+A free-form closed outline through `points`, as one shape: a map, an island, a pool, the ground other things stand on. Unlike a `polygon` it may be concave, with bays and capes. It takes the options of every shape and is lit, glows, fades, clips and fills as they do.
+
+```ts
+// An island with a bay on its lower side: a few points, in order round the outline.
+region({ id: 'island', fill: 'deep.ink', backdrop: true,
+  points: [[-820, 130], [-560, -70], [-200, -20], [60, -150], [330, -60], [420, 150], [230, 250], [40, 170], [-180, 330], [-470, 280], [-700, 360]] }),
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `points` | required | 3 to 200 points `[x, y]` in order round the outline, in the shape's own space. Either way round |
+| `smooth` | `1` | `1` joins the points with a smooth curve through them, `0` with straight edges; between, the corners are partly rounded. The same curve as a `stroke` and the path of a `travel` |
+
+- **The outline may not cross itself.** The engine says near which points it does; move them apart, or lower `smooth` (a tight bend between distant points makes the curve swing wide).
+- **A few points are enough.** With `smooth: 1` six to twelve points give a recognisable coast; the curve passes through every one of them.
+- A closed `stroke` with the same points and the same `smooth` lies exactly on its edge: a coastline, a dashed border.
+- **One shape, one light:** the shadow, the rim and the highlight follow the whole form, into its bays. Its middle, for the light and the glow, is the middle of the largest circle that fits inside it.
+- A label points at its edge, things can be clipped to it (`clipTo`), it can be a `cover`, a `backdrop` or have a `level`.
+- **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
 ### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound? })`
 
@@ -1214,4 +1237,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

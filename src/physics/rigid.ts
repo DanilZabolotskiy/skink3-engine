@@ -98,6 +98,9 @@ export function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAP
       if (!desc) throw new Error(`body "${id}": could not build a convex collider from the blob`);
       return desc;
     }
+    case 'region':
+      // The factory refuses a region as a body; a free-form outline has no convex collider.
+      throw new Error(`body "${id}": a region cannot be a rigid body`);
   }
 }
 

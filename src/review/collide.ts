@@ -68,6 +68,11 @@ export function colliderOf(shape: ShapeSpec, scale = 1): Collider {
       pts = convexHull(outline(shape, 28));
       radius = 0;
       break;
+    case 'region':
+      // Never a body; its hull stands in where a collider is asked for.
+      pts = convexHull(outline(shape, 48));
+      radius = 0;
+      break;
   }
   const core = new Float64Array(pts.length * 2);
   let bound = 0;

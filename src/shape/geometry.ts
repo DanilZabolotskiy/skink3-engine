@@ -42,7 +42,16 @@ export interface BlobSpec {
   readonly seed: number;
 }
 
-export type ShapeSpec = CircleSpec | CapsuleSpec | PolygonSpec | BlobSpec;
+/** A free-form closed outline through a list of points: it may be concave, with bays and capes. */
+export interface RegionSpec {
+  readonly kind: 'region';
+  /** The points the outline runs through, clockwise on screen. */
+  readonly points: readonly Vec2[];
+  /** 0 joins the points with straight edges, 1 with a smooth curve through them; between, the corners are partly rounded. */
+  readonly smooth: number;
+}
+
+export type ShapeSpec = CircleSpec | CapsuleSpec | PolygonSpec | BlobSpec | RegionSpec;
 
 export class ShapeError extends Error {}
 
@@ -168,6 +177,67 @@ export function blobShape(r: number, opts: { points?: number; wobble?: number; s
   return { kind: 'blob', r, points, wobble, seed: opts.seed ?? 1 };
 }
 
+/**
+ * Cubic Bezier segments of the closed outline of a region: the curve of a
+ * path through its points (motion/paths.ts), so a stroke with the same points
+ * and the same `smooth` lies exactly on its edge.
+ */
+export function regionSegments(spec: RegionSpec): { p0: Vec2; c1: Vec2; c2: Vec2; p1: Vec2 }[] {
+  const pts = spec.points;
+  const n = pts.length;
+  const k = spec.smooth / 6;
+  const segs: { p0: Vec2; c1: Vec2; c2: Vec2; p1: Vec2 }[] = [];
+  for (let i = 0; i < n; i++) {
+    const pm = pts[(i + n - 1) % n]!;
+    const p0 = pts[i]!;
+    const p1 = pts[(i + 1) % n]!;
+    const p2 = pts[(i + 2) % n]!;
+    segs.push({ p0, c1: [p0[0] + (p1[0] - pm[0]) * k, p0[1] + (p1[1] - pm[1]) * k], c2: [p1[0] - (p2[0] - p0[0]) * k, p1[1] - (p2[1] - p0[1]) * k], p1 });
+  }
+  return segs;
+}
+
+/** True when two segments cross at a point inside both. */
+function crosses(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
+  const side = (p: Vec2, q: Vec2, r: Vec2): number => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const d1 = side(c, d, a);
+  const d2 = side(c, d, b);
+  const d3 = side(a, b, c);
+  const d4 = side(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/**
+ * A free-form closed outline through `points`, concave allowed. The outline
+ * may not cross itself; the points are kept clockwise on screen whichever way
+ * they are given.
+ */
+export function regionShape(points: readonly Vec2[], smooth = 1): RegionSpec {
+  need(points.length >= 3, 'region: at least 3 points are required');
+  need(points.length <= 200, `region: at most 200 points, got ${points.length}`);
+  need(smooth >= 0 && smooth <= 1, `region: smooth must be in 0..1, got ${smooth}`);
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
+    need(Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-6, 'region: two neighbouring points coincide');
+  }
+  const area = signedArea(points);
+  need(Math.abs(area) > 1e-6, 'region: the points enclose no area');
+  const cw = (area > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
+  const spec: RegionSpec = { kind: 'region', points: cw, smooth };
+  // The outline as it is drawn must not cross itself: a shape has one inside.
+  const ring: Vec2[] = [];
+  for (const s of regionSegments(spec)) for (let k = 0; k < 12; k++) ring.push(cubicAt(s, k / 12));
+  const m = ring.length;
+  for (let i = 0; i < m; i++) {
+    for (let j = i + 2; j < m; j++) {
+      if (i === 0 && j === m - 1) continue;
+      need(!crosses(ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!), `region: the outline crosses itself near point ${Math.floor(i / 12)} and point ${Math.floor(j / 12)}; move the points apart or lower smooth`);
+    }
+  }
+  return spec;
+}
+
 /** The same shape, `k` times larger. */
 export function scaleShape(spec: ShapeSpec, k: number): ShapeSpec {
   if (k === 1) return spec;
@@ -180,6 +250,8 @@ export function scaleShape(spec: ShapeSpec, k: number): ShapeSpec {
       return { ...spec, points: spec.points.map((p) => [p[0] * k, p[1] * k] as Vec2), radius: spec.radius * k };
     case 'blob':
       return { ...spec, r: spec.r * k };
+    case 'region':
+      return { ...spec, points: spec.points.map((p) => [p[0] * k, p[1] * k] as Vec2) };
   }
 }
 
@@ -289,6 +361,9 @@ function denseOutline(spec: ShapeSpec): Vec2[] {
       // Control points run with increasing angle, which is clockwise on screen already.
       break;
     }
+    case 'region':
+      for (const s of regionSegments(spec)) for (let k = 0; k < 24; k++) out.push(cubicAt(s, k / 24));
+      break;
   }
   return out;
 }
@@ -365,6 +440,63 @@ export function shapeExtent(spec: ShapeSpec): ShapeExtent {
     center = [(c0[0] + c1[0]) / 2, (c0[1] + c1[1]) / 2];
     inner = spec.r;
     outer = spec.length / 2;
+  } else if (spec.kind === 'region') {
+    // A free-form outline may be concave: its middle is the point inside it that is farthest from its edge
+    // (the middle of the largest circle that fits in it), found on a grid and then on a finer one round the best.
+    const pts = outline(spec, 256);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of pts) {
+      x0 = Math.min(x0, p[0]);
+      y0 = Math.min(y0, p[1]);
+      x1 = Math.max(x1, p[0]);
+      y1 = Math.max(y1, p[1]);
+    }
+    const inside = (x: number, y: number): boolean => {
+      let hit = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i]!;
+        const b = pts[j]!;
+        if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
+      }
+      return hit;
+    };
+    const clearance = (x: number, y: number): number => {
+      let best = Infinity;
+      for (const p of pts) best = Math.min(best, Math.hypot(p[0] - x, p[1] - y));
+      return best;
+    };
+    inner = 0;
+    // Until the grid finds a point inside: the middle of its box.
+    center = [(x0 + x1) / 2, (y0 + y1) / 2];
+    let span = Math.max(x1 - x0, y1 - y0);
+    let from: Vec2 = [x0, y0];
+    for (let pass = 0; pass < 3; pass++) {
+      const steps = 24;
+      const cell = span / steps;
+      let best: Vec2 | null = null;
+      for (let iy = 0; iy <= steps; iy++) {
+        for (let ix = 0; ix <= steps; ix++) {
+          const x = from[0] + ix * cell;
+          const y = from[1] + iy * cell;
+          if (!inside(x, y)) continue;
+          const d = clearance(x, y);
+          if (d > inner) {
+            inner = d;
+            best = [x, y];
+          }
+        }
+      }
+      if (best) center = best;
+      span = 2 * cell;
+      from = [center[0] - cell, center[1] - cell];
+    }
+    // A sliver has no room for a circle; the light still needs a size to work with.
+    inner = Math.max(inner, 1e-3);
+    outer = 0;
+    for (const p of pts) outer = Math.max(outer, Math.hypot(p[0] - center[0], p[1] - center[1]));
   } else {
     const pts = outline(spec, 128);
     let sx = 0;

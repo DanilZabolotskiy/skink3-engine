@@ -15,6 +15,7 @@ import {
   circleShape,
   polygonShape,
   rectShape,
+  regionShape,
   regularPolygonShape,
   type ShapeSpec,
 } from '../shape/geometry.ts';
@@ -298,6 +299,22 @@ export function polygon(
     if ('sides' in o) return regularPolygonShape(o.sides, o.r, o.radius ?? o.r * 0.16);
     return fail(where, 'give either { sides, r } or { points }');
   });
+  return shapeNode(where, o, shape, null);
+}
+
+/**
+ * A free-form closed outline through `points`, as one shape: the outline of
+ * a map, an island, a pool. It may be concave, with bays and capes; it may not
+ * cross itself. `smooth` 1 joins the points with a smooth curve, 0 with
+ * straight edges. It is lit, glows, fades, clips and fills like any shape; it
+ * cannot be a rigid body.
+ */
+export function region(o: ShapeOptions & { points: readonly Vec2[]; smooth?: number }): ShapeNode {
+  const where = `region("${o?.id}")`;
+  checkKeys(where, o, [...SHAPE_KEYS, 'points', 'smooth']);
+  if (o.body !== undefined) fail(where, 'a region cannot be a rigid body: a body is a convex shape (compose the ground of several)');
+  if (!Array.isArray(o.points)) fail(where, 'points must be a list of points [x, y]');
+  const shape = wrapShape(where, () => regionShape(o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1)));
   return shapeNode(where, o, shape, null);
 }
 

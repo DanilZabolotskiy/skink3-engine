@@ -7,14 +7,15 @@
 // made certain, and pulls back to the whole picture. A title and a note belong
 // to the frame and stay where they are; a word lies on the block and goes
 // where the block goes. Three bars grow from their feet, and one comes down
-// again in two steps. A counter runs with the route.
+// again in two steps. A counter runs with the route. Under it all lies an
+// island with a bay, one shape with one light.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
 // profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
-// and on a shape, scaleTo() along one axis with a pivot, and a counter with
-// countTo().
+// and on a shape, scaleTo() along one axis with a pivot, a counter with
+// countTo(), and region(), a free-form outline.
 
-import { arcPoints, cameraTo, circle, countTo, drawOn, fadeTo, layer, popIn, rect, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, cameraTo, circle, countTo, drawOn, fadeTo, layer, popIn, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -22,6 +23,8 @@ const SEED = 20261117;
 // The route: its first part is certain, its last part is not yet.
 const ROUTE: Vec2[] = [[-760, 250], [-520, 60], [-260, 150], [-40, -40], [200, 40]];
 const AHEAD: Vec2[] = [[200, 40], [380, 120], [560, -20], [690, -110]];
+// The island the route crosses: a few points, clockwise, with a bay on its lower side.
+const ISLAND: Vec2[] = [[-820, 130], [-560, -70], [-200, -20], [60, -150], [330, -60], [420, 150], [230, 250], [40, 170], [-180, 330], [-470, 280], [-700, 360]];
 const CHART: Vec2[] = [[-760, -330], [-690, -380], [-630, -300], [-560, -350], [-490, -240], [-420, -290], [-350, -170]];
 
 const strings: StringTables = {
@@ -74,15 +77,16 @@ export default shot({
       id: 'stage',
       depth: 0,
       nodes: [
+        region({ id: 'island', points: ISLAND, fill: 'deep.ink', backdrop: true }),
         stroke({ id: 'route', points: ROUTE, color: 'accent.amber', width: 9, glow: 0.5 }),
         stroke({ id: 'ahead', points: AHEAD, color: 'accent.amber', width: 9, dash: [0, 22] }),
         circle({ id: 'bead', at: ROUTE[0]!, r: 20, fill: 'light.cream', glow: 0.6 }),
         stroke({ id: 'chart', points: CHART, color: 'accent.coral', width: 7, smooth: 0 }),
         rect({ id: 'block', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children: [text({ id: 'tag', text: 'block.tag', ink: 'light.cream', size: 34, maxWidth: 200 })] }),
         stroke({ id: 'fence', at: [560, 300], points: [[-150, -105], [150, -105], [150, 105], [-150, 105]], closed: true, smooth: 0.25, color: 'mid.mist', width: 5, dash: [18, 14], opacity: 0 }),
-        ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [-420 + i * 70, 420], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
-        stroke({ id: 'ring', at: [-560, -40], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
-        stroke({ id: 'share', at: [-560, -40], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
+        ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [70 + i * 70, 440], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
+        stroke({ id: 'ring', at: [-180, -300], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
+        stroke({ id: 'share', at: [-180, -300], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
       ],
     }),
     // What belongs to the frame: the camera neither moves nor zooms a layer with parallax 0.

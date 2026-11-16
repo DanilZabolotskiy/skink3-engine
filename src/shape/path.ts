@@ -9,6 +9,7 @@ import {
   capsuleCenters,
   closedSplineSegments,
   insetConvex,
+  regionSegments,
   type ShapeSpec,
 } from './geometry.ts';
 
@@ -54,6 +55,13 @@ function buildPath(spec: ShapeSpec): Path2D {
       const segs = closedSplineSegments(blobControlPoints(spec));
       const first = segs[0]!;
       p.moveTo(first.p0[0], first.p0[1]);
+      for (const s of segs) p.bezierCurveTo(s.c1[0], s.c1[1], s.c2[0], s.c2[1], s.p1[0], s.p1[1]);
+      p.closePath();
+      break;
+    }
+    case 'region': {
+      const segs = regionSegments(spec);
+      p.moveTo(segs[0]!.p0[0], segs[0]!.p0[1]);
       for (const s of segs) p.bezierCurveTo(s.c1[0], s.c1[1], s.c2[0], s.c2[1], s.p1[0], s.p1[1]);
       p.closePath();
       break;
