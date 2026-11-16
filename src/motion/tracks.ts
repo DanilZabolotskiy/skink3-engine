@@ -519,6 +519,9 @@ export interface TurnSeg {
   readonly from: number;
   readonly to: number;
   readonly overshoot: number;
+  /** How its speed is spread, without an overshoot; null: the turn that shoots past and settles. */
+  readonly profile: Exclude<MoveProfile, 'settle'> | null;
+  readonly ramp: number;
 }
 
 export interface RotTrack {
@@ -536,8 +539,10 @@ export function buildRotTrack(id: string, base: number, keys: readonly TurnToKey
     if (k.at < free - EPS) {
       throw new TrackError(`turnTo("${id}") at ${k.at} s starts before the previous turn has ended (${free.toFixed(3)} s)`);
     }
-    segs.push({ at: k.at, dur: k.dur, from, to: k.to, overshoot: k.overshoot });
-    from = k.to;
+    // A key made with a speed turns by so many degrees from where the node is.
+    const to = k.by === undefined ? k.to : from + k.by;
+    segs.push({ at: k.at, dur: k.dur, from, to, overshoot: k.overshoot, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP });
+    from = to;
     free = k.at + k.dur;
   }
   return { base, segs };
@@ -553,6 +558,10 @@ export function sampleRot(track: RotTrack, t: number): number {
   if (!seg) return track.base;
   const u = (t - seg.at) / seg.dur;
   if (u >= 1) return seg.to;
+  if (seg.profile !== null) {
+    const [a, b] = profileRamps(seg.profile, seg.ramp);
+    return seg.from + (seg.to - seg.from) * rampProgress(Math.max(0, u), a, b);
+  }
   return seg.from + (seg.to - seg.from) * overshootStep(u, seg.overshoot, 0.5);
 }
 

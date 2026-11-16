@@ -92,10 +92,19 @@ export interface TurnToKey extends Voiced {
   readonly kind: 'turnTo';
   readonly target: string;
   readonly at: number;
-  /** Absolute rotation in degrees. */
+  /** Absolute rotation in degrees. 0 in a key that has `by`. */
   readonly to: number;
   readonly dur: number;
   readonly overshoot: number;
+  /**
+   * How the speed of the turn is spread over its duration: 'ease', 'steady',
+   * 'in' or 'out', without an overshoot. Left out: the turn that shoots past
+   * its angle and settles.
+   */
+  readonly profile?: Exclude<MoveProfile, 'settle'>;
+  readonly ramp?: number;
+  /** Degrees to turn by from wherever the node is, instead of to an absolute angle (a key made with `speed`). */
+  readonly by?: number;
 }
 
 export interface BumpKey extends Voiced {
@@ -532,16 +541,48 @@ export function popOut(id: string, opts: { at: number; dur?: number; sound?: str
   };
 }
 
-/** Turn a node to an absolute rotation (degrees), with overshoot and settle. */
-export function turnTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): TurnToKey {
+/**
+ * Turn a node to an absolute rotation (degrees), with overshoot and settle.
+ *
+ * With a `profile` the turn has no overshoot and its speed is spread as a
+ * move's is: 'steady' at one speed, 'ease' from rest to rest, 'in' from rest
+ * and on at speed, 'out' in at speed and down to rest. A turn of many
+ * revolutions is a large `to`. Instead of `to`, `speed` gives the degrees
+ * per second of its steady stretch, from wherever the node is: two keys with
+ * one speed join without a step, so a wheel can spin and then slow down.
+ *
+ *   turnTo('wheel', { at: 0, dur: 14, speed: 72, profile: 'steady' })
+ *   turnTo('wheel', { at: 14, dur: 6, speed: 72, profile: 'out' })
+ */
+export function turnTo(
+  id: string,
+  opts: { at: number; to?: number; speed?: number; dur?: number; overshoot?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; sound?: string | false },
+): TurnToKey {
   const w = `turnTo("${id}")`;
+  only(w, opts, ['at', 'to', 'speed', 'dur', 'overshoot', 'profile', 'ramp', 'sound']);
+  if ((opts.to === undefined) === (opts.speed === undefined)) throw new IntentError(`${w}: give either to (an angle in degrees) or speed (degrees per second, from where it is)`);
+  // A speed is the speed of a steady stretch: it asks for a profile, and takes 'steady' when none is named.
+  const profile = opts.profile === undefined && opts.speed === undefined ? undefined : profileOf(w, opts.profile, RAMPED, 'steady');
+  if (profile !== undefined && (opts.overshoot ?? 0) !== 0) throw new IntentError(`${w}: a turn with a profile has no overshoot; leave overshoot out`);
+  if (opts.ramp !== undefined && (profile === undefined || profile === 'steady')) throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  const dur = num(w, 'dur', opts.dur ?? 0.8, 0.05, 3600);
+  const ramp = num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5);
+  let by: number | undefined;
+  if (opts.speed !== undefined) {
+    const [a, b] = profileRamps(profile!, ramp);
+    // The eased ends cover less than the steady stretch does in their time.
+    by = num(w, 'speed', opts.speed, -1e5, 1e5) * dur * (1 - (a + b) / 2);
+  }
   return {
     kind: 'turnTo',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    to: num(w, 'to', opts.to, -1e5, 1e5),
-    dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 60),
-    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.1, 0, 0.5),
+    to: opts.to === undefined ? 0 : num(w, 'to', opts.to, -1e6, 1e6),
+    dur,
+    overshoot: profile === undefined ? num(w, 'overshoot', opts.overshoot ?? 0.1, 0, 0.5) : 0,
+    // A turn without a profile is the key it always was.
+    ...(profile === undefined ? {} : { profile, ...(profile === 'steady' ? {} : { ramp }) }),
+    ...(by === undefined ? {} : { by }),
     ...voiced(w, opts),
   };
 }

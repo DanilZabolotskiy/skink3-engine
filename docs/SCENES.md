@@ -561,18 +561,19 @@ A key says what should happen to a node and when. The engine supplies the curve.
 
 | Intent | Targets | Options (defaults) | What the engine does |
 |---|---|---|---|
-| `moveTo(id, { at, to, ... })` | shape, group, eye | `dur` (1.1), `anticipation` (0.08), `overshoot` (0.07), `arc` (0.12), `profile` (`'settle'`), `ramp` (0.3), `arrive` instead of `at` | backs away a little, travels along an arc, shoots past the destination, settles. Starts from wherever the node is. `anticipation` and `overshoot` are fractions of the distance (capped at 44 and 38 units); `arc` is the bulge as a fraction of the distance (capped at 150 units), positive toward the top of the frame (to the left for a move straight up or down). Other profiles: see Moves |
-| `hop(id, { at, to, ... })` | shape, group, eye | `dur` (0.6), `height` (80), `land` instead of `at` | a jump: leaves at `at`, flies a parabola `height` units high, lands at `at + dur`. See Moves |
-| `travel(id, { at, path, ... })` | shape, group, eye | `speed` or `dur`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
+| `moveTo(id, { at, to, ... })` | placed: shape, group, eye, stroke, text | `dur` (1.1), `anticipation` (0.08), `overshoot` (0.07), `arc` (0.12), `profile` (`'settle'`), `ramp` (0.3), `arrive` instead of `at` | backs away a little, travels along an arc, shoots past the destination, settles. Starts from wherever the node is. `anticipation` and `overshoot` are fractions of the distance (capped at 44 and 38 units); `arc` is the bulge as a fraction of the distance (capped at 150 units), positive toward the top of the frame (to the left for a move straight up or down). Other profiles: see Moves |
+| `hop(id, { at, to, ... })` | placed | `dur` (0.6), `height` (80), `land` instead of `at` | a jump: leaves at `at`, flies a parabola `height` units high, lands at `at + dur`. See Moves |
+| `travel(id, { at, path, ... })` | placed | `speed` or `dur`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
-| `squash(id, { at, ... })` | shape, group, eye | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
-| `popIn(id, { at, ... })` | shape, group, eye, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
+| `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
+| `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
-| `turnTo(id, { at, to, ... })` | shape, group | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
-| `scaleTo(id, { at, to: [sx, sy], ... })` | shape, group, eye, stroke, text | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
-| `scaleTo(id, { at, to, ... })` | shape, group, eye, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
-| `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
-| `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
+| `turnTo(id, { at, speed, ... })` | shape, group, stroke, text | `dur` (0.8), `profile` (`'steady'`), `ramp` (0.3) | turns at a speed, with a profile (see A turn at a speed) |
+| `turnTo(id, { at, to, ... })` | shape, group, stroke, text | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
+| `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
+| `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
+| `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
+| `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
 | `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
@@ -670,6 +671,27 @@ const path: Vec2[] = [[-1180, -260], [-860, -300], [-600, -60], [-300, 150]];
 - A flow reads as a flow when it enters and leaves: start the path outside the frame or behind a `cover`, and end it there. `only: true` spares the fades; a flow that should already run at frame 0 starts its first keys before 0.
 - A node is turned by `roll` or `orient`, or by `turnTo`, not by both.
 - `pathLength`, `pathTable` and `pathAt` are exported for scene code that needs the length of a path or a point on it.
+
+### A turn at a speed
+
+`turnTo` by itself goes to an angle, shoots past and settles. With a `profile` the turn has no overshoot and its speed is spread as a move's is, so a wheel can turn at one speed for a long time, start from rest, or come to rest.
+
+```ts
+turnTo('dial', { at: 2, to: 180, dur: 1.5, profile: 'ease' }),          // from rest to rest, no overshoot
+turnTo('wheel', { at: -1, dur: 15, speed: 50 }),                        // 50 degrees a second, under way when the shot starts
+turnTo('wheel', { at: 14, dur: 4, speed: 50, profile: 'out' }),         // on at that speed, and down to rest
+```
+
+| Option of `turnTo` | Default | Meaning |
+|---|---|---|
+| `profile` | none | `'steady'`: one speed from the first frame to the last. `'ease'`: from rest to rest. `'in'`: from rest, and on at speed. `'out'`: in at speed, and down to rest. A turn with a profile has no `overshoot` |
+| `ramp` | `0.3` | the share of `dur` an eased end takes, for `'ease'`, `'in'` and `'out'` |
+| `speed` | none | instead of `to`: degrees per second on the steady stretch, from wherever the node is; negative turns the other way. The profile is `'steady'` unless another is named |
+
+- Give either `to` or `speed`. With `to` the angle is absolute, and a turn of many revolutions is a large angle: `to: 3600` is ten turns. `dur` may be as long as the shot.
+- **Keys with one `speed` join without a step:** a `'steady'` key, then an `'out'` key with the same speed, is a wheel that spins and slows down. An eased end covers half of what the steady stretch would in its time; the engine works the angle out.
+- A key may start before the shot (a negative `at`): the wheel is under way at frame 0.
+- The motion review judges a turn like a move: one speed between two rests in view is `mechanical`, also with eased ends when the steady stretch is most of it. A wheel that is already turning when the shot starts, or still turns when it ends, is a flow and is not reported.
 
 ### Size along one axis
 
