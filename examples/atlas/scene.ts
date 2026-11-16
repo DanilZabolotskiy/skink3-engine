@@ -101,7 +101,7 @@ export default shot({
         link({ id: 'line', from: 'post0', to: 'post1', color: 'mid.mist', width: 5, bend: -0.3 }),
         circle({ id: 'post0', at: [-760, -120], r: 14, fill: 'mid.rose' }),
         circle({ id: 'post1', at: [-480, -150], r: 14, fill: 'mid.rose' }),
-        ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [70 + i * 70, 440], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
+        ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [762 + i * 58, 440], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
         polygon({ id: 'cog', at: [-180, -300], sides: 6, r: 38, fill: 'mid.violet' }),
         stroke({ id: 'ring', at: [-180, -300], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
         stroke({ id: 'share', at: [-180, -300], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
