@@ -6,7 +6,9 @@ import { springParams, type SpringSpec } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
 import { lightVector, type LightSpec } from '../look/light.ts';
 import { ROLES, type ColorRef, type Palette } from '../look/palette.ts';
+import { DEFAULT_RAMP, type MoveProfile } from '../motion/curves.ts';
 import type { Key } from '../motion/intents.ts';
+import { pathLength } from '../motion/paths.ts';
 import {
   blobShape,
   capsuleShape,
@@ -22,6 +24,7 @@ import { FINDING_KINDS_ALL } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
+  CameraPathSpec,
   CameraSpec,
   EmitterNode,
   EyeNode,
@@ -31,6 +34,7 @@ import type {
   LabelNode,
   LabelSide,
   LayerSpec,
+  LevelSpec,
   LinkNode,
   FindingKind,
   PhysicsSpec,
@@ -111,11 +115,14 @@ function body(where: string, value: BodySpec | undefined): BodySpec | null {
     return value;
   }
   if (value.kind === 'dynamic') {
-    checkKeys(`${where} body`, value, ['kind', 'release', 'velocity', 'spin', 'density', 'friction', 'restitution']);
+    checkKeys(`${where} body`, value, ['kind', 'release', 'velocity', 'spin', 'density', 'friction', 'restitution', 'appear']);
     num(where, 'body.release', value.release, -120, 3600);
     if (value.velocity !== undefined) vec(where, 'body.velocity', value.velocity);
     if (value.spin !== undefined) num(where, 'body.spin', value.spin, -3600, 3600);
     if (value.density !== undefined) num(where, 'body.density', value.density, 0.01, 100);
+    if (value.appear !== undefined && value.appear !== 'always' && value.appear !== 'release') {
+      fail(where, `body.appear must be "always" or "release", got ${JSON.stringify(value.appear)}`);
+    }
     return value;
   }
   return fail(where, `body.kind must be "fixed" or "dynamic", got ${JSON.stringify((value as { kind?: unknown }).kind)}`);
@@ -154,12 +161,65 @@ export interface ShapeOptions {
   idle?: IdleSpec;
   /** Make it a rigid body of the physics bake. */
   body?: BodySpec;
+  /** An opaque thing in front: the glow of what is drawn before it in its layer does not shine through it; default false. */
+  cover?: boolean;
+  /** Labels may lie over it without a covers-node warning (ground, a wall, a backdrop); default false. */
+  backdrop?: boolean;
+  /** Id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline. */
+  clipTo?: string;
+  /**
+   * Makes the shape a content that fills its outline from the bottom: a number
+   * 0..1 (how full it is at the start), or { at, wave } with a ripple of the
+   * surface, wave: { amp, length?, speed? }. Animate it with levelTo().
+   */
+  level?: number | { at: number; wave?: { amp: number; length?: number; speed?: number } };
 }
 
-const SHAPE_KEYS = ['id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'glow', 'rimLight', 'children', 'follow', 'idle', 'body'];
+const SHAPE_KEYS = [
+  'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'glow', 'rimLight', 'children', 'follow', 'idle', 'body',
+  'cover', 'backdrop', 'clipTo', 'level',
+];
+
+function flag(where: string, name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') fail(where, `${name} must be true or false, got ${JSON.stringify(value)}`);
+  return value;
+}
+
+function level(where: string, value: ShapeOptions['level']): LevelSpec {
+  if (typeof value === 'number') return { at: num(where, 'level', value, 0, 1), wave: null };
+  if (value === null || typeof value !== 'object') fail(where, `level must be a number 0..1 or { at, wave }, got ${JSON.stringify(value)}`);
+  checkKeys(`${where} level`, value, ['at', 'wave']);
+  let wave: LevelSpec['wave'] = null;
+  if (value.wave !== undefined) {
+    checkKeys(`${where} level.wave`, value.wave, ['amp', 'length', 'speed']);
+    wave = {
+      amp: num(where, 'level.wave.amp', value.wave.amp, 0, 200),
+      length: num(where, 'level.wave.length', value.wave.length ?? 160, 4, 1e5),
+      speed: num(where, 'level.wave.speed', value.wave.speed ?? 40, -1e4, 1e4),
+    };
+  }
+  return { at: num(where, 'level.at', value.at, 0, 1), wave };
+}
+
+/** Options that are written into a node only when they are given, so that a node without them is the data it always was. */
+function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level'] }): {
+  cover?: boolean;
+  backdrop?: boolean;
+  clipTo?: string;
+  level?: LevelSpec;
+} {
+  return {
+    ...(o.cover === undefined ? {} : { cover: flag(where, 'cover', o.cover) }),
+    ...(o.backdrop === undefined ? {} : { backdrop: flag(where, 'backdrop', o.backdrop) }),
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...(o.level === undefined ? {} : { level: level(where, o.level) }),
+  };
+}
 
 function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: SpringSpec | null): ShapeNode {
+  if (o.level !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a level');
   return {
+    ...extras(where, o),
     type: 'shape',
     id: idOf(where, o.id),
     shape,
@@ -257,11 +317,14 @@ export function group(o: {
   children?: readonly SceneNode[];
   follow?: SpringSpec;
   idle?: IdleSpec;
+  /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
+  clipTo?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo']);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   return {
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     type: 'group',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
@@ -293,11 +356,14 @@ export function link(o: {
   opacity?: number;
   /** 0..1: the line itself glows (a halo around it); default 0. */
   glow?: number;
+  /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
+  clipTo?: string;
 }): LinkNode {
   const where = `link("${o?.id}")`;
-  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow']);
+  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow', 'clipTo']);
   const c = color(where, 'color', o.color);
   return {
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     type: 'link',
     id: idOf(where, o.id),
     from: idOf(where, o.from),
@@ -443,12 +509,17 @@ export function emitter(o: {
   glow?: number;
   /** An inner disc on every particle: its colour and its radius as a fraction of the particle's (0..1). */
   core?: { color: ColorRef; size: number };
+  /** How the size runs over a particle's life: "spark" (default: swells, then shrinks away) or "steady" (full size nearly all its life). */
+  sizing?: 'spark' | 'steady';
+  /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
+  clipTo?: string;
 }): EmitterNode {
   const where = `emitter("${o?.id}")`;
   checkKeys(where, o, [
     'id', 'colors', 'size', 'life', 'at', 'attach', 'area', 'rate', 'from', 'until', 'bursts', 'onContact', 'prewarm',
-    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core',
+    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo',
   ]);
+  if (o.sizing !== undefined && o.sizing !== 'spark' && o.sizing !== 'steady') fail(where, `sizing must be "spark" or "steady", got ${JSON.stringify(o.sizing)}`);
   if (!Array.isArray(o.colors) || o.colors.length === 0) fail(where, 'colors must be a non-empty array of palette references');
   const rate = o.rate === undefined ? 0 : num(where, 'rate', o.rate, 0, 5000);
   const bursts = (o.bursts ?? []).map((b, i) => {
@@ -479,6 +550,8 @@ export function emitter(o: {
     core = { color: color(where, 'core.color', o.core.color), size: num(where, 'core.size', o.core.size, 0.05, 0.95) };
   }
   return {
+    ...(o.sizing === undefined ? {} : { sizing: o.sizing }),
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     type: 'emitter',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
@@ -612,6 +685,24 @@ export function shot(o: {
   camera?: {
     at?: Vec2;
     drift?: { speed?: number; heading?: number; wander?: number; period?: number };
+    /**
+     * A free-form path instead of the straight drift: the places the camera
+     * looks at, the first being where it starts. With `speed` (units per frame)
+     * it keeps that speed for the whole shot, round a closed path or there and
+     * back on an open one; without it, it covers the path once over the shot.
+     */
+    path?: {
+      points: readonly Vec2[];
+      closed?: boolean;
+      /** 0 = straight lines, 1 = a smooth curve through the points; default 1. */
+      smooth?: number;
+      speed?: number;
+      /** When the path is covered once: steady (default), ease, in or out. */
+      profile?: Exclude<MoveProfile, 'settle'>;
+      ramp?: number;
+      /** Seconds for a turn at the end of an open path; default 1.6. */
+      turn?: number;
+    };
     pushIn?: { from?: number; to?: number };
     focus?: { far?: number; near?: number };
   };
@@ -636,13 +727,44 @@ export function shot(o: {
     radius: o.background.radius === undefined ? 0.72 : num(where, 'background.radius', o.background.radius, 0.05, 5),
   };
   const cam = o.camera ?? {};
-  checkKeys(`${where} camera`, cam, ['at', 'drift', 'pushIn', 'focus']);
+  checkKeys(`${where} camera`, cam, ['at', 'drift', 'path', 'pushIn', 'focus']);
   if (cam.drift) checkKeys(`${where} camera.drift`, cam.drift, ['speed', 'heading', 'wander', 'period']);
   if (cam.pushIn) checkKeys(`${where} camera.pushIn`, cam.pushIn, ['from', 'to']);
   if (cam.focus) checkKeys(`${where} camera.focus`, cam.focus, ['far', 'near']);
+  let cameraPath: CameraPathSpec | null = null;
+  if (cam.path !== undefined) {
+    const p = cam.path;
+    const w = `${where} camera.path`;
+    checkKeys(w, p, ['points', 'closed', 'smooth', 'speed', 'profile', 'ramp', 'turn']);
+    if (cam.at !== undefined || cam.drift?.speed !== undefined || cam.drift?.heading !== undefined) {
+      fail(w, 'a path replaces camera.at, camera.drift.speed and camera.drift.heading: leave them out (the first point of the path is where the camera starts)');
+    }
+    if (!Array.isArray(p.points) || p.points.length < 2) fail(w, 'points must be a list of at least two places [x, y]');
+    const closed = p.closed ?? false;
+    if (typeof closed !== 'boolean') fail(w, `closed must be true or false, got ${JSON.stringify(closed)}`);
+    if (closed && p.points.length < 3) fail(w, 'a closed path needs at least three points');
+    const profile = p.profile ?? 'steady';
+    if (!['steady', 'ease', 'in', 'out'].includes(profile)) fail(w, `profile must be steady, ease, in or out; got ${JSON.stringify(profile)}`);
+    if (p.speed !== undefined && (p.profile !== undefined || p.ramp !== undefined)) {
+      fail(w, 'with a speed the camera keeps that speed for the whole shot; profile and ramp apply when the path is covered once (no speed)');
+    }
+    if (p.turn !== undefined && (p.speed === undefined || closed)) fail(w, 'turn applies to an open path with a speed: the time the camera takes to turn round at an end');
+    cameraPath = {
+      points: p.points.map((q, i) => vec(w, `points[${i}]`, q)),
+      closed,
+      smooth: num(w, 'smooth', p.smooth ?? 1, 0, 1),
+      speed: p.speed === undefined ? null : num(w, 'speed', p.speed, 0, 20),
+      profile,
+      ramp: num(w, 'ramp', p.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+      turn: num(w, 'turn', p.turn ?? 1.6, 0.1, 30),
+    };
+    if (!(pathLength(cameraPath) > 1e-6)) fail(w, 'the path has no length');
+  }
   const D = CAMERA_DEFAULTS;
   const camera: CameraSpec = {
-    at: cam.at === undefined ? D.at : vec(where, 'camera.at', cam.at),
+    // A shot without a camera path is the data it always was.
+    ...(cameraPath ? { path: cameraPath } : {}),
+    at: cam.at === undefined ? (cameraPath ? cameraPath.points[0]! : D.at) : vec(where, 'camera.at', cam.at),
     drift: {
       speed: num(where, 'camera.drift.speed', cam.drift?.speed ?? D.drift.speed, 0, 20),
       heading: num(where, 'camera.drift.heading', cam.drift?.heading ?? D.drift.heading, -3600, 3600),

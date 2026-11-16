@@ -11,15 +11,27 @@
 
 import { cameraAt, layerView } from '../camera/camera.ts';
 import type { SpringParams } from '../core/dynamics.ts';
-import { DEG } from '../core/math.ts';
+import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { sampleLid, sampleReveal } from '../motion/tracks.ts';
+import { sampleLevel, sampleLid, sampleReveal } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { computeWorld, eyeOpen, FAINT, HIDDEN, labelLayout, opacities, SHUT, swayDirection, type PoseSource } from '../scene/evaluate.ts';
+import {
+  computeWorld,
+  eyeOpen,
+  FAINT,
+  HIDDEN,
+  labelLayout,
+  LEVEL_EMPTY,
+  levelGeometry,
+  opacities,
+  SHUT,
+  swayDirection,
+  type PoseSource,
+} from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
-import { shapeExtent } from '../shape/geometry.ts';
+import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 import { T } from './thresholds.ts';
 
@@ -72,6 +84,8 @@ export interface PlacedSeries {
   readonly flags: Uint8Array;
   /** Eyes: how far the lids are open (with blinks); null for other nodes. */
   readonly open: Float32Array | null;
+  /** Shapes with a level: the height of the surface in the layer's space, per frame; null for other nodes. */
+  readonly level: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -169,6 +183,92 @@ function median(sorted: readonly number[]): number {
   return n % 2 === 1 ? sorted[(n - 1) / 2]! : (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2;
 }
 
+function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]!;
+    const b = poly[j]!;
+    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
+  }
+  return hit;
+}
+
+
+
+
+/**
+ * Clears `drawn` for shapes and eyes that cannot be seen at this frame: every
+ * one of nine points of the node (its middle and eight on its edge) lies under
+ * a cover drawn after it, or outside the shape the node is clipped to. A node
+ * that shows at one point is still seen.
+ */
+function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, drawn: Uint8Array): void {
+  const polys = new Map<number, { poly: Vec2[]; x0: number; y0: number; x1: number; y1: number }>();
+  const polyOf = (index: number): { poly: Vec2[]; x0: number; y0: number; x1: number; y1: number } => {
+    let hit = polys.get(index);
+    if (!hit) {
+      const node = c.nodes[index]!.node;
+      const poly = node.type === 'shape' ? outlineOf(node.shape).map((p) => xfApply(world[index]!, p)) : [];
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const p of poly) {
+        x0 = Math.min(x0, p[0]);
+        y0 = Math.min(y0, p[1]);
+        x1 = Math.max(x1, p[0]);
+        y1 = Math.max(y1, p[1]);
+      }
+      hit = { poly, x0, y0, x1, y1 };
+      polys.set(index, hit);
+    }
+    return hit;
+  };
+  // Covers that hide at this frame: drawn, nearly opaque, and not themselves a content with a level.
+  const covers = c.covers.filter((i) => drawn[i] === 1 && alpha[i]! >= T.coverAlpha && c.nodes[i]!.level === null);
+  for (const n of c.nodes) {
+    const i = n.index;
+    const node = n.node;
+    if (!drawn[i] || (node.type !== 'shape' && node.type !== 'eye')) continue;
+    const xf = world[i]!;
+    const points: Vec2[] = [];
+    if (node.type === 'shape') {
+      const { center } = shapeExtent(node.shape);
+      const ring = outlineOf(node.shape);
+      points.push(xfApply(xf, center));
+      for (let k = 0; k < 8; k++) points.push(xfApply(xf, ring[Math.floor((k * ring.length) / 8)]!));
+    } else {
+      points.push([xf.x, xf.y]);
+      for (let k = 0; k < 8; k++) points.push([xf.x + Math.cos((k * Math.PI) / 4) * node.r * xf.scale, xf.y + Math.sin((k * Math.PI) / 4) * node.r * xf.scale]);
+    }
+    // The shapes this node is clipped to: its own and those of everything it is in.
+    const clips: number[] = [];
+    for (let k = i; k >= 0; k = c.nodes[k]!.parent) if (c.nodes[k]!.clipIndex >= 0) clips.push(c.nodes[k]!.clipIndex);
+    const later = covers.filter((ci) => ci > n.subtreeEnd && c.nodes[ci]!.layer === n.layer);
+    if (clips.length === 0 && later.length === 0) continue;
+    let seen = false;
+    for (const p of points) {
+      let hidden = false;
+      for (const ci of clips) {
+        if (!insidePolygon(polyOf(ci).poly, p[0], p[1])) {
+          hidden = true;
+          break;
+        }
+      }
+      for (let k = 0; !hidden && k < later.length; k++) {
+        const cover = polyOf(later[k]!);
+        if (p[0] < cover.x0 || p[0] > cover.x1 || p[1] < cover.y0 || p[1] > cover.y1) continue;
+        hidden = insidePolygon(cover.poly, p[0], p[1]);
+      }
+      if (!hidden) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) drawn[i] = 0;
+  }
+}
+
 /** Evaluates the shot at every frame and returns the series of everything in it. */
 export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = {}): MotionSeries {
   if (bake.header.sceneHash !== c.sceneHash || bake.header.frames !== c.frames) {
@@ -230,6 +330,9 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       (node.type === 'shape' && node.body?.kind === 'dynamic') ||
       ((node.type === 'shape' || node.type === 'group') && node.idle !== null && node.idle.amp > 0) ||
       (node.type === 'eye' && ((n.lid?.segs.length ?? 0) > 0 || n.blinks.length > 0)) ||
+      // A content whose level changes or whose surface ripples; a node that is squashed or stretched.
+      (n.level !== null && (n.level.segs.length > 0 || (node.type === 'shape' && (node.level?.wave?.amp ?? 0) > 0))) ||
+      n.stretch !== null ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
     still[n.index] = animated ? 0 : 1;
@@ -258,6 +361,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       unit: f32(),
       flags: new Uint8Array(frames),
       open: type === 'eye' ? f32() : null,
+      level: n.level ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -300,6 +404,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
   const drawn = new Uint8Array(N);
   const faint = new Uint8Array(N);
+  const hides = c.covers.length > 0 || c.clips;
   // Raw rotations of the previous frame, to keep the series continuous across the wrap at 180 degrees.
   const prevRot = new Float64Array(N);
   const prevOwnRot = new Float64Array(N);
@@ -340,9 +445,11 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       faint[i] = own[i]! <= FAINT || (n.parent >= 0 && faint[n.parent] === 1) ? 1 : 0;
       if (faint[i]) continue;
       const xf = world[i]!;
-      if (node.type === 'shape' || node.type === 'label') drawn[i] = xf.scale > HIDDEN ? 1 : 0;
+      if (node.type === 'shape' || node.type === 'label') drawn[i] = xf.scale > HIDDEN && (n.level === null || sampleLevel(n.level, t) > LEVEL_EMPTY) ? 1 : 0;
       else if (node.type === 'eye') drawn[i] = xf.scale > HIDDEN && (n.lid ? sampleLid(n.lid, t) : 1) > SHUT ? 1 : 0;
     }
+    // What lies wholly behind a cover, or wholly outside the shape it is clipped to, is not seen.
+    if (hides) markHidden(c, world, alpha, drawn);
     // A group is on screen while something in it is.
     for (let i = N - 1; i >= 0; i--) {
       const n = c.nodes[i]!;
@@ -433,6 +540,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       prevOwnRot[i] = ownRaw;
 
       if (s.open && n.lid) s.open[f] = sampleLid(n.lid, t) * eyeOpen(n.blinks, t);
+      if (s.level) s.level[f] = levelGeometry(n, xf, t).y;
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;
@@ -476,6 +584,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     if (!s || !s.still) continue;
     for (const a of [s.x, s.y, s.rot, s.scale, s.alpha, s.ownAlpha, s.ownX, s.ownY, s.ownRot, s.ownScale]) a.fill(a[0]!);
     if (s.open) s.open.fill(s.open[0]!);
+    if (s.level) s.level.fill(s.level[0]!);
   }
 
   // Particles: the bake keeps the velocity of every stored particle beside its place.

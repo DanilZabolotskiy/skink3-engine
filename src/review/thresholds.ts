@@ -30,6 +30,11 @@ export const THRESHOLDS = {
     unit: 'px',
     why: 'A node smaller than this on screen is a dot; its motion is not judged.',
   },
+  coverAlpha: {
+    value: 0.95,
+    unit: 'opacity',
+    why: 'A cover hides what is behind it from the review only while it is nearly opaque; through a fainter one a thing is still seen.',
+  },
 
   // --- Jump -------------------------------------------------------------------
   jumpPx: {

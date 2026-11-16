@@ -6,9 +6,20 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { sampleLid, sampleOpacity, samplePos, sampleReveal, sampleRot, sampleScale } from '../motion/tracks.ts';
+import {
+  sampleLevel,
+  sampleLid,
+  sampleOpacity,
+  samplePathTurn,
+  samplePos,
+  sampleReveal,
+  sampleRot,
+  sampleScale,
+  sampleStretch,
+  sampleTravelling,
+} from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
-import { reach } from '../shape/geometry.ts';
+import { outlineOf, reach } from '../shape/geometry.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
 import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
@@ -65,6 +76,82 @@ function reachOf(n: CNode, xf: Xf, dir: Vec2): number {
   return 0;
 }
 
+/** A shape with a level at one moment: how full it is and where its surface lies, in the space of its layer. */
+export interface LevelGeometry {
+  /** 0 = empty, 1 = full. */
+  readonly level: number;
+  /** The box around the shape's outline. */
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+  /** Height of the surface without its ripple. */
+  readonly flat: number;
+  /** The middle of the surface, ripple included: where the children of the shape ride. */
+  readonly cx: number;
+  readonly y: number;
+  /** The ripple: height, length of one wave, and how far it has run. */
+  readonly amp: number;
+  readonly length: number;
+  readonly phase: number;
+}
+
+/** Below this level a content is empty and is not drawn. */
+export const LEVEL_EMPTY = 1e-4;
+
+/**
+ * Where the surface of a shape with a level lies at time t. The surface is
+ * level in the layer's space whatever the shape's rotation: a content stays
+ * level when its vessel tilts.
+ */
+export function levelGeometry(n: CNode, xf: Xf, t: number): LevelGeometry {
+  const node = n.node;
+  if (node.type !== 'shape' || !node.level || !n.level) throw new Error(`"${n.id}" has no level`);
+  const level = Math.min(1, Math.max(0, sampleLevel(n.level, t)));
+  const cos = Math.cos(xf.rot) * xf.scale;
+  const sin = Math.sin(xf.rot) * xf.scale;
+  let left = Infinity;
+  let right = -Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const p of outlineOf(node.shape)) {
+    const x = xf.x + p[0] * cos - p[1] * sin;
+    const y = xf.y + p[0] * sin + p[1] * cos;
+    if (x < left) left = x;
+    if (x > right) right = x;
+    if (y < top) top = y;
+    if (y > bottom) bottom = y;
+  }
+  const flat = bottom - level * (bottom - top);
+  const wave = node.level.wave;
+  // The ripple dies out toward empty and toward full, so that 0 is empty and 1 is full.
+  const amp = wave ? wave.amp * xf.scale * Math.min(1, level / 0.06, (1 - level) / 0.06) : 0;
+  const length = wave ? wave.length * xf.scale : 1;
+  const phase = wave ? wave.speed * xf.scale * t : 0;
+  const cx = (left + right) / 2;
+  const y = amp > 0 ? flat + amp * Math.sin((2 * Math.PI * (cx - phase)) / length) : flat;
+  return { level, left, right, top, bottom, flat, cx, y, amp, length, phase };
+}
+
+/** The part of the layer below the surface, as a polygon: what a content with a level is clipped to. */
+export function levelClip(g: LevelGeometry): Vec2[] {
+  const pad = 4;
+  const x0 = g.left - pad;
+  const x1 = g.right + pad;
+  const out: Vec2[] = [];
+  if (g.amp <= 0) {
+    out.push([x0, g.flat], [x1, g.flat]);
+  } else {
+    const steps = Math.max(8, Math.min(512, Math.ceil(((x1 - x0) / g.length) * 20)));
+    for (let i = 0; i <= steps; i++) {
+      const x = x0 + ((x1 - x0) * i) / steps;
+      out.push([x, g.flat + g.amp * Math.sin((2 * Math.PI * (x - g.phase)) / g.length)]);
+    }
+  }
+  out.push([x1, g.bottom + pad], [x0, g.bottom + pad]);
+  return out;
+}
+
 /**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
@@ -73,6 +160,8 @@ function reachOf(n: CNode, xf: Xf, dir: Vec2): number {
 export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource): Xf[] {
   const t = frame / FPS;
   const out: Xf[] = new Array<Xf>(c.nodes.length).fill(XF_IDENTITY);
+  // The children of a shape with a level ride on its surface: their frame is the middle of the surface.
+  let surfaces: Map<number, Xf> | null = null;
 
   for (const n of c.nodes) {
     const node = n.node;
@@ -89,8 +178,9 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       x += node.idle.amp * n.idleNoise.n1(u);
       y += node.idle.amp * n.idleNoise.n1(u + 71.3);
     }
-    const parent = n.parent >= 0 ? out[n.parent]! : XF_IDENTITY;
-    const rot = sampleRot(n.rot!, t) * DEG;
+    const parent = n.parent >= 0 ? surfaces?.get(n.parent) ?? out[n.parent]! : XF_IDENTITY;
+    // A travel may turn the node: it rolls along its path, or faces along it.
+    const rot = (n.pos!.turns ? sampleRot(n.rot!, t) + samplePathTurn(n.pos!, t) : sampleRot(n.rot!, t)) * DEG;
     let xf = xfCompose(parent, { x, y, rot, scale });
     // An upright group keeps its own rotation, whatever it is attached to.
     if (node.type === 'group' && node.upright) xf = { ...xf, rot };
@@ -103,6 +193,10 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
     out[n.index] = xf;
+    if (n.level && n.subtreeEnd > n.index) {
+      const g = levelGeometry(n, xf, t);
+      (surfaces ??= new Map<number, Xf>()).set(n.index, { x: g.cx, y: g.y, rot: xf.rot, scale: xf.scale });
+    }
   }
 
   for (const n of c.nodes) {
@@ -130,6 +224,11 @@ export interface ShapeItem {
   readonly node: CNode;
   readonly xf: Xf;
   readonly alpha: number;
+  /**
+   * A shape with a level that is neither empty nor full: the polygon, in the
+   * layer's space, of everything below its surface. The shape is drawn inside it.
+   */
+  readonly level?: readonly Vec2[];
 }
 
 export interface EyeItem {
@@ -185,13 +284,40 @@ export interface GroupItem {
   readonly items: readonly Item[];
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | GroupItem;
-export type LeafItem = Exclude<Item, GroupItem>;
+/**
+ * Nodes that are drawn only inside the outline of a shape, together with
+ * everything inside them. `node` is that shape and `xf` its place at this
+ * frame; the shape itself is not drawn by this item.
+ */
+export interface ClipItem {
+  readonly kind: 'clip';
+  readonly node: CNode;
+  readonly xf: Xf;
+  /** When the shape is a content with a level that is not full: the polygon below its surface. The items are drawn inside both. */
+  readonly level?: readonly Vec2[];
+  readonly items: readonly Item[];
+}
 
-/** All items of a list with the groups opened up, in draw order. */
+/**
+ * A node that is being squashed or stretched, together with everything inside
+ * it: the picture is `height` times as high and 1 / `height` times as wide,
+ * about the point `at` of the layer.
+ */
+export interface StretchItem {
+  readonly kind: 'stretch';
+  readonly node: CNode;
+  readonly at: Vec2;
+  readonly height: number;
+  readonly items: readonly Item[];
+}
+
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | GroupItem | ClipItem | StretchItem;
+export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem>;
+
+/** All items of a list with the groups, clips and stretches opened up, in draw order. */
 export function flatItems(items: readonly Item[], out: LeafItem[] = []): LeafItem[] {
   for (const item of items) {
-    if (item.kind === 'group') flatItems(item.items, out);
+    if (item.kind === 'group' || item.kind === 'clip' || item.kind === 'stretch') flatItems(item.items, out);
     else out.push(item);
   }
   return out;
@@ -250,13 +376,19 @@ const OPAQUE = 0.998;
 function prune(items: readonly Item[]): Item[] {
   const out: Item[] = [];
   for (const item of items) {
-    if (item.kind !== 'group') out.push(item);
+    if (item.kind !== 'group' && item.kind !== 'clip' && item.kind !== 'stretch') out.push(item);
     else {
       const inner = prune(item.items);
       if (inner.length > 0) out.push({ ...item, items: inner });
     }
   }
   return out;
+}
+
+/** True while a rigid body that appears at its release still waits for it. */
+export function awaitsRelease(n: CNode, t: number): boolean {
+  const node = n.node;
+  return node.type === 'shape' && node.body !== null && node.body.kind === 'dynamic' && node.body.appear === 'release' && t < node.body.release - 1e-9;
 }
 
 /** How far a blink leaves an eye open at time t: 1 between blinks. */
@@ -278,6 +410,8 @@ export function opacities(c: CompiledShot, t: number): { own: Float64Array; alph
   const alpha = new Float64Array(c.nodes.length).fill(1);
   for (const n of c.nodes) {
     own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
+    // Not drawn at all: a node that shows only while it travels, outside its travel; a body that waits for its release.
+    if ((n.pos !== null && n.pos.onlyWhile && !sampleTravelling(n.pos, t)) || (n.bodySlot >= 0 && awaitsRelease(n, t))) own[n.index] = 0;
     alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
   }
   for (const n of c.nodes) {
@@ -320,6 +454,40 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         continue;
       }
       let items = open.length > 0 ? open[open.length - 1]!.items : root;
+      if (n.clipIndex >= 0) {
+        // Drawn only inside the outline of a shape. Neighbours clipped to the same shape share one clip.
+        const clipNode = c.nodes[n.clipIndex]!;
+        const last = items[items.length - 1];
+        let inner: Item[];
+        if (last && last.kind === 'clip' && last.node === clipNode) {
+          inner = last.items as Item[];
+        } else if (clipNode.level) {
+          // Clipped to a content: only its filled part holds anything.
+          const g = levelGeometry(clipNode, world[n.clipIndex]!, t);
+          if (g.level <= LEVEL_EMPTY) {
+            skipUntil = n.subtreeEnd;
+            continue;
+          }
+          inner = [];
+          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, level: levelClip(g), items: inner });
+          else items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, items: inner });
+        } else {
+          inner = [];
+          items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, items: inner });
+        }
+        open.push({ end: n.subtreeEnd, items: inner });
+        items = inner;
+      }
+      if (n.stretch) {
+        const s = sampleStretch(n.stretch, t);
+        if (s) {
+          const inner: Item[] = [];
+          // The pivot is measured from the node's origin in the layer's directions, in the node's units.
+          items.push({ kind: 'stretch', node: n, at: [xf.x + s.pivot[0] * xf.scale, xf.y + s.pivot[1] * xf.scale], height: s.height, items: inner });
+          open.push({ end: n.subtreeEnd, items: inner });
+          items = inner;
+        }
+      }
       if (own[index]! < OPAQUE) {
         const group: Item[] = [];
         items.push({ kind: 'group', node: n, opacity: own[index]!, items: group });
@@ -330,7 +498,17 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         case 'group':
           break;
         case 'shape':
-          if (xf.scale > HIDDEN) items.push({ kind: 'shape', node: n, xf, alpha: a });
+          if (xf.scale <= HIDDEN) break;
+          if (n.level) {
+            // A content: nothing of it while it is empty, all of it when it is full, else the part below its surface.
+            const g = levelGeometry(n, xf, t);
+            if (g.level <= LEVEL_EMPTY) break;
+            if (g.level < 1 - 1e-6) {
+              items.push({ kind: 'shape', node: n, xf, alpha: a, level: levelClip(g) });
+              break;
+            }
+          }
+          items.push({ kind: 'shape', node: n, xf, alpha: a });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;

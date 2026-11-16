@@ -11,8 +11,9 @@ import { atmosphereTone, lightTone, shadowTone, withAlpha } from '../look/color.
 import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
-import type { EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem } from '../scene/evaluate.ts';
+import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode } from '../scene/types.ts';
+import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 
@@ -68,8 +69,59 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number): Paint 
   return paint;
 }
 
-/** A shape with its automatic light. */
+/** The outline of a shape as a path in the space of its layer. */
+export function placedPath(item: { readonly node: { readonly node: unknown }; readonly xf: ShapeItem['xf'] }): Path2D {
+  const { xf } = item;
+  const cos = Math.cos(xf.rot) * xf.scale;
+  const sin = Math.sin(xf.rot) * xf.scale;
+  return shapePath((item.node.node as ShapeNode).shape).transform(cos, sin, -sin, cos, xf.x, xf.y);
+}
+
+function polygonPath(points: readonly Vec2[], upTo = points.length): Path2D {
+  const p = new Path2D();
+  for (let i = 0; i < upTo; i++) {
+    if (i === 0) p.moveTo(points[i]![0], points[i]![1]);
+    else p.lineTo(points[i]![0], points[i]![1]);
+  }
+  return p;
+}
+
+/** Narrows what is drawn next to the outline of a shape; for a content with a level, to its filled part. */
+export function clipToShape(ctx: CanvasRenderingContext2D, item: ClipItem): void {
+  ctx.clip(placedPath(item));
+  if (item.level) {
+    const below = polygonPath(item.level);
+    below.closePath();
+    ctx.clip(below);
+  }
+}
+
+/** A shape with its automatic light. A content with a level is drawn below its surface only. */
 export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
+  if (!item.level) {
+    fillShape(ctx, item, paint);
+    return;
+  }
+  const node = item.node.node as ShapeNode;
+  const below = polygonPath(item.level);
+  below.closePath();
+  ctx.save();
+  ctx.clip(below);
+  fillShape(ctx, item, paint);
+  if (node.lit) {
+    // The surface catches the light: a pale line along it, inside the shape.
+    ctx.clip(placedPath(item));
+    const width = Math.max(2, Math.min(5, shapeExtent(node.shape).inner * 0.06)) * item.xf.scale;
+    ctx.strokeStyle = paint.tone('rim', item.node.colors['fill']!);
+    // Half of the stroke lies above the surface, where nothing is drawn.
+    ctx.lineWidth = 2 * width;
+    ctx.lineJoin = 'round';
+    ctx.stroke(polygonPath(item.level, item.level.length - 2));
+  }
+  ctx.restore();
+}
+
+function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
   const node = item.node.node as ShapeNode;
   const { xf } = item;
   const base = item.node.colors['fill']!;
@@ -109,10 +161,37 @@ export function drawShapeGlow(ctx: CanvasRenderingContext2D, item: ShapeItem, pa
   const node = item.node.node as ShapeNode;
   const { xf } = item;
   ctx.save();
+  if (item.level) {
+    const below = polygonPath(item.level);
+    below.closePath();
+    ctx.clip(below);
+  }
   ctx.translate(xf.x, xf.y);
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
   ctx.fillStyle = withAlpha(paint.tone('glow', item.node.colors['fill']!), node.glow * item.alpha);
+  ctx.fill(shapePath(node.shape));
+  ctx.restore();
+}
+
+/**
+ * Takes out of the halo what lies behind a cover: the shape of the cover is
+ * erased from the glow drawn so far, as far as the cover is opaque.
+ */
+export function eraseGlow(ctx: CanvasRenderingContext2D, item: ShapeItem): void {
+  const node = item.node.node as ShapeNode;
+  const { xf } = item;
+  ctx.save();
+  if (item.level) {
+    const below = polygonPath(item.level);
+    below.closePath();
+    ctx.clip(below);
+  }
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  ctx.fillStyle = `rgba(0,0,0,${Math.min(1, Math.max(0, item.alpha)).toFixed(4)})`;
   ctx.fill(shapePath(node.shape));
   ctx.restore();
 }

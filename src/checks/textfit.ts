@@ -163,6 +163,8 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
           for (const other of leaves) {
             if (other.kind !== 'shape' && other.kind !== 'eye') continue;
             if (other.alpha < NODE_ALPHA || skip.has(other.node.index)) continue;
+            // A backdrop (ground, a wall) is there to have things in front of it.
+            if (other.kind === 'shape' && other.node.node.type === 'shape' && other.node.node.backdrop === true) continue;
             const poly = nodeOutline(other);
             if (!poly || !covers(inner, poly)) continue;
             const key = `${item.node.id}\u0000${other.node.id}`;

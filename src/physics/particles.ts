@@ -17,6 +17,21 @@ export function sizeOverLife(a: number): number {
   return grow * (1 - x * x * (3 - 2 * x));
 }
 
+/** Share of its life a steady particle takes to swell at the start and to shrink at the end. */
+export const STEADY_EDGE = 0.08;
+
+/**
+ * Radius of a steady particle over its life (0..1): full size for nearly all
+ * of it, with a short swell and a short shrink at the ends. For particles that
+ * carry something across the frame: a stream, a drift of motes.
+ */
+export function steadySizeOverLife(a: number): number {
+  if (a <= 0 || a >= 1) return 0;
+  const edge = Math.min(a, 1 - a) / STEADY_EDGE;
+  if (edge >= 1) return 1;
+  return edge * edge * (3 - 2 * edge);
+}
+
 export interface EmitterResult {
   /** frames + 1 offsets (in particles) into `data`. */
   readonly index: Uint32Array;
@@ -40,6 +55,7 @@ export function simulateEmitter(
   const rng = new Rng(seed, `particles/${spec.id}`);
   const field = spec.turbulence ? new Noise(seed, `turbulence/${spec.id}`) : null;
   const nColors = spec.colors.length;
+  const steady = spec.sizing === 'steady';
 
   // Structure of arrays; dead particles are compacted in birth order.
   const px: number[] = [];
@@ -137,7 +153,7 @@ export function simulateEmitter(
     const vel = new Float32Array(n * PARTICLE_VELOCITY_STRIDE);
     let m = 0;
     for (let i = 0; i < n; i++) {
-      const r = size[i]! * sizeOverLife(age[i]! / life[i]!);
+      const r = size[i]! * (steady ? steadySizeOverLife(age[i]! / life[i]!) : sizeOverLife(age[i]! / life[i]!));
       if (r <= 0.05) continue;
       rec[m * PARTICLE_STRIDE] = px[i]!;
       rec[m * PARTICLE_STRIDE + 1] = py[i]!;

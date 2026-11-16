@@ -85,6 +85,8 @@ Things that are legitimate and are not flagged:
 - **A way out.** A body that falls through a gap wider than itself took a way that was open.
 - **What is not seen.** A body that is faded out, has no size or is outside the frame is not reported, whatever it does. Only broken numbers are reported regardless.
 - **Walls that are not drawn.** A fixed body with `opacity: 0` is the usual way to give a container that is drawn by other shapes something to hold its contents. Resting on it, or bouncing off it, is not a hit by something unseen; only dynamic bodies count for that. A dynamic body that is merely outside the frame is a thing too.
+- **A body that waits unseen for its release.** With `appear: 'release'` a body is not drawn until the solver takes it over. Before that it is not in the world: it touches nothing, so it is not a body that is not drawn, and the simulation is the same as without the option. From its release on it is judged like any other body.
+- **Things that are not bodies.** A node moved by `travel`, `hop` or `moveTo`, and a content with a `level`, are not in the simulation: they pass through bodies without touching them, and nothing here speaks of them. Their motion is the motion review's.
 
 ### What applies to what
 
@@ -207,6 +209,7 @@ export default shot({
 | a new solver or a new kind of simulated thing (fluids, flocks, particle collisions) | the detectors that apply are extended to it, and the failure modes that are new get a kind of finding of their own |
 | a new constraint or setting that changes what is sound (a kinematic hand-off, a goal force, restitution above 1) | the detectors that it makes wrong are corrected, and a sound scene that uses it joins the tests |
 | a new source of speed (a force field, a motor, wind on bodies) | the energy check learns it, so that it is not reported as speed from nowhere |
+| a new way for a body to be drawn or not (as `appear: 'release'`: not drawn before its release) | what counts as seen follows it, and a sound scene and a planted defect with it join the tests |
 
 Each such change comes with a planted defect that the review catches and a sound scene that it leaves alone, in `test/physics-review.test.ts`, and with the rows of this guide that it changes. A kind of finding without a test that plants its defect is a blind spot; a finding on a sound shot is a false one. Both are bugs of the review.
 

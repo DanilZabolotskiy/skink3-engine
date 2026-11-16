@@ -25,7 +25,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test",
-    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts",
+    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts && node bin/skink3.mjs check examples/flow/scene.ts",
     "demo:check": "node bin/skink3.mjs check examples/demo/scene.ts",
     "demo:bake": "node bin/skink3.mjs bake examples/demo/scene.ts",
     "demo:still": "node bin/skink3.mjs still examples/demo/scene.ts --frame 450",
@@ -33,6 +33,9 @@
     "demo:sheet": "node bin/skink3.mjs sheet examples/demo/scene.ts",
     "demo:render": "node bin/skink3.mjs render examples/demo/scene.ts",
     "demo:motion": "node bin/skink3.mjs motion examples/demo/scene.ts --pictures",
+    "flow:check": "node bin/skink3.mjs check examples/flow/scene.ts",
+    "flow:sheet": "node bin/skink3.mjs sheet examples/flow/scene.ts",
+    "flow:render": "node bin/skink3.mjs render examples/flow/scene.ts",
     "bench:render": "node bench/render.mjs 1920 gpu 20",
     "bench:phys": "node bench/phys.mjs"
   },

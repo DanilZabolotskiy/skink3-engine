@@ -127,7 +127,9 @@ test('stagger: one key per node, each later than the previous', () => {
   const centre = stagger(['a', 'b', 'c'], { at: 0, each: 1, order: 'center-out' }, (id, at) => [popIn(id, { at }), bump(id, { at: at + 1 })]);
   assert.equal(centre.length, 6);
   assert.deepEqual(centre.filter((k) => k.kind === 'popIn').map((k) => k.at), [1, 0, 1]);
-  assert.throws(() => moveTo('a', { at: -1, to: [0, 0] }), /at must be/);
+  // A key may start before the shot does (its move is then under way at frame 0), but not without limit.
+  assert.equal(moveTo('a', { at: -1, to: [0, 0] }).at, -1);
+  assert.throws(() => moveTo('a', { at: -601, to: [0, 0] }), /at must be/);
   assert.throws(() => moveTo('a', { at: 1, to: [0] as never }), /to must be/);
   assert.throws(() => popIn('', { at: 1 }), /id of the node/);
 });

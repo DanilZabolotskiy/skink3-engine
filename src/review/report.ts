@@ -43,7 +43,27 @@ export interface MotionReport {
     readonly driftPx: number;
     readonly zoomFrom: number;
     readonly zoomTo: number;
+    /** Slowest and fastest travel per frame in px at depth 0 (the 5th and the 95th percentile). */
+    readonly driftMinPx: number;
+    readonly driftMaxPx: number;
+    /** Length of the camera's path over the shot, in px at depth 0. */
+    readonly travelPx: number;
+    /** Width and height of the box the camera's centre stays in, in px at depth 0: how far a subject slides across the frame. */
+    readonly spanPx: readonly [number, number];
   };
+  /**
+   * The depth layers, farthest first: how fast each slides across the screen
+   * with the camera (median px per frame). Layers that move at different
+   * speeds are what gives the picture depth.
+   */
+  readonly layers: readonly { readonly id: string; readonly depth: number; readonly parallax: number; readonly driftPx: number }[];
+  /**
+   * The emitters: how many particles are in frame and how fast they travel on
+   * their own (medians over the frames in which the emitter has particles in
+   * frame, the camera left out), and the share of those frames in which they
+   * move at all. Particles that stand still are a dead background.
+   */
+  readonly particles: readonly { readonly id: string; readonly layer: string; readonly inFrame: number; readonly speedPx: number; readonly movingShare: number }[];
   /** The warnings, worst first. */
   readonly findings: readonly Finding[];
   /** Number of warnings by kind (kinds without any are left out). */
@@ -108,6 +128,59 @@ export function buildReport(series: MotionSeries): MotionReport {
   }
   const r3 = (v: number): number => Math.round(v * 1000) / 1000;
 
+  // The camera's path: how far it goes, and the box its centre stays in.
+  let travel = 0;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  let zoomSum = 0;
+  for (let f = 0; f < series.frames; f++) {
+    zoomSum += series.camera.zoom[f]!;
+    x0 = Math.min(x0, series.camera.x[f]!);
+    x1 = Math.max(x1, series.camera.x[f]!);
+    y0 = Math.min(y0, series.camera.y[f]!);
+    y1 = Math.max(y1, series.camera.y[f]!);
+  }
+  // The box in px: the camera's range in units at the mean zoom of the shot.
+  const meanZoom = zoomSum / series.frames;
+  x0 *= meanZoom;
+  x1 *= meanZoom;
+  y0 *= meanZoom;
+  y1 *= meanZoom;
+  for (const d of drift) travel += d;
+  const sortedDrift = drift.slice().sort((a, b) => a - b);
+  const pct = (p: number): number => (sortedDrift.length === 0 ? 0 : sortedDrift[Math.min(sortedDrift.length - 1, Math.floor(p * sortedDrift.length))]!);
+
+  // How fast each layer slides across the screen: the camera's travel as that layer sees it.
+  const layers = c.layers
+    .map((layer, li) => {
+      const v = series.views[li]!;
+      const steps: number[] = [];
+      for (let f = 1; f < series.frames; f++) steps.push(Math.hypot(v.tx[f]! - v.tx[f - 1]!, v.ty[f]! - v.ty[f - 1]!));
+      return { id: layer.spec.id, depth: layer.spec.depth, parallax: r3(layer.parallax), driftPx: r3(median(steps)) };
+    })
+    .sort((a, b) => b.depth - a.depth);
+
+  const particles = series.emitters.map((e) => {
+    const speeds: number[] = [];
+    const counts: number[] = [];
+    let moving = 0;
+    for (let f = 0; f < series.frames; f++) {
+      if (e.count[f]! === 0) continue;
+      speeds.push(e.medianSpeed[f]!);
+      counts.push(e.count[f]!);
+      if (e.medianSpeed[f]! >= T.alivePx) moving++;
+    }
+    return {
+      id: e.id,
+      layer: c.layers[e.node.layer]!.spec.id,
+      inFrame: median(counts),
+      speedPx: r3(median(speeds)),
+      movingShare: speeds.length === 0 ? 0 : r3(moving / speeds.length),
+    };
+  });
+
   return {
     version: 1,
     shot: c.spec.id,
@@ -121,7 +194,17 @@ export function buildReport(series: MotionSeries): MotionReport {
       emitters: c.emitters.length,
       links: series.links.length,
     },
-    camera: { driftPx: r3(median(drift)), zoomFrom: r3(series.camera.zoom[0]!), zoomTo: r3(series.camera.zoom[series.frames - 1]!) },
+    camera: {
+      driftPx: r3(median(drift)),
+      zoomFrom: r3(series.camera.zoom[0]!),
+      zoomTo: r3(series.camera.zoom[series.frames - 1]!),
+      driftMinPx: r3(pct(0.05)),
+      driftMaxPx: r3(pct(0.95)),
+      travelPx: r3(travel),
+      spanPx: [r3(Math.max(0, x1 - x0)), r3(Math.max(0, y1 - y0))],
+    },
+    layers,
+    particles,
     findings,
     byKind,
     honoured,
@@ -200,6 +283,19 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
   lines.push(summaryLine(report));
   const ex = exceptionsLine(report);
   if (ex) lines.push(ex);
+  // The life of the background: the camera's path, the layers against each other, the particles.
+  const cam = report.camera;
+  lines.push(
+    `camera path: ${cam.travelPx.toFixed(0)} px long, inside a box of ${cam.spanPx[0].toFixed(0)} x ${cam.spanPx[1].toFixed(0)} px; drift between ${cam.driftMinPx.toFixed(2)} and ${cam.driftMaxPx.toFixed(2)} px per frame`,
+  );
+  if (report.layers.length > 1) lines.push(`layers, farthest first: ${report.layers.map((l) => `${l.id} ${l.driftPx.toFixed(2)}`).join(', ')} px per frame`);
+  if (report.particles.length > 0) {
+    lines.push(
+      `particles: ${report.particles
+        .map((p) => (p.inFrame === 0 ? `${p.id} never in frame` : `${p.id} ${p.speedPx.toFixed(2)} px per frame (${p.inFrame} in frame, moving ${Math.round(100 * p.movingShare)} % of the time)`))
+        .join('; ')}`,
+    );
+  }
 
   // Group by subject, keeping the order of severity.
   const groups = new Map<string, Finding[]>();

@@ -11,20 +11,40 @@ import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
-import type { BumpKey, DrawOnKey, FadeToKey, Key, MoveToKey, OpenToKey, PopInKey, PopOutKey, PulseKey, ScaleToKey, TurnToKey } from '../motion/intents.ts';
+import type {
+  BumpKey,
+  DrawOnKey,
+  FadeToKey,
+  HopKey,
+  Key,
+  LevelToKey,
+  MoveToKey,
+  OpenToKey,
+  PopInKey,
+  PopOutKey,
+  PulseKey,
+  ScaleToKey,
+  SquashKey,
+  TravelKey,
+  TurnToKey,
+} from '../motion/intents.ts';
 import {
+  buildLevelTrack,
   buildLidTrack,
   buildLinkTrack,
   buildOpacityTrack,
   buildPosTrack,
   buildRotTrack,
   buildScaleTrack,
+  buildStretchTrack,
+  type LevelTrack,
   type LidTrack,
   type LinkTrack,
   type OpacityTrack,
   type PosTrack,
   type RotTrack,
   type ScaleTrack,
+  type StretchTrack,
 } from '../motion/tracks.ts';
 import { resolveString } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
@@ -48,6 +68,12 @@ export interface CNode {
   readonly link: LinkTrack | null;
   /** Eyes: how far the lids are open over time. */
   readonly lid: LidTrack | null;
+  /** Shapes with a level: how full they are over time. */
+  readonly level: LevelTrack | null;
+  /** Squashes and stretches, or null when the node has none. */
+  readonly stretch: StretchTrack | null;
+  /** Index of the shape this node is clipped to, or -1. */
+  readonly clipIndex: number;
   /** Slot in the bake, or -1. */
   readonly bodySlot: number;
   readonly springSlot: number;
@@ -100,6 +126,10 @@ export interface CompiledShot {
   readonly stringKeys: readonly string[];
   /** Hash of everything that can influence the bake. */
   readonly sceneHash: string;
+  /** Node indices of the shapes marked as covers, in draw order; empty in a shot without any. */
+  readonly covers: readonly number[];
+  /** True when some node is clipped to a shape. */
+  readonly clips: boolean;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' }>;
@@ -186,7 +216,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   };
 
   // 2. Sort the timeline by target.
-  const moves = new Map<number, MoveToKey[]>();
+  const moves = new Map<number, (MoveToKey | HopKey | TravelKey)[]>();
+  const levels = new Map<number, LevelToKey[]>();
+  const squashes = new Map<number, SquashKey[]>();
   const turns = new Map<number, TurnToKey[]>();
   const popIns = new Map<number, PopInKey[]>();
   const popOuts = new Map<number, PopOutKey[]>();
@@ -216,6 +248,25 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         need(isPlaced(node), 'shapes, groups and eyes');
         if (node.type === 'shape' && node.body) fail(`${where}: moveTo cannot target "${node.id}": a rigid body is moved by the physics bake`);
         push(moves, index, key);
+        break;
+      case 'hop':
+      case 'travel':
+        need(isPlaced(node), 'shapes, groups and eyes');
+        if (node.type === 'shape' && node.body) fail(`${where}: ${key.kind} cannot target "${node.id}": a rigid body is moved by the physics bake`);
+        if (key.kind === 'travel' && (key.roll !== null || key.orient) && node.type === 'eye') {
+          fail(`${where}: travel("${node.id}") cannot roll or orient an eye: an eye does not turn; put it in a group and move that`);
+        }
+        push(moves, index, key);
+        break;
+      case 'levelTo':
+        if (node.type !== 'shape' || !node.level) {
+          fail(`${where}: levelTo cannot target ${node.type} "${node.id}"; it applies to a shape with a level (give the shape the option level)`);
+        }
+        push(levels, index, key);
+        break;
+      case 'squash':
+        need(isPlaced(node), 'shapes, groups and eyes');
+        push(squashes, index, key);
         break;
       case 'turnTo':
         need(node.type === 'shape' || node.type === 'group', 'shapes and groups');
@@ -295,6 +346,17 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     let springSpec = null;
     let blinks: number[] = [];
     let idleNoise: Noise | null = null;
+    let clipIndex = -1;
+
+    if (node.type !== 'label' && node.type !== 'eye' && node.clipTo) {
+      const index = idIndex.get(node.clipTo);
+      if (index === undefined) fail(`${where}: ${node.type} "${node.id}" clipTo refers to "${node.clipTo}", which does not exist (nodes: ${known()})`);
+      const other = drafts[index]!;
+      if (other.node.type !== 'shape') fail(`${where}: ${node.type} "${node.id}" clipTo refers to ${other.node.type} "${node.clipTo}"; it must be a shape`);
+      if (other.layer !== d.layer) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${node.clipTo}", must be in the same layer`);
+      if (index >= d.index && index <= d.subtreeEnd) fail(`${where}: ${node.type} "${node.id}" cannot be clipped to itself or to something inside it ("${node.clipTo}")`);
+      clipIndex = index;
+    }
 
     switch (node.type) {
       case 'shape':
@@ -401,6 +463,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (isPlaced(node)) {
         pos = buildPosTrack(node.id, node.at, moves.get(d.index) ?? []);
         rot = buildRotTrack(node.id, node.rotation, turns.get(d.index) ?? []);
+        if (pos.turns && rot.segs.length > 0) {
+          fail(`"${node.id}" has a travel that rolls or orients it and a turnTo; a node is turned by one or the other`);
+        }
       }
       if (isPlaced(node) || node.type === 'label') {
         scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? [], scales.get(d.index) ?? []);
@@ -425,6 +490,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       scale,
       link: linkTrack,
       lid: node.type === 'eye' ? buildLidTrack(node.open, opens.get(d.index) ?? []) : null,
+      level: node.type === 'shape' && node.level ? buildLevelTrack(node.level.at, levels.get(d.index) ?? []) : null,
+      stretch: squashes.has(d.index) ? buildStretchTrack(squashes.get(d.index)!) : null,
+      clipIndex,
       bodySlot,
       springSlot,
       emitterSlot,
@@ -496,6 +564,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     atmosphere: resolveColorOrFail(palette, spec.atmosphere, `${where} atmosphere`),
     stringKeys: [...stringKeys],
     sceneHash,
+    covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
+    clips: nodes.some((n) => n.clipIndex >= 0),
   };
 }
 

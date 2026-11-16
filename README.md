@@ -8,7 +8,7 @@ A code-first engine for animated science-explainer videos in a flat-vector style
 
 In this genre, every movement on screen is usually keyframed by hand by a team of animators: anticipation, arcs, overshoot, parts that lag behind, soft impacts, everything a little slower than real life. The engine computes that motion instead of asking anyone to key it:
 
-- **Intent → motion.** A scene says *what* happens ("this node moves there at 6.5 s"). The engine adds what an animator would: a short anticipation, a curved path, overshoot and settle, parts that lag behind on springs, staggered reactions of neighbours, idle drift.
+- **Intent → motion.** A scene says *what* happens ("this node moves there at 6.5 s"). The engine adds what an animator would: a short anticipation, a curved path, overshoot and settle, parts that lag behind on springs, staggered reactions of neighbours, idle drift. Where the shape of the motion is the point, the scene picks it: one speed along a free-form path for a flow, a hop with a known take-off and landing, a level that rises in a vessel.
 - **Physics where it helps.** Rigid bodies and particles today; soft bodies, ropes, flocks and simple fluids are planned. All of it is deterministic and tuned for readability rather than realism (lower gravity, more drag, softer impacts).
 - **Light, not drawing.** One light per shot. The engine builds shadow crescents (a shape minus its shifted copy), lit rims, highlight strokes, stacked shadows and glow from the shape itself.
 - **Motion that can be reviewed without watching.** An agent cannot watch a video play. The engine knows every node at every frame, so it reports jumps, missing ease, mechanical moves, strobing speed, springs that ring and dead areas of the frame as text, and draws time into single pictures: ghost trails and speed graphs. See [docs/MOTION-REVIEW.md](docs/MOTION-REVIEW.md).
@@ -54,7 +54,7 @@ node bin/skink3.mjs graph examples/demo/scene.ts --node n2       # speed graph o
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
 
-How to write a scene: [docs/SCENES.md](docs/SCENES.md). The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts).
+How to write a scene: [docs/SCENES.md](docs/SCENES.md). The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift.
 
 ### Using the engine from another repository
 
@@ -128,16 +128,16 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/core` | time base (60 fps, 1/240 s simulation step), seeded random with named streams, easing, second-order dynamics, seeded noise, stable hashing |
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
 | `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
-| `src/scene` | scene description types, factory functions, compiler (validation, tracks, bake slots), pure evaluation of a frame |
-| `src/motion` | intents (`moveTo`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `bump`, `drawOn`, `pulse`, `openTo`, `blink`), `stagger`, the curves behind them |
+| `src/scene` | scene description types, factory functions (shapes as covers, backdrops, clips and contents with a level), compiler (validation, tracks, bake slots), pure evaluation of a frame |
+| `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `pulse`, `openTo`, `blink`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
-| `src/camera` | drift, push-in, parallax view of a depth layer |
-| `src/text` | string tables, bundled font, auto-fit layout, label geometry |
+| `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
+| `src/text` | string tables, bundled font, auto-fit layout, label geometry, subtitles from word timings (.srt, .vtt, .ytt) |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
 | `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
 | `src/cli`, `bin/` | the `skink3` command |
-| `examples/` | the demo shot and a minimal scene |
+| `examples/` | the demo shot, the flow shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
 | `assets/fonts/` | the bundled font family with its licence |
 | `bench/` | drawing and physics benchmarks |
@@ -149,10 +149,10 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | Phase | Scope | Done when | State |
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
-| 1 | Core picture: more node types, palettes from a mood, camera (spring follow, zoom through scales), bubbles, titles and counters, full script coverage with fallback fonts, transitions (the motion review and the physics review are built) | three reference shots (dark, light, microscopic) | next |
-| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search, sound from impact events | one demo shot per layer | planned |
+| 1 | Core picture: more node types, palettes from a mood, camera (spring follow, zoom through scales), bubbles, titles and counters, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths, covers, clipping and levels are built) | three reference shots (dark, light, microscopic) | next |
+| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search, sound from impact events (speed profiles, hops, travel along free-form paths and squashes are built) | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
-| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language | a complete video | planned |
+| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings are built) | a complete video | planned |
 
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

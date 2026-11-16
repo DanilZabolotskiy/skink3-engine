@@ -103,9 +103,16 @@ function wrap(words: readonly string[], size: number, weight: number, maxWidth: 
   return { lines, widths };
 }
 
+/**
+ * Where a line may break: at ordinary white space. A no-break space (U+00A0),
+ * a narrow no-break space (U+202F) and a figure space (U+2007) keep the words
+ * on both sides of them on one line.
+ */
+const BREAKABLE = /[ \t\n\r\f\v]+/;
+
 /** Lays a string out within the style's limits, shrinking the font if it has to. */
 export function layoutText(text: string, style: TextStyle): TextLayout {
-  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  const words = text.trim().split(BREAKABLE).filter((w) => w.length > 0);
   const make = (size: number, lines: string[], widths: number[], reason: string | null): TextLayout => ({
     lines,
     widths,

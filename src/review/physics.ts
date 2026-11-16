@@ -25,7 +25,7 @@ import { FPS, SUBSTEPS } from '../core/time.ts';
 import { sampleOpacity, sampleScale } from '../motion/tracks.ts';
 import { BODY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { HIDDEN } from '../scene/evaluate.ts';
+import { awaitsRelease, HIDDEN } from '../scene/evaluate.ts';
 import { PHYSICS_FINDING_KINDS, STAGE_H, STAGE_W, type IntendedSpec, type PhysicsFindingKind } from '../scene/types.ts';
 import { colliderOf, depthOfPoint, pathInside, placeCore, segmentsCross, separation, type Collider, type Nearest } from './collide.ts';
 import { P, PHYSICS_THRESHOLDS } from './physics-thresholds.ts';
@@ -346,7 +346,8 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       const t = f / FPS;
       const alpha = n.opacity ? sampleOpacity(n.opacity, t) : 1;
       const k = n.scale ? sampleScale(n.scale, t) : 1;
-      if (alpha < P.seenAlpha || authored * k <= HIDDEN) continue;
+      // A body that appears at its release is not drawn while it waits for it.
+      if (alpha < P.seenAlpha || authored * k <= HIDDEN || awaitsRelease(n, t)) continue;
       drawn[f * N + b.slot] = 1;
       const z = zoom[f]!;
       const sx = X(f, b.slot) * z + tx[f]!;

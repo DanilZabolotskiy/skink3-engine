@@ -34,7 +34,7 @@ import { reach, shapeExtent } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'particles' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'particles' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -114,7 +114,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -185,6 +185,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   position: { moved: 'moved', what: 'position' },
   rotation: { moved: 'turned by', what: 'rotation (travel of its edge)' },
   scale: { moved: 'changed size by', what: 'scale (travel of its edge)' },
+  level: { moved: 'moved', what: 'level (travel of its surface)' },
 };
 
 
@@ -262,7 +263,36 @@ function bumpOnsets(c: CompiledShot, index: number): Set<number> {
   return out;
 }
 
-function abrupt(subject: string, ch: Chan, st: Steps, frames: number, onsets: ReadonlySet<number>, out: Finding[]): void {
+/**
+ * Frames at which a hop of the node takes off, and at which it lands, with the
+ * frame on either side. A hop leaves the ground at speed and comes down at
+ * speed: that is what a jump is, so neither end is an abrupt start or stop.
+ */
+function hopEdges(c: CompiledShot, index: number): { launches: Set<number>; landings: Set<number> } {
+  const launches = new Set<number>();
+  const landings = new Set<number>();
+  for (const seg of c.nodes[index]!.pos?.segs ?? []) {
+    if (seg.kind !== 'hop') continue;
+    const a = Math.ceil(seg.at * FPS - 1e-6);
+    const b = Math.floor((seg.at + seg.dur) * FPS + 1e-6);
+    for (const d of [-1, 0, 1, 2]) launches.add(a + d);
+    for (const d of [-2, -1, 0, 1]) landings.add(b + d);
+  }
+  return { launches, landings };
+}
+
+const NO_FRAMES: ReadonlySet<number> = new Set<number>();
+
+function abrupt(
+  subject: string,
+  ch: Chan,
+  st: Steps,
+  frames: number,
+  onsets: ReadonlySet<number>,
+  out: Finding[],
+  launches: ReadonlySet<number> = NO_FRAMES,
+  landings: ReadonlySet<number> = NO_FRAMES,
+): void {
   const { seen, inFrame } = st;
   const words = CHANNEL_WORDS[ch.name];
   // Starts: step f is the first of a move; steps f - 1 and f - 2 are rest.
@@ -281,6 +311,8 @@ function abrupt(subject: string, ch: Chan, st: Steps, frames: number, onsets: Re
     if (reached < T.abruptPeakShare * peak) continue;
     // A bump is a hit: its sudden start is the point. It may be the first or the second step of the start.
     if (onsets.has(f) || onsets.has(f + 1)) continue;
+    // So is the take-off of a hop.
+    if (launches.has(f)) continue;
     // So is any other kick: an excursion that comes back.
     let cx = 0;
     let cy = 0;
@@ -316,6 +348,8 @@ function abrupt(subject: string, ch: Chan, st: Steps, frames: number, onsets: Re
       peak = Math.max(peak, ch.d[begin]!);
     }
     if (reached < T.abruptPeakShare * peak) continue;
+    // A hop lands at speed.
+    if (landings.has(f)) continue;
     out.push(
       finding('abrupt-stop', subject, ch.name, Math.max(begin - 1, f - 2), f, reached, T.abruptMinPx, 'px per frame',
         `${words.what}: still at ${reached.toFixed(1)} px per frame two frames before rest (frames ${f - 2}-${f}), ${Math.round((100 * reached) / peak)} % of the peak speed of the move (limit ${Math.round(100 * T.abruptPeakShare)} %)`),
@@ -567,13 +601,31 @@ export function detectMotion(series: MotionSeries): Finding[] {
 
     {
       const onsets = bumpOnsets(c, s.node.index);
+      const hops = hopEdges(c, s.node.index);
       const eased: Finding[] = [];
       const flat: Finding[] = [];
       st.channels.forEach((ch, i) => {
         if ((s.solver && ch !== scl) || st.largest[i]! < quiet) return;
-        abrupt(s.id, ch, st, F, onsets, eased);
+        if (ch === pos) abrupt(s.id, ch, st, F, onsets, eased, hops.launches, hops.landings);
+        else abrupt(s.id, ch, st, F, onsets, eased);
         mechanical(s.id, ch, st, s, F, flat);
       });
+      // A content with a level: the travel of its surface is judged like a move.
+      if (s.level) {
+        const lvl = chan('level', F);
+        const zoomOf = series.views[s.node.layer]!.zoom;
+        let largest = 0;
+        for (let f = 1; f < F; f++) {
+          lvl.b[f] = (s.level[f]! - s.level[f - 1]!) * zoomOf[f]!;
+          lvl.d[f] = Math.abs(lvl.b[f]!);
+          if (lvl.d[f]! > largest) largest = lvl.d[f]!;
+        }
+        if (largest >= quiet) {
+          jumps(s.id, lvl, okSeen, F, mine);
+          abrupt(s.id, lvl, st, F, NO_FRAMES, eased);
+          mechanical(s.id, lvl, st, s, F, flat);
+        }
+      }
       // A constant-speed move starts and stops abruptly by nature, and a jump is
       // a start and a stop at once: one finding says it.
       const leaps = mine.filter((j) => j.kind === 'jump');

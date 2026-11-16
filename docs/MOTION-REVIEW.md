@@ -52,13 +52,37 @@ springs: 8 spring-driven node(s), 8 responded
   buddy-ant-r (sway, f 2.1, z 0.22, r 0): 3 response(s); at most: lag 49.0 px, overshoot 18.6 px, 4 visible swing(s), swinging for 0.95 s, settled after 1.27 s
 ```
 
+### The life of the background
+
+Whether a picture feels alive is mostly a matter of its background: a camera that barely moves, layers that slide as one, motes that stand still. No finding says that, so the report states it in numbers, findings or not. After the summary line (`examples/flow/scene.ts`):
+
+```
+camera: median drift 0.46 px per frame at depth 0, zoom 1 to 1.05
+no warnings
+camera path: 279 px long, inside a box of 170 x 70 px; drift between 0.43 and 0.51 px per frame
+layers, farthest first: far 0.18, stage 0.46, near 0.94 px per frame
+particles: motes 0.40 px per frame (51 in frame, moving 100 % of the time); fizz 0.66 px per frame (34 in frame, moving 100 % of the time)
+```
+
+| In the JSON report | Meaning | What to look for |
+|---|---|---|
+| `camera.driftPx` | median travel of the camera per frame, in px at depth 0 | the norm is 0.3 to 0.7; below it the picture stands |
+| `camera.driftMinPx`, `camera.driftMaxPx` | the 5th and the 95th percentile of that travel | a minimum near 0 is a camera that stops (the turn of an open path, an eased end) |
+| `camera.zoomFrom`, `camera.zoomTo` | the push-in | a few percent over a shot |
+| `camera.travelPx` | length of the camera's path over the shot | |
+| `camera.spanPx` | width and height of the box the camera's centre stays in | how far a subject slides across the frame; on one heading it equals the travel, on a loop it is the size of the loop |
+| `layers[]`: `id`, `depth`, `parallax`, `driftPx` | how fast each depth layer slides across the screen, farthest first | the layers should differ: that is what gives depth |
+| `particles[]`: `id`, `layer`, `inFrame`, `speedPx`, `movingShare` | per emitter: the median number of particles in frame, their median speed on their own (camera left out), and the share of the frames with particles in which they move | motes with a speed near 0 or a low share stand still |
+
+A reviewer who cannot watch the video reads these lines to say whether the background lives; `skink3 graph <scene> --camera` shows the speed of the camera over time.
+
 Every finding has:
 
 | Field | Meaning |
 |---|---|
 | `kind` | one of the kinds below |
 | `subject` | a node id; `(camera)`; `(frame)` for the whole frame; `(frame:top-left)` and so on for one of its six regions |
-| `channel` | what changed: `position`, `rotation`, `scale`, `opacity`, `particles`, `pulse`, `spring`, `hold` |
+| `channel` | what changed: `position`, `rotation`, `scale`, `opacity`, `level`, `particles`, `pulse`, `spring`, `hold` |
 | `from`, `to` | first and last frame; the text adds the seconds |
 | `value`, `threshold`, `unit` | the measurement and the limit it is held against, in the same unit |
 | `severity` | `value / threshold`; the report is sorted by it |
@@ -71,10 +95,10 @@ The text report is capped: at most 12 subjects and 4 findings per subject. Gener
 
 | Kind | What it means | Usual fix |
 |---|---|---|
-| `jump` | Position, rotation, size or opacity changes between two frames out of line with the frames around it: a teleport or a pop. Also a jump spread over two frames, a flicker (away and back), and a link that appears within a frame because its end node starts to pop in. | Look at the keys at that moment: two keys at once, a duration shorter than a frame, a wrong target. To change place unseen, do it while the node is hidden (`popOut`, then `popIn`) or faded out. Draw a link on (`drawOn`) after its nodes have arrived. |
-| `abrupt-start` | A move that is at its peak speed within two frames of rest: there is no ease-in. | Give it an anticipation or an overshoot above 0. With both at 0 a `moveTo`, `turnTo` or `scaleTo` is a plain ease-out, which starts at full speed. Or lengthen the move. |
-| `abrupt-stop` | A move that is still at its peak speed two frames before it rests: it runs into its place. | Use an eased intent, lengthen the move, or let it overshoot and settle. |
-| `mechanical` | A move between two rests at constant speed over at least 70 % of its length. | Replace it with an eased move. If it is meant as a flow, let it enter and leave the frame instead of resting in view. |
+| `jump` | Position, rotation, size, opacity or the level of a content changes between two frames out of line with the frames around it: a teleport or a pop. Also a jump spread over two frames, a flicker (away and back), and a link that appears within a frame because its end node starts to pop in. | Look at the keys at that moment: two keys at once, a duration shorter than a frame, a wrong target. To change place unseen, do it while the node is hidden (`popOut`, then `popIn`) or faded out. Draw a link on (`drawOn`) after its nodes have arrived. |
+| `abrupt-start` | A move that is at its peak speed within two frames of rest: there is no ease-in. | Give it an anticipation or an overshoot above 0. With both at 0 a `moveTo`, `turnTo` or `scaleTo` is a plain ease-out, which starts at full speed. Or use the profile `'ease'` or `'in'`, or lengthen the move. A `travel` that starts in view takes the profile `'in'` or `'ease'`. |
+| `abrupt-stop` | A move that is still at its peak speed two frames before it rests: it runs into its place. | Use an eased intent or the profile `'ease'` or `'out'`, lengthen the move, or let it overshoot and settle. |
+| `mechanical` | A move between two rests at constant speed over at least 70 % of its length: a `'steady'` move, travel or level that starts and ends in view. | Replace it with an eased move (the profile `'ease'`). If it is meant as a flow, let it enter and leave the frame, or start and end behind a cover, instead of resting in view. |
 | `too-fast` | The node travels at least half of its own size per frame, and at least 6 px, for a tenth of a second or longer. There is no motion blur, so it strobes at 60 fps. For an emitter: most of its particles in frame do. For a link: a pulse crosses it in fewer than 9 frames. | Slow it down or make it larger: a longer move, a lower release velocity or gravity, more drag; for particles a lower speed or a larger size. |
 | `spring-ringing` | A spring still swings visibly more than 2.5 s after its target came to rest. | Raise its damping `z` or its frequency `f`. |
 | `spring-no-overshoot` | A spring that is set to bounce (`z` of 0.4 or less) lagged at least 10 px and then came to rest without passing its place by a visible amount. It reads as lag, not as a spring. | Lower `f` so that it lags more, or lower `z`; or use a preset that says what you get (`light`, `heavy`); or drop the spring. |
@@ -84,8 +108,10 @@ Things that are legitimate and are not flagged:
 
 - **Flows at constant speed**: the drift of the camera, a pulse running along a link, particles in flight, a body that rolls, and anything that enters, leaves, appears or vanishes while it moves. Only a move that rests in view at both ends can be mechanical.
 - **Kicks**: a `bump`, and any other sudden excursion that comes back by half within a third of a second. A hit starts suddenly; that is the point.
+- **Hops**: a `hop` leaves the ground at speed and comes down at speed. Neither end is an abrupt start or stop; that is what a jump is. A hop is still reported when it is too fast for its size, and a hop with almost no height is a slide at one speed: mechanical.
 - **Pops**: a node that grows from nothing or shrinks to nothing is not checked for ease at that end.
 - **Short holds**: under 4 s for the frame, under 6 s for a region.
+- **What is behind a cover or outside its clip**: a shape or an eye that lies wholly under a nearly opaque `cover` drawn after it in its layer, or wholly outside the shape it is clipped to, is not seen, whatever it does there.
 
 ### What applies to what
 
@@ -97,6 +123,8 @@ Things that are legitimate and are not flagged:
 | too-fast | yes | yes | per emitter | pulses | no |
 | dead-area | count as alive while they move | the same | the same | while a pulse runs or the link is drawn on | never counts |
 
+A content with a level (a shape that fills from the bottom) has one more channel: `level`, the travel of its surface in px. It is judged like a move: a jump, an abrupt start or stop, one speed between two rests. Its children ride on the surface and are judged on their own motion, which includes that ride. A level that moves, or a surface that ripples, counts as alive.
+
 A rigid body gets its place and its turn from the solver. A contact changes its velocity within a frame, a neighbour nudges it a few pixels at once, and a body that rolls at constant speed is a flow. So the place and the turn of a body are checked for strobing speed only. Its size and its opacity are animated by the timeline (`popIn`, `bump`, `fadeTo`) and are checked like those of any node. Children of a body are judged on their own tracks.
 
 Whether the simulation itself is sound is a different question: bodies that sink into each other, jitter at rest, energy that appears from nowhere, tunnelling, escapes. That is the physics review, a sibling of this one with a report of the same form: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
@@ -106,7 +134,8 @@ Whether the simulation itself is sound is a different question: bodies that sink
 - **px** is a pixel of a 1080p frame.
 - **Own motion.** A node is judged on what it does itself: its place, turn and size in the space of its parent, scaled to the screen. The camera is not in it, and neither is the motion of the parent. So a defect of a parent is reported once, on the parent, and not again on everything it carries. A label is measured against the node it points at, and a node on a `follow` spring against the origin of its parent.
 - **Rotation and size** are measured as the travel of the node's edge in px, so that all three channels share one unit. A plain disc that turns shows nothing, so it has no rotation channel unless it carries something off its centre.
-- **Seen.** A node counts while it is drawn, at least 5 % opaque, at least 2 px in radius and reaching into the frame. What happens while a node is hidden or outside the frame is not reported.
+- **Seen.** A node counts while it is drawn, at least 5 % opaque, at least 2 px in radius and reaching into the frame. What happens while a node is hidden or outside the frame is not reported. Hidden also means: wholly behind a cover, wholly outside its clip, a node that shows only while it travels (`travel` with `only`) outside its travel, a rigid body that appears at its release (`appear: 'release'`) before it, and an empty content.
+- **Behind a cover** is judged on nine points of a shape or an eye: its middle and eight points of its edge. It is hidden when every one of them lies under a cover that is at least 95 % opaque and is drawn after it in the same layer. One point that shows, and the node is seen.
 - **Too fast** is the only check in screen space: the step of a node on screen divided by its size along that step. A part is measured against its parent as the parent is turned at each moment, so a ball on a stick that whips round is caught, and an eye on a body that pops in is not.
 - **Springs.** A response starts when the node leaves its rest place (where it would be without the spring) by 0.5 px and ends when it is back within it. Reported per response: the largest lag, the overshoot past the rest place, the number of visible swings (1 px or more) after the target stopped, how long it kept swinging, and when it settled.
 - **Alive** means that something visible changes by itself: a node moves, turns, grows, fades or blinks, a pulse runs, a link is drawn on, a particle travels. A thing counts in every region that the circle around it touches. An area with nothing in it is dead too. The camera never counts: a picture that only slides is still a hold.
@@ -119,6 +148,7 @@ All of them live in `src/review/thresholds.ts`, with the reason for each value. 
 |---|---|---|---|
 | `visibleAlpha` | 0.05 | opacity | Below this opacity a node is too faint for a defect in its motion to be seen. |
 | `minRadiusPx` | 2 | px | A node smaller than this on screen is a dot; its motion is not judged. |
+| `coverAlpha` | 0.95 | opacity | A cover hides what is behind it from the review only while it is nearly opaque; through a fainter one a thing is still seen. |
 | `jumpPx` | 4 | px in one frame | A displacement of one frame below this reads as part of the motion, not as a tick. |
 | `jumpRatio` | 4 | x the steps around it | A smooth curve sampled at 60 fps changes its step by a few percent per frame, and the hardest legitimate start (a bump) by a factor below 2; four times the largest step of the two frames on either side is out of line. |
 | `jumpOpacity` | 0.34 | opacity in one frame | A third of full opacity in one frame is a pop: an eased fade has to be shorter than 5 frames to do that. |
@@ -237,7 +267,9 @@ Mark an exception on the subject the finding names. A defect of a parent is repo
 - **Whether the simulation is sound.** Bodies that sink into each other, jitter at rest, tunnelling and escapes are the physics review's findings ([PHYSICS-REVIEW.md](PHYSICS-REVIEW.md)). Wrong weight, a fall too fast or too slow for its size, is looked at by neither.
 - **Taste.** Timing against the narration, whether a pause is too long for the story, whether a move is elegant. A clean report means there is no mechanical defect; it does not mean the motion is good.
 - **Sound.**
-- **What is hidden behind what.** The review does not know that a node is covered by another one. A jump or a start behind a cover is still reported; mark it as intended.
+- **What is hidden behind what, unless it is said.** The review knows that a node is covered only when the shape in front is marked `cover: true` and lies in the same layer. A jump or a start behind any other shape, or behind a nearer layer, is still reported: mark the shape as a cover, or the finding as intended. A node that comes out from behind a cover in one frame is not reported as a jump: it was not seen before.
+- **Links, labels and particles behind a cover or outside a clip.** Only shapes and eyes are tested against covers and clips. A label is taken as seen; particles are counted wherever they are.
+- **Squashes.** A `squash` changes the picture of a node, not its place or its size as the review reads them: the kick itself is not measured.
 - **What it does not measure**: the pupils and lids of eyes, the drawing-on of a link, the shape of a link as its ends move, colour, glow, blur, and the look of text.
 - **A fast spin.** Speed is judged on how far a node travels. A shape that spins fast in place is seen only through parts that ride on it off its centre.
 - **The limits themselves.** They are first settings. A finding close to its limit is a question, not a verdict; the numbers in the report say how close it is.

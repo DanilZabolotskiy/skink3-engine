@@ -152,6 +152,24 @@ test('physics: sound shots have no findings: the demo, a pile at rest, a stream 
   assert.deepEqual([flagged(none), none.counts.bodies, none.world.deepest], [[], 0, null]);
 });
 
+test('body.appear: bodies that are not drawn while they wait for their release are sound, and their defects are still found', async () => {
+  // The same pile, every ball hidden until it is released: the simulation is the same one, and it is as sound.
+  const hidden = (nodes: SceneNode[]): SceneNode[] =>
+    nodes.map((n) => (n.type === 'shape' && n.body?.kind === 'dynamic' ? { ...n, body: { ...n.body, appear: 'release' as const } } : n));
+  const plain = await baked(make(pile(), [], { seconds: 8 }));
+  const waiting = await baked(make(hidden(pile()), [], { seconds: 8 }));
+  assert.deepEqual(Array.from(waiting.bake.bodies), Array.from(plain.bake.bodies), 'how a body appears does not change the simulation');
+  const p = review(waiting);
+  assert.deepEqual(flagged(p), [], lines(p));
+  assert.deepEqual(p.world, review(plain).world);
+  // A body that waits unseen above a seen one is not a body that is not drawn: it is not in the world yet.
+  const over = review(await baked(make(hidden([floor(), ball('late', [0, FLOOR_Y - 20], 3), ball('a', [0, -200], 0.5, 24)]))));
+  assert.ok(!flagged(over).some((f) => f.startsWith('unseen-hit')), lines(over));
+  // The planted defect: released inside another body. It is found whether or not the body was drawn before.
+  const inside = review(await baked(make(hidden([floor(), ball('host', [0, FLOOR_Y - 60], 0.2, 60), ball('inner', [0, FLOOR_Y - 60], 1.5, 20)]))));
+  assert.ok(of(inside, 'overlap').length > 0, lines(inside));
+});
+
 test('overlap: a body released inside another one, and a body sunk into the floor', async () => {
   // The solver goes wrong by itself: a ball is released inside one that lies on the floor.
   const inside = (opacity = 1): ShotSpec =>

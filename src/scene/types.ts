@@ -11,7 +11,9 @@ import type { SpringSpec } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
 import type { LightSpec } from '../look/light.ts';
 import type { ColorRef, Palette } from '../look/palette.ts';
+import type { MoveProfile } from '../motion/curves.ts';
 import type { Key } from '../motion/intents.ts';
+import type { PathSpec } from '../motion/paths.ts';
 import type { ShapeSpec } from '../shape/geometry.ts';
 import type { StringTables } from '../text/strings.ts';
 
@@ -52,7 +54,23 @@ export type BodySpec =
       readonly density?: number;
       readonly friction?: number;
       readonly restitution?: number;
+      /**
+       * 'release': the body is not drawn while it waits for its release, so a
+       * heap of pieces that wait above the frame adds no glow to it. Default 'always'.
+       */
+      readonly appear?: 'always' | 'release';
     };
+
+/** A shape that fills from the bottom: how full it is, and how its surface moves. */
+export interface LevelSpec {
+  /** 0 = empty, 1 = full, at the start; levelTo animates it. */
+  readonly at: number;
+  /**
+   * A ripple of the surface: its height in units, the length of one wave in
+   * units, and how fast it runs, in units per second. null is a flat surface.
+   */
+  readonly wave: { readonly amp: number; readonly length: number; readonly speed: number } | null;
+}
 
 interface NodeBase {
   /** Unique within the shot. Timeline keys, links, labels and eyes refer to nodes by id. */
@@ -83,6 +101,18 @@ export interface ShapeNode extends NodeBase {
   readonly sway: SpringSpec | null;
   readonly idle: IdleSpec | null;
   readonly body: BodySpec | null;
+  /**
+   * An opaque thing in front: what is drawn before it in its layer does not
+   * shine through it. Glow is hidden where the cover lies over it, and the
+   * motion review does not judge what is wholly behind it.
+   */
+  readonly cover?: boolean;
+  /** Labels may lie over it (ground, a wall, a backdrop): the covers-node warning leaves it out. */
+  readonly backdrop?: boolean;
+  /** Id of a shape of the same layer: this node and what is in it are drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
+  /** The shape is a content: it fills its own outline from the bottom up to a level. */
+  readonly level?: LevelSpec | null;
 }
 
 export interface GroupNode extends NodeBase {
@@ -97,6 +127,8 @@ export interface GroupNode extends NodeBase {
   readonly children: readonly SceneNode[];
   readonly follow: SpringSpec | null;
   readonly idle: IdleSpec | null;
+  /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
 }
 
 /** A curved line between two nodes of the same layer; it follows them as they move. */
@@ -117,6 +149,8 @@ export interface LinkNode {
   readonly opacity: number;
   /** 0 = no glow; 1 = the line itself feeds the halo. Pulses glow whatever this is. */
   readonly glow: number;
+  /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
 }
 
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
@@ -213,6 +247,14 @@ export interface EmitterNode {
   readonly turbulence: TurbulenceSpec | null;
   /** 0..1: particles also feed the glow pass. */
   readonly glow: number;
+  /**
+   * How the size of a particle runs over its life. 'spark': a quick swell,
+   * then a slow shrink to nothing over the second half. 'steady': full size
+   * for nearly all of its life, with a short swell and a short shrink.
+   */
+  readonly sizing?: 'spark' | 'steady';
+  /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
 }
 
 export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode;
@@ -234,7 +276,27 @@ export interface LayerSpec {
   readonly tint: number | null;
 }
 
+/** A free-form path for the camera: the places it looks at, in units of the focus plane. */
+export interface CameraPathSpec extends PathSpec {
+  /**
+   * Units per frame along the path (the norm is 0.3 to 0.7). The camera keeps
+   * that speed for the whole shot: round and round a closed path, there and
+   * back on an open one. null: it covers the path once over the shot.
+   */
+  readonly speed: number | null;
+  /** How the speed is spread when the path is covered once. */
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+  /** Seconds the camera takes to slow down, turn round and be back at speed at an end of an open path. */
+  readonly turn: number;
+}
+
 export interface CameraSpec {
+  /**
+   * A free-form path instead of the straight drift: `at`, `drift.speed` and
+   * `drift.heading` are then not used; the wander stays on top of it.
+   */
+  readonly path?: CameraPathSpec | null;
   /** Where the camera looks at the start, in units of the focus plane. */
   readonly at: Vec2;
   readonly drift: {

@@ -77,3 +77,78 @@ export function pulseSpan(t: number, at: number, dur: number): { head: number; t
   const x = (t - at - dur) / PULSE_TAIL_SECONDS;
   return { head: 1, tail: 1 - PULSE_LENGTH * (1 - x) };
 }
+
+/**
+ * How the speed of a move is spread over its duration.
+ *
+ *   settle   backs away, goes, shoots past, settles (the default of moveTo)
+ *   ease     from rest to rest: the speed ramps up, holds, ramps down
+ *   steady   one speed from the first frame to the last: a flow
+ *   in       from rest, then steady: it leaves at speed
+ *   out      steady, then down to rest: it arrives at speed and stops
+ */
+export type MoveProfile = 'settle' | 'ease' | 'steady' | 'in' | 'out';
+
+export const MOVE_PROFILES: readonly MoveProfile[] = ['settle', 'ease', 'steady', 'in', 'out'];
+
+/** Share of the duration each eased end of a move takes, unless the key says otherwise. */
+export const DEFAULT_RAMP = 0.3;
+
+/**
+ * Progress along a path for u in [0, 1] when the speed ramps up over the share
+ * `a` of the duration, holds, and ramps down over the share `b` (a + b <= 1).
+ * The ramps are raised cosines, so the speed is continuous and zero at an
+ * eased end. With a = b = 0 it is u itself.
+ *
+ * The speed on the plateau is 1 / (1 - (a + b) / 2) times the mean speed.
+ */
+export function rampProgress(u: number, a: number, b: number): number {
+  if (u <= 0) return 0;
+  if (u >= 1) return 1;
+  const v = 1 / (1 - (a + b) / 2);
+  if (u < a) {
+    const x = u / a;
+    return v * a * (x / 2 - Math.sin(Math.PI * x) / (2 * Math.PI));
+  }
+  if (u > 1 - b) {
+    const y = (1 - u) / b;
+    return 1 - v * b * (y / 2 - Math.sin(Math.PI * y) / (2 * Math.PI));
+  }
+  return v * (a / 2 + (u - a));
+}
+
+/** The ramps (at the start, at the end) of a profile other than settle, as shares of the duration. */
+export function profileRamps(profile: Exclude<MoveProfile, 'settle'>, ramp: number): [number, number] {
+  switch (profile) {
+    case 'ease': return [ramp, ramp];
+    case 'in': return [ramp, 0];
+    case 'out': return [0, ramp];
+    case 'steady': return [0, 0];
+  }
+}
+
+/** Peak speed of a profile other than settle, as a multiple of distance / duration. */
+export function profilePeak(profile: Exclude<MoveProfile, 'settle'>, ramp: number): number {
+  const [a, b] = profileRamps(profile, ramp);
+  return 1 / (1 - (a + b) / 2);
+}
+
+/**
+ * The moments of a settle move as shares of its duration: when it stops
+ * backing away and goes (`leaves`), and when it first reaches its destination
+ * (`arrives`); the rest of the duration is overshoot and settle. Without an
+ * overshoot the move is an ease-out and arrives at the very end.
+ */
+export function settleMoments(anticipation: number, overshoot: number): { leaves: number; arrives: number } {
+  const leaves = anticipation > 1e-6 ? ANTICIPATION_SHARE : 0;
+  if (overshoot <= 1e-4) return { leaves, arrives: 1 };
+  // The first time the progress is 1: by bisection between the start of the travel and its peak.
+  let lo = leaves;
+  let hi = leaves + (1 - leaves) * 0.5;
+  for (let i = 0; i < 48; i++) {
+    const mid = (lo + hi) / 2;
+    if (moveProgress(mid, anticipation, overshoot) < 1) lo = mid;
+    else hi = mid;
+  }
+  return { leaves, arrives: hi };
+}

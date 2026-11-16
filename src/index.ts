@@ -8,7 +8,10 @@
 export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, intended } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
+export { hop, travel, levelTo, squash, moveTimes } from './motion/intents.ts';
 export { IntentError, type Key, type StaggerOrder } from './motion/intents.ts';
+export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile } from './motion/curves.ts';
+export { loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { definePalette, checkPalette, resolveColor, PALETTE_LAWS, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, Palette, PaletteIssue, PaletteSpec, Role } from './look/palette.ts';
 export { hsv, hexToHsv, lightness, mix } from './look/color.ts';
@@ -18,7 +21,9 @@ export type { StringTables } from './text/strings.ts';
 export type {
   BackgroundSpec,
   BodySpec,
+  CameraPathSpec,
   CameraSpec,
+  LevelSpec,
   EmitterNode,
   EyeNode,
   GroupNode,
@@ -48,7 +53,8 @@ export { ease, EASINGS, type EaseName } from './core/easing.ts';
 
 // --- Tools: compile, bake, evaluate, check, render -------------------------
 export { compileShot, defaultTint, CompileError, type CompiledShot, type CNode, type CLayer } from './scene/compile.ts';
-export { evaluate, computeWorld, flatItems, labelLayout, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
+export { evaluate, computeWorld, flatItems, labelLayout, posesFromBake, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
+export { levelGeometry, type ClipItem, type LevelGeometry, type ShapeItem, type StretchItem } from './scene/evaluate.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';
 export { Bake, bakeHash, readBake, writeBake, type BakeHeader, type ContactEvent } from './physics/cache.ts';
 export { runChecks, formatReport, checkTextFit, type CheckReport, type CheckIssue, type CheckOptions } from './checks/index.ts';
@@ -70,5 +76,6 @@ export { renderParallel, type RenderJob, type RenderResult } from './render/para
 export { cameraAt, layerView, type CameraState, type LayerView } from './camera/camera.ts';
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';
 export { FONT_FAMILY } from './text/fonts.ts';
+export { cuesFromWords, formatSrt, formatVtt, formatYtt, shiftWords, wrapCue, type Cue, type CueOptions, type SpokenWord, type YttStyle } from './text/subtitles.ts';
 export { engineVersion, physicsVersion } from './version.ts';
 export { loadShot } from './cli/load.ts';

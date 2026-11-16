@@ -5,14 +5,27 @@
 // No texture, no grain: flat fills and gradients only.
 
 import { Canvas, type CanvasRenderingContext2D } from 'skia-canvas';
+import { xfApply, type Vec2 } from '../core/math.ts';
 import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode } from '../scene/types.ts';
-import { shapeExtent } from '../shape/geometry.ts';
-import { drawEye, drawLabel, drawLink, drawLinkGlow, drawParticles, drawShape, drawShapeGlow, makePaint, type Paint } from './draw.ts';
+import { outlineOf, shapeExtent } from '../shape/geometry.ts';
+import {
+  drawEye,
+  drawLabel,
+  drawLink,
+  drawLinkGlow,
+  drawParticles,
+  drawShape,
+  drawShapeGlow,
+  eraseGlow,
+  makePaint,
+  clipToShape,
+  type Paint,
+} from './draw.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -88,7 +101,13 @@ function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingCont
  * picture is composited at the group's opacity, so a faded node fades as a
  * whole: its light, its children and anything overlapping inside it.
  */
-function drawItems(ctx: CanvasRenderingContext2D, items: readonly Item[], paint: Paint, target: LayerTarget): void {
+function drawItems(
+  ctx: CanvasRenderingContext2D,
+  items: readonly Item[],
+  paint: Paint,
+  target: LayerTarget,
+  stretches: readonly StretchItem[] = NO_STRETCH,
+): void {
   for (const item of items) {
     switch (item.kind) {
       case 'shape': drawShape(ctx, item, paint); break;
@@ -98,7 +117,9 @@ function drawItems(ctx: CanvasRenderingContext2D, items: readonly Item[], paint:
       case 'particles': drawParticles(ctx, item, paint); break;
       case 'group': {
         const { canvas, ctx: gx } = layerCanvas(target);
-        drawItems(gx, item.items, paint, target);
+        // A canvas of its own starts without the stretches it is nested in.
+        for (const s of stretches) applyStretch(gx, s);
+        drawItems(gx, item.items, paint, target, stretches);
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = item.opacity;
@@ -106,8 +127,138 @@ function drawItems(ctx: CanvasRenderingContext2D, items: readonly Item[], paint:
         ctx.restore();
         break;
       }
+      case 'clip':
+        ctx.save();
+        clipToShape(ctx, item);
+        drawItems(ctx, item.items, paint, target, stretches);
+        ctx.restore();
+        break;
+      case 'stretch':
+        ctx.save();
+        applyStretch(ctx, item);
+        drawItems(ctx, item.items, paint, target, [...stretches, item]);
+        ctx.restore();
+        break;
     }
   }
+}
+
+const NO_STRETCH: readonly StretchItem[] = [];
+
+/** Squashes or stretches what is drawn next: `height` times as high, 1 / `height` times as wide, about a point. */
+function applyStretch(ctx: CanvasRenderingContext2D, s: StretchItem): void {
+  ctx.translate(s.at[0], s.at[1]);
+  ctx.scale(1 / s.height, s.height);
+  ctx.translate(-s.at[0], -s.at[1]);
+}
+
+/**
+ * Draws what feeds the halo of a layer, in draw order. A cover erases the glow
+ * drawn before it where it lies over it, so nothing shines through it; what is
+ * clipped to a shape glows only inside that shape.
+ */
+function drawGlow(
+  ctx: CanvasRenderingContext2D,
+  items: readonly Item[],
+  paint: Paint,
+  covers: boolean,
+  seen: ReadonlyMap<LeafItem, number> | null,
+  state: { drawn: boolean } = { drawn: false },
+): void {
+  for (const item of items) {
+    switch (item.kind) {
+      case 'group':
+        drawGlow(ctx, item.items, paint, covers, seen, state);
+        break;
+      case 'clip':
+        ctx.save();
+        clipToShape(ctx, item);
+        drawGlow(ctx, item.items, paint, covers, seen, state);
+        ctx.restore();
+        break;
+      case 'stretch':
+        ctx.save();
+        applyStretch(ctx, item);
+        drawGlow(ctx, item.items, paint, covers, seen, state);
+        ctx.restore();
+        break;
+      default: {
+        // A cover has something to hide only once some glow has been drawn.
+        if (covers && state.drawn && item.kind === 'shape' && (item.node.node as ShapeNode).cover === true) eraseGlow(ctx, item);
+        const s = glowStrength(item);
+        if (s <= 0 || (seen !== null && seen.get(item) === 0)) break;
+        state.drawn = true;
+        if (item.kind === 'shape') drawShapeGlow(ctx, item, paint);
+        else if (item.kind === 'link') drawLinkGlow(ctx, item, paint);
+        else if (item.kind === 'particles') drawParticles(ctx, item, paint, s);
+      }
+    }
+  }
+}
+
+function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]!;
+    const b = poly[j]!;
+    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
+  }
+  return hit;
+}
+
+function outlineInLayer(item: { readonly node: { readonly node: unknown }; readonly xf: ShapeItem['xf'] }): Vec2[] {
+  return outlineOf((item.node.node as ShapeNode).shape).map((p) => xfApply(item.xf, p));
+}
+
+/**
+ * How much of each glowing shape of a layer can be seen, 0..1: the share of
+ * nine points of it (its middle and eight around it) that lie inside the shape
+ * it is clipped to and under no cover drawn after it. The background lift of a
+ * glowing shape is scaled by it, so a light behind a cover does not warm the
+ * sky around the cover.
+ */
+function seenShares(items: readonly Item[]): Map<LeafItem, number> {
+  const glowing: { item: ShapeItem; order: number; clips: readonly Vec2[][] }[] = [];
+  const covers: { order: number; alpha: number; poly: Vec2[] }[] = [];
+  let order = 0;
+  const walk = (list: readonly Item[], clips: readonly Vec2[][]): void => {
+    for (const item of list) {
+      if (item.kind === 'group' || item.kind === 'stretch') walk(item.items, clips);
+      else if (item.kind === 'clip') walk(item.items, item.level ? [...clips, outlineInLayer(item), item.level as Vec2[]] : [...clips, outlineInLayer(item)]);
+      else {
+        order++;
+        if (item.kind !== 'shape') continue;
+        const node = item.node.node as ShapeNode;
+        if (node.glow > 0) glowing.push({ item, order, clips });
+        if (node.cover === true && item.alpha > 0.02) covers.push({ order, alpha: Math.min(1, item.alpha), poly: outlineInLayer(item) });
+      }
+    }
+  };
+  walk(items, []);
+  const out = new Map<LeafItem, number>();
+  for (const g of glowing) {
+    const node = g.item.node.node as ShapeNode;
+    const { center } = shapeExtent(node.shape);
+    const ring = outlineOf(node.shape);
+    const points: Vec2[] = [xfApply(g.item.xf, center)];
+    for (let i = 0; i < 8; i++) {
+      const p = ring[Math.floor((i * ring.length) / 8)]!;
+      points.push(xfApply(g.item.xf, [center[0] + (p[0] - center[0]) * 0.6, center[1] + (p[1] - center[1]) * 0.6]));
+    }
+    let seen = 0;
+    for (const p of points) {
+      if (g.clips.some((poly) => !insidePolygon(poly, p[0], p[1]))) continue;
+      // Of a content with a level only the part below its surface is there.
+      if (g.item.level && !insidePolygon(g.item.level, p[0], p[1])) continue;
+      let hidden = 0;
+      for (const cover of covers) {
+        if (cover.order > g.order && cover.alpha > hidden && insidePolygon(cover.poly, p[0], p[1])) hidden = cover.alpha;
+      }
+      seen += 1 - hidden;
+    }
+    out.set(g.item, seen / points.length);
+  }
+  return out;
 }
 
 export interface DrawnFrame {
@@ -126,11 +277,18 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   const ctx = out.getContext('2d');
   const spec = c.spec;
 
+  // In a shot with covers or clips, a glowing shape lights its surroundings only as far as it can be seen.
+  const hides = c.covers.length > 0 || c.clips;
   // Farthest layer first.
   const layers = state.layers
     .map((layer, i) => ({ layer, i }))
     .sort((a, b) => b.layer.layer.spec.depth - a.layer.layer.spec.depth || a.i - b.i)
-    .map((x) => ({ layer: x.layer, leaves: flatItems(x.layer.items), paint: makePaint(c.light, c.atmosphere, x.layer.layer.tint) }));
+    .map((x) => ({
+      layer: x.layer,
+      leaves: flatItems(x.layer.items),
+      paint: makePaint(c.light, c.atmosphere, x.layer.layer.tint),
+      seen: hides ? seenShares(x.layer.items) : null,
+    }));
 
   // 1. Background gradient.
   ctx.save();
@@ -145,12 +303,14 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
 
   // 2. Background lift: every glowing shape brightens what is behind it.
   ctx.globalCompositeOperation = 'screen';
-  for (const { layer, leaves, paint } of layers) {
+  for (const { layer, leaves, paint, seen } of layers) {
     for (const item of leaves) {
       if (item.kind !== 'shape') continue;
       const node = item.node.node as ShapeNode;
       const strength = node.glow * item.alpha * Math.min(1, item.xf.scale);
       if (strength <= 0) continue;
+      const share = seen ? seen.get(item) ?? 1 : 1;
+      if (share <= 0) continue;
       const v = layer.view;
       const x = item.xf.x * v.zoom + v.tx;
       const y = item.xf.y * v.zoom + v.ty;
@@ -158,7 +318,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       if (r < 1) continue;
       const color = paint.tone('base', item.node.colors['fill']!);
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const a = GLOW.liftAlpha * strength;
+      const a = seen ? GLOW.liftAlpha * strength * share : GLOW.liftAlpha * strength;
       g.addColorStop(0, withAlpha(color, a));
       g.addColorStop(0.35, withAlpha(color, a * 0.45));
       g.addColorStop(1, withAlpha(color, 0));
@@ -169,7 +329,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   ctx.restore();
 
   // 3. Layers.
-  for (const { layer, leaves, paint } of layers) {
+  for (const { layer, leaves, paint, seen } of layers) {
     if (leaves.length === 0) continue;
     const blurPx = layer.layer.blur * k * layer.view.zoom;
     // Draw past the frame edge, so that a blur does not fade toward the border.
@@ -181,7 +341,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     let glowReachMax = 0;
     let anyGlow = false;
     for (const item of leaves) {
-      if (glowStrength(item) > 0) {
+      // What cannot be seen at all (wholly behind a cover, or outside its clip) has no halo.
+      if (glowStrength(item) > 0 && !(seen !== null && seen.get(item) === 0)) {
         anyGlow = true;
         glowReachMax = Math.max(glowReachMax, glowReach(item));
       }
@@ -197,13 +358,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       const wide = Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx;
       const gpad = Math.ceil(wide * 3);
       const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
-      for (const item of leaves) {
-        const s = glowStrength(item);
-        if (s <= 0) continue;
-        if (item.kind === 'shape') drawShapeGlow(gx, item, paint);
-        else if (item.kind === 'link') drawLinkGlow(gx, item, paint);
-        else if (item.kind === 'particles') drawParticles(gx, item, paint, s);
-      }
+      drawGlow(gx, layer.items, paint, c.covers.length > 0, seen);
       halo = { canvas: gc, pad: gpad, tight, wide };
       ctx.save();
       ctx.globalCompositeOperation = 'screen';

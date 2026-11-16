@@ -161,6 +161,9 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
       if (changes(rot, from, to, 0.5)) panels.push({ title: 'rotation, degrees', lines: [{ name: 'rotation', data: rot }], fromZero: false, height: 120, peak: false });
       if (changes(scale, from, to, 0.005)) panels.push({ title: 'scale', lines: [{ name: 'scale', data: scale }], fromZero: false, height: 120, peak: false });
       if (changes(s.alpha, from, to, 0.005)) panels.push({ title: 'opacity', lines: [{ name: 'opacity', data: s.alpha }], fromZero: true, height: 120, peak: false });
+      if (s.level && changes(s.level, from, to, 0.5)) {
+        panels.push({ title: 'height of its surface in its layer, units (y runs down)', lines: [{ name: 'surface', data: s.level }], fromZero: false, height: 120, peak: false });
+      }
     } else if (n.emitterSlot >= 0 && series.emitters[n.emitterSlot]) {
       const e = series.emitters[n.emitterSlot]!;
       what = `${n.id} (emitter)`;

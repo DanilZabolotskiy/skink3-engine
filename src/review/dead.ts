@@ -42,7 +42,8 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
           Math.abs(s.rot[f]! - s.rot[f - 1]!) * DEG * s.turnRadius * k >= T.alivePx ||
           Math.abs(s.scale[f]! - s.scale[f - 1]!) * s.radius * zoom >= T.alivePx ||
           Math.abs(s.alpha[f]! - s.alpha[f - 1]!) >= T.aliveOpacity ||
-          (s.open !== null && Math.abs(s.open[f]! - s.open[f - 1]!) * s.radius * k >= T.alivePx);
+          (s.open !== null && Math.abs(s.open[f]! - s.open[f - 1]!) * s.radius * k >= T.alivePx) ||
+          (s.level !== null && Math.abs(s.level[f]! - s.level[f - 1]!) * zoom >= T.alivePx);
       }
       if (moves) alive[f] = alive[f]! | regionsOf(s.x[g]! * zoom + view.tx[g]!, s.y[g]! * zoom + view.ty[g]!, r);
     }
