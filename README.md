@@ -12,6 +12,7 @@ In this genre, every movement on screen is usually keyframed by hand by a team o
 - **Physics where it helps.** Rigid bodies and particles today; soft bodies, ropes, flocks and simple fluids are planned. All of it is deterministic and tuned for readability rather than realism (lower gravity, more drag, softer impacts).
 - **Light, not drawing.** One light per shot. The engine builds shadow crescents (a shape minus its shifted copy), lit rims, highlight strokes, stacked shadows and glow from the shape itself.
 - **Motion that can be reviewed without watching.** An agent cannot watch a video play. The engine knows every node at every frame, so it reports jumps, missing ease, mechanical moves, strobing speed, springs that ring and dead areas of the frame as text, and draws time into single pictures: ghost trails and speed graphs. See [docs/MOTION-REVIEW.md](docs/MOTION-REVIEW.md).
+- **Sound in measure.** The sound effects of a shot are built from what happens in it: every intent and every contact is an event, and a bank of sounds that a production brings says what an event sounds like. Only what is seen sounds, and rules keep the track sparse: a sound marks an event that matters, it is not a click every second. The engine holds no sound files. See [docs/SCENES.md](docs/SCENES.md#sound).
 
 ## Principles
 
@@ -50,6 +51,8 @@ node bin/skink3.mjs motion examples/demo/scene.ts --pictures     # motion review
 node bin/skink3.mjs physics examples/demo/scene.ts --pictures    # physics review -> text, out/demo/physics.json, close-ups of the worst findings
 node bin/skink3.mjs trail examples/demo/scene.ts --node n2 --time 6.4,8   # ghost trail of a node    -> out/demo/trail_n2_00384-00480.png
 node bin/skink3.mjs graph examples/demo/scene.ts --node n2       # speed graph of a node          -> out/demo/graph_n2.png
+node bin/skink3.mjs events examples/demo/scene.ts                # what happens in the shot, as events -> out/demo/events.json
+node bin/skink3.mjs sfx examples/demo/scene.ts --bank <bank.json>   # its sound track, from a bank of sounds you bring -> out/demo/demo_sfx.wav
 ```
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
@@ -136,6 +139,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
 | `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
+| `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), PCM WAV read and written |
 | `src/cli`, `bin/` | the `skink3` command |
 | `examples/` | the demo shot, the flow shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
@@ -150,9 +154,9 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
 | 1 | Core picture: more node types, palettes from a mood, camera (spring follow, zoom through scales), bubbles, titles and counters, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths, covers, clipping and levels are built) | three reference shots (dark, light, microscopic) | next |
-| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search, sound from impact events (speed profiles, hops, travel along free-form paths and squashes are built) | one demo shot per layer | planned |
+| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, squashes, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
-| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings are built) | a complete video | planned |
+| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | planned |
 
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

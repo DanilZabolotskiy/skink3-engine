@@ -80,6 +80,11 @@ interface NodeBase {
   /** Degrees, clockwise. */
   readonly rotation: number;
   readonly scale: number;
+  /**
+   * Key of the node's voice in the bank of sounds: what its intents and its
+   * contacts sound like. It never changes the picture or the bake.
+   */
+  readonly sound?: string;
 }
 
 export interface ShapeNode extends NodeBase {
@@ -151,6 +156,11 @@ export interface LinkNode {
   readonly glow: number;
   /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /**
+   * Key of the node's voice in the bank of sounds: what its intents and its
+   * contacts sound like. It never changes the picture or the bake.
+   */
+  readonly sound?: string;
 }
 
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
@@ -178,6 +188,11 @@ export interface LabelNode {
   /** 0..1 at the start. */
   readonly opacity: number;
   readonly follow: SpringSpec | null;
+  /**
+   * Key of the node's voice in the bank of sounds: what its intents and its
+   * contacts sound like. It never changes the picture or the bake.
+   */
+  readonly sound?: string;
 }
 
 /** A simple eye: a light disc with a pupil that looks at a node, and blinks. */
@@ -255,6 +270,11 @@ export interface EmitterNode {
   readonly sizing?: 'spark' | 'steady';
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /**
+   * Key of the node's voice in the bank of sounds: what its intents and its
+   * contacts sound like. It never changes the picture or the bake.
+   */
+  readonly sound?: string;
 }
 
 export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode;

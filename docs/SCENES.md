@@ -240,6 +240,7 @@ All shape factories take these options:
 | `backdrop` | `false` | labels may lie over it without a covers-node warning: ground, a wall, a backdrop |
 | `clipTo` | none | id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline (see Clipping) |
 | `level` | none | makes the shape a content that fills its outline from the bottom (see Levels) |
+| `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
 
 | Factory | Extra options | Notes |
 |---|---|---|
@@ -304,9 +305,9 @@ levelTo('content', { at: 2, to: 0.8, dur: 6 }),
 - The vessel is a shape of its own, drawn before or after the content; the content is usually a little smaller.
 - A rigid body cannot have a level.
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo? })`
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound? })`
 
-An invisible parent. Its children move, turn and scale with it. A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
+An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
@@ -315,7 +316,7 @@ circle({ id: 'ball', r: 30, fill: 'accent.amber', body: { kind: 'dynamic', relea
   children: [group({ id: 'ball-face', upright: true, children: [eye({ id: 'ball-eye', r: 8, white: 'light.snow', pupil: 'deep.abyss' })] })] })
 ```
 
-### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity?, glow?, clipTo? })`
+### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity?, glow?, clipTo?, sound? })`
 
 A curved line between two nodes of the same layer. It follows them as they move.
 
@@ -330,10 +331,11 @@ A curved line between two nodes of the same layer. It follows them as they move.
 | `opacity` | `1` | 0..1 at the start |
 | `glow` | `0` | 0..1: the line itself glows, with a halo around it. Pulses glow whatever this is |
 | `clipTo` | none | id of a shape of the same layer: the link is drawn only inside its outline (see Clipping) |
+| `sound` | none | key of the link's voice: what its `drawOn` and its pulses sound like (see Sound) |
 
 List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden, and it fades with the fainter of the two. Animate it with `drawOn` and `pulse`. A pulse is drawn as travelling light: a bright head with a tail that narrows and fades.
 
-### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow? })`
+### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
 
 A rounded rectangle with a pointer tail aimed at `target`.
 
@@ -350,6 +352,7 @@ A rounded rectangle with a pointer tail aimed at `target`.
 | `maxLines` | `3` | |
 | `opacity` | `1` | 0..1 at the start |
 | `follow` | none | spring: the label trails its target |
+| `sound` | none | key of the label's voice (see Sound) |
 
 The layout wraps the string, balances the lines, and shrinks the font if needed. A string that still does not fit is reported by the text-fit check as overflow; it is never cut. Labels are listed directly in a layer, usually last so they are on top.
 
@@ -359,7 +362,7 @@ The layout wraps the string, balances the lines, and shrinks the font if needed.
 - A label and its target must be in the same layer.
 - A label over ground or a wall gives a covers-node warning unless that shape is marked `backdrop: true`.
 
-### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open? })`
+### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
 
@@ -392,6 +395,7 @@ Particles are small circles. By default each swells quickly and then shrinks to 
 | `core` | none | `{ color, size }`: an inner disc on every particle, in one palette colour; `size` is its radius as a fraction of the particle's (0.05..0.95). A particle with a core reads as a ring around a face: a cell, a bead, a wheel |
 | `sizing` | `'spark'` | how the radius runs over a particle's life. `'spark'`: it reaches its size after 12 % of its life, holds it until half-way, and shrinks smoothly to nothing over the second half. `'steady'`: full size from 8 % to 92 % of its life, with a short swell and a short shrink: for motes that drift and for particles that carry something across the frame |
 | `clipTo` | none | id of a shape of the same layer: the particles are drawn only inside its outline (see Clipping) |
+| `sound` | none | key of the emitter's voice: what its bursts sound like (see Sound) |
 
 An emitter needs at least one of `rate`, `bursts`, `onContact`. `from`, `until` and the `at` of a burst are 0 or later; an emitter that should already be running at frame 0 takes a `prewarm`.
 
@@ -416,6 +420,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
 | `blink(eyeId, { at })` | eye | | one blink at that moment, on top of the eye's own schedule |
+| `sfx(key, { at, ... })` | none, or a node | `node`, `gain` (1) | places a sound of the bank at a moment; it animates nothing. See Sound |
 
 Rules:
 
@@ -430,6 +435,7 @@ Rules:
 - `scaleTo` and `bump` change the size evenly in every direction; `squash` is the one that changes the proportions.
 - `openTo` keys chain like `fadeTo`: each starts from the opening the eye has at that moment. Blinks multiply with the lids, so a blink never opens a shut eye. The lids open to 1 at most; for eyes that widen, `scaleTo` the eye or the group it is in.
 - To time something to a pulse's arrival, use `at + dur` of that pulse.
+- Every intent also takes `sound`: `false` makes it silent, a key names its sound. It changes nothing in the picture (see Sound).
 
 ### Moves
 
@@ -566,7 +572,7 @@ circle({ id: 'ball', at: [0, -300], r: 30, fill: 'accent.coral', body: { kind: '
 - `release` may be negative, down to minus the shot's `physics.prewarm`. The world then starts that many seconds before frame 0, and such a body is already falling, or already at rest, when the shot opens. Contacts from before frame 0 are not recorded.
 - Bodies must be listed directly in a layer, and all bodies of a shot must be in the same layer.
 - The collider is the shape itself (a blob uses its convex hull).
-- Every contact is recorded with its time, place and peak impulse; `skink3 bake` prints how many. Emitters can react to them with `onContact`. They are also meant for sound, which is not built yet.
+- Every contact is recorded with its time, place and peak impulse; `skink3 bake` prints how many. Emitters can react to them with `onContact`. The sound of a shot is built from them too (see Sound).
 - Put a body where it has room at its release: one that is released inside another body or inside a wall is pushed out over a few frames, in view. The physics review reports it as an overlap that starts at the release.
 - A body is a solid thing only as far as its own shape goes. Children drawn past that shape, and a pop or a bump (which change the picture, not the collider), are not part of what collides.
 - A faded body still collides, and so does a fixed body with `opacity: 0`. That is how a container is drawn by other shapes around invisible walls; draw it where the walls are.
@@ -600,6 +606,7 @@ const at: [number, number] = [rng.range(-800, 800), rng.range(-400, 400)];
 | text fit: off-frame | a shown label comes closer than 12 units to the frame edge at any sampled frame |
 | text fit: overlap | two shown labels overlap at any sampled frame |
 | text fit: covers-node (**warning**) | a shown label covers a shape or an eye of its own layer other than its target (and the target's own children and parents), at any sampled frame |
+| sound (only with `--bank <bank.json>`) | a node, an intent or an `sfx()` names a sound key that the bank does not know (see Sound) |
 
 A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted, and neither is a shape marked `backdrop: true` (ground, a wall: things that are there to have labels in front of them). Frames are sampled ten times a second, so a touch shorter than that can be missed.
 
@@ -682,12 +689,196 @@ Things to know when you write a scene with bodies:
 
 The full guide, with every threshold, how to read the pictures, and what the review cannot tell: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
 
+## Sound
+
+A shot can have a sound track of its own: sound effects that mark what happens in the picture. The engine makes it from two things: the **events** of the shot, which it reads from the scene and its bake, and a **bank** of sounds that a production brings. The engine holds no sound files.
+
+**A film is never crowded with sound.** A sound marks an event that matters; it is not a click every second. Only what is seen sounds, small and slow moves are silent, and a crowd of events sounds as a few. So most events make no sound, and the rules of the bank say which do.
+
+Sound changes no pixel. A sound key is not part of the scene hash, so it never re-bakes a shot, and a shot with sound renders the frames it rendered without.
+
+```
+skink3 events <scene>                    every event of the shot          -> out/<shot>/events.json
+skink3 sfx <scene> --bank bank.json      the track and its report         -> out/<shot>/<shot>_sfx.wav, out/<shot>/sfx.json
+skink3 check <scene> --bank bank.json    also fails on a sound key the bank does not know
+```
+
+### Sound in the scene
+
+```ts
+circle({ id: 'marble', r: 30, fill: 'accent.amber', sound: 'marble' }),   // a node: its voice
+// timeline
+popIn('marble', { at: 1 }),                                    // sounds as the bank decides
+hop('marble', { at: 2, to: [200, 0], sound: 'boing' }),        // an intent that names the sound of its start
+bump('marble', { at: 3, sound: false }),                       // an intent that is silent
+sfx('chime', { at: 6.5 }),                                   // a sound placed by hand
+sfx('marble', { at: 7, node: 'marble', gain: 0.7 }),
+```
+
+- **A node takes `sound: '<key>'`:** its voice, which is what its intents and its contacts sound like. Every kind of node takes it: shapes, groups, eyes, links, labels, emitters. A key looks like a string key: lower-case parts joined by `.`, `_` or `-`.
+- **An intent takes `sound`.** `false` mutes everything the intent does. A key names the sound of the event at its start (the take-off of a hop, the start of a `drawOn`); the arrival keeps the sound it would have.
+- **`sfx(key, { at, node?, gain? })`** is a key of the timeline that places a sound at a moment, for example on a word of the narration. It always sounds. With `node` (a shape, a group, an eye or a label) it is panned to where that node is. `gain` (default 1) multiplies the gain the bank gives the sound. `at` is 0 or later.
+- With a bank, `skink3 check --bank` fails on a key the bank does not know, as it fails on a missing string.
+
+### Events
+
+Every key of the timeline is an event, and so are every recorded contact of the rigid bodies and every burst of an emitter. `skink3 events` writes them all.
+
+| Kind | What makes it | Its moment |
+|---|---|---|
+| `appear`, `disappear` | `popIn`, `popOut` of a shape, a group or an eye | `at` |
+| `label` | `popIn` of a label | `at` |
+| `move` | `moveTo`, `travel`, the take-off of a `hop` | `at` |
+| `land` | the landing of a `hop` | `at + dur` |
+| `turn` | `turnTo` | `at` |
+| `grow`, `shrink` | `scaleTo`, by whether the node gets larger or smaller | `at` |
+| `fade` | `fadeTo` | `at` |
+| `level` | `levelTo` | `at` |
+| `bump`, `squash` | `bump`, `squash` | `at` |
+| `draw`, `connect` | `drawOn`: the link starts to be drawn, and reaches its far node | `at`, and `at + dur` |
+| `pulse` | a `pulse` arrives at the far node of its link | `at + dur` |
+| `open`, `blink` | `openTo`, `blink` | `at` |
+| `contact` | two rigid bodies hit each other | the frame of the impact |
+| `burst` | an emitter bursts: one of its `bursts`, or one set off by a contact (`onContact`) | `at`, or the frame of the contact |
+| `sfx` | `sfx()` | `at` |
+
+An event has these fields:
+
+| Field | Meaning |
+|---|---|
+| `id` | `<kind>:<node>@<frame>`, with `#2`, `#3` for more of the same: unique in the shot and the same from run to run |
+| `kind`, `frame`, `time` | the moment falls on a frame: `time` is `frame / 60` seconds |
+| `dur` | seconds the action lasts from that moment; 0 for an instant: a landing, an arrival, a contact, a burst |
+| `node`, `key` | the node, and its sound key (null without one). The node of a contact is a dynamic body, a seen one first |
+| `sound` | what the scene asked for this event: `false`, or the key of a sound. Left out when it asked for nothing |
+| `gain` | a placed sound: the gain the scene gave it |
+| `impulse` | a contact: its peak impulse, as the bake records it. A burst set off by a contact has it too |
+| `other`, `otherKey` | a contact: the other body and its sound key |
+| `count` | a burst: its particles |
+| `size` | largest size on screen during the action, in px of a 1080p frame: the diameter of the circle that holds the node and what is in it; the length of a link; for a burst the diameter of a disc as large as all its particles together |
+| `speed` | peak speed on screen during the action, in px per frame, the camera left out: of the node, of the end of a link that is drawn on, of a pulse |
+| `x`, `y` | where it is on screen at that moment, in px from the top-left corner of the frame |
+| `seen` | whether it is seen at some frame of the action |
+
+- **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
+- **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
+- A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
+
+### The bank of sounds
+
+A bank is a JSON file that lies next to its sounds:
+
+```json
+{
+  "about": "any note",
+  "gain": 1,
+  "sounds": {
+    "pop":          { "file": "kit/pop.wav", "gain": 0.8 },
+    "tick":         { "file": ["kit/tick-1.wav", "kit/tick-2.wav"], "pitchJitter": 1 },
+    "marble.contact": { "file": "story/marble.wav", "priority": 1 },
+    "chime":        { "file": "story/chime.wav" }
+  },
+  "kinds": { "appear": "pop", "label": "pop", "contact": "tick", "move": null },
+  "curves": { "size": [[24, 0.5], [320, 1]] },
+  "rules": { "gap": 0.5, "starts": 4, "startsWindow": 10 }
+}
+```
+
+- Only `sounds` is required. A field the engine does not know is refused, so a misspelt rule is found.
+- **`sounds`** holds each sound by its key.
+  - `file` is a path relative to the bank, or a list of paths: takes of one sound, of which each use picks one by the seed.
+  - `gain` (default 1) is the gain of the sound; 1 is as recorded.
+  - `pitchJitter` (0.5) tunes each use up or down by at most that many semitones, and `gainJitter` (0.1) makes it louder or softer by at most that share of its gain: two repeats do not sound the same.
+  - `priority` (0): see the rules below.
+- **A file is a PCM WAV:** integer samples of 8, 16, 24 or 32 bits, or float samples of 32 or 64 bits; mono or stereo; any sample rate (a take is brought to 48 kHz when it is used). A compressed file (MP3, OGG, ADPCM in a WAV) is refused with a message: convert it first.
+- **`kinds`** maps a kind of event to the key of a sound: what such an event sounds like when nothing else decides. A kind that is left out, or mapped to `null`, is silent.
+- **`gain`** (1) is the gain of the whole track.
+
+**One event makes one sound.** Which one:
+
+1. The scene decides first: `sound: false` on the intent mutes it; a key on the intent, or in `sfx()`, names the sound.
+2. Then the voice of the node (for a contact: of either body): the sound `<voice>.<kind>`, when the bank has it. `marble.contact` is what a node with `sound: 'marble'` sounds like when it hits something.
+3. Then the kind: when the bank maps it to nothing, the event is silent.
+4. Otherwise the sound `<voice>`, when the bank has it, and only without one the sound the bank maps the kind to. So a contact of a node with a voice of its own plays that voice, and not the sound of the kind as well.
+
+A bank knows the key of a node when it has the sound `<key>` or a sound `<key>.<kind>`. A key on an intent, and the key of `sfx()`, must be a sound of the bank by that name.
+
+**Curves** turn what is seen of an event into gain. A curve is a list of points `[x, gain]` in rising order of x, joined by straight lines and held flat beyond its ends.
+
+| Curve | Against | For | Default |
+|---|---|---|---|
+| `size` | the size on screen, px | every event but a placed sound | `[[24, 0.5], [320, 1]]` |
+| `speed` | the peak speed, px per frame | moves and landings | `[[4, 0.6], [40, 1]]` |
+| `impulse` | the impulse | contacts and the bursts they set off | `[[0.25, 0.4], [2, 1]]` |
+
+The gain of a sound in the track is the `gain` of the bank × the `gain` of the sound × its curves × its jitter. For a placed sound it is the `gain` of the bank × the `gain` of the sound × the `gain` of `sfx()` × its jitter.
+
+**Rules** keep the track from being crowded. Each has a default in the engine (`SOUND_RULES`), chosen to be quiet rather than busy; a bank changes the ones it names.
+
+| Rule | Default | An event is not heard when | In the report |
+|---|---|---|---|
+| (always) | | it is not seen | `unseen` |
+| `minSize` | `24` px | it is smaller than this on screen | `small` |
+| `minSpeed` | `4` px per frame | it is a move or a landing and slower than this at its peak | `slow` |
+| `minImpulse` | `0.25` | it is a contact, or a burst set off by one, and weaker than this | `weak` |
+| `mergeWindow` | `0.08` s | another event of its kind is closer than this and matters more: the two sound as one | `merged` |
+| `kindGap`, `kindGaps` | `1` s, `{}` | a sound of its kind starts closer than this. `kindGaps` sets the gap of single kinds: `{ "contact": 0.4 }` | `kind-gap` |
+| `crowdVoices`, `crowdWindow` | `2` in `5` s | its kind already has that many sounds within such a window | `crowd` |
+| `gap` | `0.5` s | another sound starts closer than this, whatever its kind | `gap` |
+| `starts`, `startsWindow` | `4` in `10` s | that many sounds already start within such a window, whatever their kinds | `starts` |
+| `voices` | `3` | that many sounds are already heard at that moment | `voices` |
+
+Two more rules do not drop anything: `priority` (below), and `pan` (default `0.6`): how far to a side a sound at the edge of the frame is panned, 0 for the middle, 1 for hard left or right.
+
+- The rules are applied in the order of the table. A window or a gap of 0 turns its rule off.
+- A sound the scene named on an intent is not held to the three thresholds: it was asked for, whatever the size of the thing. It is held to all the other rules.
+- **A placed sound always sounds.** No rule drops an `sfx()`, and the other events make room for it.
+- **What matters more keeps its sound.** Where a rule has to choose between events, they rank in this order:
+  1. a sound placed with `sfx()`;
+  2. a sound the scene named on an intent;
+  3. the `priority` the bank gives the sound, the higher first: give the sounds of a story's own things one above 0, and they go before the sounds of the kinds;
+  4. the place of the kind in `rules.priority`;
+  5. the gain, the stronger first; then the earlier event.
+- `rules.priority` lists kinds of events from the one that matters most. The default is `land`, `contact`, `appear`, `disappear`, `label`, `connect`, `pulse`, `burst`, `grow`, `shrink`, `level`, `squash`, `bump`, `draw`, `move`, `turn`, `fade`, `open`, `blink`: what hits and what arrives, then what changes, then what merely moves. A bank names the kinds it wants first; the rest follow in the order of the default.
+- A burst set off by a contact is an event of its own at the moment of that contact. With a `gap` above 0 only one of the two is heard.
+
+### The track
+
+- **48 kHz, stereo, 24-bit PCM WAV, exactly as long as the shot:** 800 samples for every frame.
+- A sound starts on the first sample of the frame of its event.
+- **Pan follows x on screen,** with constant power; in the middle of the frame both channels have the gain of the sound.
+- A sound that is still heard when the shot ends is cut there, with a fade of 10 ms.
+- **The same scene, bank and seed give the same bytes.** The jitter of a sound comes from the seed of the shot and the id of its event, so an event more or less does not change the others.
+- Nothing is limited or compressed. The report gives the peak of the mix and the number of samples that had to be held at full scale; when there are any, lower the gains.
+
+The report is printed, and written in full to `out/<shot>/sfx.json`:
+
+| In the report | Meaning |
+|---|---|
+| `events`, `starts` | the events of the shot, and how many of them are heard |
+| `startsPerMinute` | starts per minute of the shot |
+| `mostStarts`, `startsWindow` | the most starts within any stretch of `startsWindow` seconds: the window of the rule `starts` |
+| `mostVoicesAtOnce` | the most sounds heard at one moment |
+| `silent`, `muted` | events of kinds the bank keeps silent; events the scene muted |
+| `dropped` | for each rule (`unseen`, `small`, `slow`, `weak`, `merged`, `kind-gap`, `crowd`, `gap`, `starts`, `voices`) the events it took out, each with the event that is heard instead where the rule names one |
+| `byKind` | for each kind: its events, and how many of them are heard |
+| `voices` | the sounds of the track: the event, its time, the sound and its take, gain, pitch, pan and length |
+| `peak`, `clipped` | the largest sample of the mix (1 is full scale), and the samples above it |
+| `rules` | the rules as they were applied |
+
+### What sound does not do
+
+- No narration, no music and no mix of a film: the track of a shot holds its sound effects and nothing else.
+- No reverb, no filter, no change of a sound over its length.
+- A sound does not follow its node while it plays: its pan is the place of its event. It cannot loop for as long as something lasts.
+- Nothing is heard of what a shot's last sound would do after the shot: a film that puts its shots end to end cuts each track at the cut.
+
 ## Command line
 
 ```
 skink3 <command> <scene module> [options]
 
-check   palette laws, string tables and text fit in every language; motion and physics findings in short
+check   palette laws, string tables and text fit in every language; motion and physics findings in short   [--bank <bank.json>]
 bake    simulate physics, springs and particles; write the cache        [--force]
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -697,20 +888,23 @@ motion  the motion review      [--pictures [--top 3]]                   report a
 physics the physics review     [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/physics.json
 trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
 graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
+events  the events of the shot                                           as JSON in out/<shot>/events.json
+sfx     the sound track        --bank <bank.json>                       a WAV, and its report as JSON in out/<shot>/sfx.json
 
 common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>
 ```
 
 - Inside the engine repository the command is `node bin/skink3.mjs`; from a repository that depends on the engine it is `npx skink3`.
 - Output goes to `./out/<shot id>/`, the bake cache to `./cache/`, both relative to the directory the command is run from.
-- `still`, `strip`, `sheet`, `render`, `check`, `motion`, `physics`, `trail` and `graph` bake first if the cache is missing or stale.
+- `still`, `strip`, `sheet`, `render`, `check`, `motion`, `physics`, `trail`, `graph`, `events` and `sfx` bake first if the cache is missing or stale.
+- `check --bank <bank.json>` also holds the sound keys of the shot against that bank; `sfx` writes `out/<shot>/<shot>_sfx.wav`, or the file `--out` names, with its report next to it (see Sound).
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 
-Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, and the simulation with `physics`; render the video when those look right.
+Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, the simulation with `physics`, and the sound with the report of `sfx`; render the video when those look right.
 
 ## From another repository
 
@@ -752,6 +946,8 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration into subtitle cues (lines of a set length, breaks at the ends of sentences and at pauses), and `formatSrt`, `formatVtt` and `formatYtt` write them out; see `src/text/subtitles.ts`.
 
+For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. See `src/audio`.
+
 ## What is not there yet
 
-No transitions between shots, no narration or audio, no keys anchored to words, no bubbles, titles or counters, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, titles or counters, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no concave shapes or corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

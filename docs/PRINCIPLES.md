@@ -70,3 +70,11 @@ Target norms (checked with `tools/metrics` on renders):
 - **Whoever adds or changes a feature updates it in the same commit:** an export for scenes, an option or its default, a command or a flag of the CLI, a kind of finding, a section of the guide. The guide ([SCENES.md](SCENES.md)) gets the full text.
 - **A test holds it to the code.** `test/quick-reference.test.ts` fails and names what is missing, runs every example, and holds every default the page shows against the engine.
 - **It stays short.** The same test caps its length. What does not fit goes to the guide, and the page points to the section.
+
+## 9. Sound in measure
+
+- **A film is never crowded with sound.** A sound marks an event that matters; it is not a click every second.
+- Only what is seen sounds. Small and slow moves are silent. A crowd of events sounds as a few.
+- One event makes one sound.
+- The engine holds no sounds: a production brings its bank. The limits (thresholds, gaps, caps, priorities) are data of the bank, and the defaults in the engine are quiet rather than busy.
+- Sound never changes a pixel or a bake.

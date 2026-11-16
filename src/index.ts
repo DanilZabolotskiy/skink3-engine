@@ -8,8 +8,8 @@
 export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, intended } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
-export { hop, travel, levelTo, squash, moveTimes } from './motion/intents.ts';
-export { IntentError, type Key, type StaggerOrder } from './motion/intents.ts';
+export { hop, travel, levelTo, squash, moveTimes, sfx } from './motion/intents.ts';
+export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile } from './motion/curves.ts';
 export { loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { definePalette, checkPalette, resolveColor, PALETTE_LAWS, PaletteError, ROLES } from './look/palette.ts';
@@ -77,5 +77,11 @@ export { cameraAt, layerView, type CameraState, type LayerView } from './camera/
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';
 export { FONT_FAMILY } from './text/fonts.ts';
 export { cuesFromWords, formatSrt, formatVtt, formatYtt, shiftWords, wrapCue, type Cue, type CueOptions, type SpokenWord, type YttStyle } from './text/subtitles.ts';
+export { sceneEvents, EVENT_KINDS, type EventKind, type EventsOptions, type SceneEvent } from './audio/events.ts';
+export { loadBank, parseBank, curveAt, BankError, SOUND_RULES, SOUND_CURVES, type BankSound, type Curve, type SoundBank, type SoundCurves, type SoundRules } from './audio/bank.ts';
+export { planSound, soundOf, density, DROP_RULES, type DropRule, type Dropped, type PlanOptions, type SoundPlan, type SoundSource, type Voice } from './audio/plan.ts';
+export { loadTakes, mixVoices, resample, SAMPLE_RATE, SAMPLES_PER_FRAME, type Take, type Takes } from './audio/mix.ts';
+export { renderSound, checkSound, soundReport, formatSoundReport, soundReportJson, TRACK_BITS, type SoundReport, type SoundTrack } from './audio/track.ts';
+export { readWav, writeWav, WavError, type Wav } from './audio/wav.ts';
 export { engineVersion, physicsVersion } from './version.ts';
 export { loadShot } from './cli/load.ts';

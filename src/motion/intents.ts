@@ -7,7 +7,16 @@ import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, type MoveProf
 import { pathLength, type PathSpec } from './paths.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
 
-export interface MoveToKey {
+/**
+ * What an intent says about its sound. Left out, its events sound as the bank
+ * of sounds decides; false mutes everything the intent does; a key names the
+ * sound of the event at its start. It never changes the picture or the bake.
+ */
+export interface Voiced {
+  readonly sound?: string | false;
+}
+
+export interface MoveToKey extends Voiced {
   readonly kind: 'moveTo';
   readonly target: string;
   /** Seconds: when the move starts (the anticipation is part of the move). */
@@ -31,7 +40,7 @@ export interface MoveToKey {
 }
 
 /** A jump: it leaves at `at`, flies a parabola and lands at `at + dur`. */
-export interface HopKey {
+export interface HopKey extends Voiced {
   readonly kind: 'hop';
   readonly target: string;
   /** Seconds: the take-off. */
@@ -45,7 +54,7 @@ export interface HopKey {
 }
 
 /** Travel along a free-form path. */
-export interface TravelKey {
+export interface TravelKey extends Voiced {
   readonly kind: 'travel';
   readonly target: string;
   readonly at: number;
@@ -63,7 +72,7 @@ export interface TravelKey {
   readonly only: boolean;
 }
 
-export interface PopInKey {
+export interface PopInKey extends Voiced {
   readonly kind: 'popIn';
   readonly target: string;
   readonly at: number;
@@ -72,14 +81,14 @@ export interface PopInKey {
   readonly overshoot: number;
 }
 
-export interface PopOutKey {
+export interface PopOutKey extends Voiced {
   readonly kind: 'popOut';
   readonly target: string;
   readonly at: number;
   readonly dur: number;
 }
 
-export interface TurnToKey {
+export interface TurnToKey extends Voiced {
   readonly kind: 'turnTo';
   readonly target: string;
   readonly at: number;
@@ -89,7 +98,7 @@ export interface TurnToKey {
   readonly overshoot: number;
 }
 
-export interface BumpKey {
+export interface BumpKey extends Voiced {
   readonly kind: 'bump';
   readonly target: string;
   readonly at: number;
@@ -98,7 +107,7 @@ export interface BumpKey {
 }
 
 /** A quick squash or stretch that rings out: the picture gets wider and lower, or taller and narrower, and keeps its area. */
-export interface SquashKey {
+export interface SquashKey extends Voiced {
   readonly kind: 'squash';
   readonly target: string;
   readonly at: number;
@@ -110,14 +119,14 @@ export interface SquashKey {
   readonly pivot: Vec2;
 }
 
-export interface DrawOnKey {
+export interface DrawOnKey extends Voiced {
   readonly kind: 'drawOn';
   readonly target: string;
   readonly at: number;
   readonly dur: number;
 }
 
-export interface PulseKey {
+export interface PulseKey extends Voiced {
   readonly kind: 'pulse';
   readonly target: string;
   readonly at: number;
@@ -126,7 +135,7 @@ export interface PulseKey {
   readonly bump: number;
 }
 
-export interface ScaleToKey {
+export interface ScaleToKey extends Voiced {
   readonly kind: 'scaleTo';
   readonly target: string;
   readonly at: number;
@@ -137,7 +146,7 @@ export interface ScaleToKey {
   readonly overshoot: number;
 }
 
-export interface FadeToKey {
+export interface FadeToKey extends Voiced {
   readonly kind: 'fadeTo';
   readonly target: string;
   readonly at: number;
@@ -147,7 +156,7 @@ export interface FadeToKey {
 }
 
 /** Raise or lower the level of a shape that has one. */
-export interface LevelToKey {
+export interface LevelToKey extends Voiced {
   readonly kind: 'levelTo';
   readonly target: string;
   readonly at: number;
@@ -158,7 +167,7 @@ export interface LevelToKey {
   readonly ramp: number;
 }
 
-export interface OpenToKey {
+export interface OpenToKey extends Voiced {
   readonly kind: 'openTo';
   readonly target: string;
   readonly at: number;
@@ -169,10 +178,22 @@ export interface OpenToKey {
   readonly overshoot: number;
 }
 
-export interface BlinkKey {
+export interface BlinkKey extends Voiced {
   readonly kind: 'blink';
   readonly target: string;
   readonly at: number;
+}
+
+/** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
+export interface SfxKey {
+  readonly kind: 'sfx';
+  /** The node the sound comes from (it is panned to where the node is), or null: the middle of the frame. */
+  readonly target: string | null;
+  readonly at: number;
+  /** Key of the sound in the bank. */
+  readonly sound: string;
+  /** Multiplies the gain the bank gives the sound. */
+  readonly gain: number;
 }
 
 export type Key =
@@ -190,7 +211,8 @@ export type Key =
   | DrawOnKey
   | PulseKey
   | OpenToKey
-  | BlinkKey;
+  | BlinkKey
+  | SfxKey;
 
 export class IntentError extends Error {}
 
@@ -217,6 +239,24 @@ function only(where: string, opts: object, allowed: readonly string[]): void {
   for (const key of Object.keys(opts)) {
     if (!allowed.includes(key)) throw new IntentError(`${where}: unknown option "${key}" (allowed: ${allowed.join(', ')})`);
   }
+}
+
+/** Sound keys look like string keys: lower-case parts joined by ".", "_" or "-", e.g. "marble" or "glass.small". */
+export const SOUND_KEY = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
+
+export function isSoundKey(value: unknown): value is string {
+  return typeof value === 'string' && SOUND_KEY.test(value);
+}
+
+/** The sound option of an intent, as it is written into its key: nothing when it is left out. */
+function voiced(where: string, opts: { sound?: string | false }): Voiced {
+  if (opts.sound === undefined) return {};
+  if (opts.sound !== false && !isSoundKey(opts.sound)) {
+    throw new IntentError(
+      `${where}: sound must be false (the intent is silent) or the key of a sound such as "marble" or "glass.small", got ${JSON.stringify(opts.sound)}`,
+    );
+  }
+  return { sound: opts.sound };
 }
 
 /** A key may start this long before the shot does: what it does is then already under way, or over, at frame 0. */
@@ -280,6 +320,8 @@ export function moveTo(
     arc?: number;
     profile?: MoveProfile;
     ramp?: number;
+    /** false: the intent is silent. A key: the sound of its start, instead of what the bank gives its kind. */
+    sound?: string | false;
   },
 ): MoveToKey {
   const w = `moveTo("${id}")`;
@@ -313,6 +355,7 @@ export function moveTo(
     arc: num(w, 'arc', opts.arc ?? 0.12, -1, 1),
     // A settle move carries no profile: its key is what it always was.
     ...(settle ? {} : { profile, ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5) }),
+    ...voiced(w, opts),
   };
 }
 
@@ -322,9 +365,9 @@ export function moveTo(
  * exactly. Sideways it travels at one speed; the height follows gravity. Give
  * either `at`, the take-off, or `land`, the landing.
  */
-export function hop(id: string, opts: { at?: number; land?: number; to: Vec2; dur?: number; height?: number }): HopKey {
+export function hop(id: string, opts: { at?: number; land?: number; to: Vec2; dur?: number; height?: number; sound?: string | false }): HopKey {
   const w = `hop("${id}")`;
-  only(w, opts, ['at', 'land', 'to', 'dur', 'height']);
+  only(w, opts, ['at', 'land', 'to', 'dur', 'height', 'sound']);
   const dur = num(w, 'dur', opts.dur ?? 0.6, 0.1, 30);
   if ((opts.at === undefined) === (opts.land === undefined)) throw new IntentError(`${w}: give either at (the take-off) or land (the landing)`);
   const at = opts.at !== undefined ? opts.at : num(w, 'land', opts.land, MIN_T, MAX_T) - dur;
@@ -335,6 +378,7 @@ export function hop(id: string, opts: { at?: number; land?: number; to: Vec2; du
     to: point(w, 'to', opts.to),
     dur,
     height: num(w, 'height', opts.height ?? 80, 0, 4000),
+    ...voiced(w, opts),
   };
 }
 
@@ -366,10 +410,12 @@ export function travel(
     orient?: boolean;
     /** The node is drawn only while it travels: hidden before `at` and after it arrives. */
     only?: boolean;
+    /** false: the intent is silent. A key: the sound of its start, instead of what the bank gives its kind. */
+    sound?: string | false;
   },
 ): TravelKey {
   const w = `travel("${id}")`;
-  only(w, opts, ['at', 'path', 'speed', 'dur', 'profile', 'ramp', 'smooth', 'closed', 'loops', 'roll', 'orient', 'only']);
+  only(w, opts, ['at', 'path', 'speed', 'dur', 'profile', 'ramp', 'smooth', 'closed', 'loops', 'roll', 'orient', 'only', 'sound']);
   if (!Array.isArray(opts.path) || opts.path.length < 2) throw new IntentError(`${w}: path must be a list of at least two points [x, y]`);
   const closed = opts.closed ?? false;
   if (closed && opts.path.length < 3) throw new IntentError(`${w}: a closed path needs at least three points`);
@@ -402,11 +448,12 @@ export function travel(
     roll: opts.roll === undefined ? null : num(w, 'roll', opts.roll, 0.5, 1e5),
     orient: opts.orient ?? false,
     only: opts.only ?? false,
+    ...voiced(w, opts),
   };
 }
 
 /** Make a node appear: it grows from nothing, overshoots its size and settles. Hidden before `at`. */
-export function popIn(id: string, opts: { at: number; dur?: number; overshoot?: number }): PopInKey {
+export function popIn(id: string, opts: { at: number; dur?: number; overshoot?: number; sound?: string | false }): PopInKey {
   const w = `popIn("${id}")`;
   return {
     kind: 'popIn',
@@ -414,22 +461,24 @@ export function popIn(id: string, opts: { at: number; dur?: number; overshoot?: 
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     dur: num(w, 'dur', opts.dur ?? 0.55, 0.05, 10),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.18, 0, 0.5),
+    ...voiced(w, opts),
   };
 }
 
 /** Make a node disappear: a small swell, then it shrinks to nothing. */
-export function popOut(id: string, opts: { at: number; dur?: number }): PopOutKey {
+export function popOut(id: string, opts: { at: number; dur?: number; sound?: string | false }): PopOutKey {
   const w = `popOut("${id}")`;
   return {
     kind: 'popOut',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     dur: num(w, 'dur', opts.dur ?? 0.35, 0.05, 10),
+    ...voiced(w, opts),
   };
 }
 
 /** Turn a node to an absolute rotation (degrees), with overshoot and settle. */
-export function turnTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): TurnToKey {
+export function turnTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): TurnToKey {
   const w = `turnTo("${id}")`;
   return {
     kind: 'turnTo',
@@ -438,6 +487,7 @@ export function turnTo(id: string, opts: { at: number; to: number; dur?: number;
     to: num(w, 'to', opts.to, -1e5, 1e5),
     dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.1, 0, 0.5),
+    ...voiced(w, opts),
   };
 }
 
@@ -446,7 +496,7 @@ export function turnTo(id: string, opts: { at: number; to: number; dur?: number;
  * authored size, overshoots and settles. Several keys chain: each starts from
  * the size the node has at that moment. Pops and bumps play on top of it.
  */
-export function scaleTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): ScaleToKey {
+export function scaleTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): ScaleToKey {
   const w = `scaleTo("${id}")`;
   return {
     kind: 'scaleTo',
@@ -455,6 +505,7 @@ export function scaleTo(id: string, opts: { at: number; to: number; dur?: number
     to: num(w, 'to', opts.to, 0.01, 100),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+    ...voiced(w, opts),
   };
 }
 
@@ -463,7 +514,7 @@ export function scaleTo(id: string, opts: { at: number; to: number; dur?: number
  * picture, with its light and its glow. Several keys chain from the opacity the
  * node has at that moment.
  */
-export function fadeTo(id: string, opts: { at: number; to: number; dur?: number }): FadeToKey {
+export function fadeTo(id: string, opts: { at: number; to: number; dur?: number; sound?: string | false }): FadeToKey {
   const w = `fadeTo("${id}")`;
   return {
     kind: 'fadeTo',
@@ -471,6 +522,7 @@ export function fadeTo(id: string, opts: { at: number; to: number; dur?: number 
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, 1),
     dur: num(w, 'dur', opts.dur ?? 0.5, 0.05, 60),
+    ...voiced(w, opts),
   };
 }
 
@@ -481,10 +533,10 @@ export function fadeTo(id: string, opts: { at: number; to: number; dur?: number 
  */
 export function levelTo(
   id: string,
-  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; sound?: string | false },
 ): LevelToKey {
   const w = `levelTo("${id}")`;
-  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp', 'sound']);
   const profile = profileOf(w, opts.profile, RAMPED, 'ease');
   if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
   return {
@@ -495,6 +547,7 @@ export function levelTo(
     dur: num(w, 'dur', opts.dur ?? 1.5, 0.05, 3600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+    ...voiced(w, opts),
   };
 }
 
@@ -503,7 +556,7 @@ export function levelTo(
  * not drawn). The change lasts; several keys chain from the opening the eye
  * has at that moment. With an overshoot the eye opens a little too wide first.
  */
-export function openTo(eyeId: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): OpenToKey {
+export function openTo(eyeId: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): OpenToKey {
   const w = `openTo("${eyeId}")`;
   return {
     kind: 'openTo',
@@ -512,23 +565,25 @@ export function openTo(eyeId: string, opts: { at: number; to: number; dur?: numb
     to: num(w, 'to', opts.to, 0, 1),
     dur: num(w, 'dur', opts.dur ?? 0.3, 0.03, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.12, 0, 0.5),
+    ...voiced(w, opts),
   };
 }
 
 /** Make an eye blink at a chosen moment, in addition to its own schedule. */
-export function blink(eyeId: string, opts: { at: number }): BlinkKey {
+export function blink(eyeId: string, opts: { at: number; sound?: string | false }): BlinkKey {
   const w = `blink("${eyeId}")`;
-  return { kind: 'blink', target: target(w, eyeId), at: num(w, 'at', opts.at, MIN_T, MAX_T) };
+  return { kind: 'blink', target: target(w, eyeId), at: num(w, 'at', opts.at, MIN_T, MAX_T), ...voiced(w, opts) };
 }
 
 /** A quick swell-and-settle of a node's scale: a reaction, a beat. */
-export function bump(id: string, opts: { at: number; amount?: number }): BumpKey {
+export function bump(id: string, opts: { at: number; amount?: number; sound?: string | false }): BumpKey {
   const w = `bump("${id}")`;
   return {
     kind: 'bump',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     amount: num(w, 'amount', opts.amount ?? 0.14, -0.5, 0.5),
+    ...voiced(w, opts),
   };
 }
 
@@ -539,9 +594,9 @@ export function bump(id: string, opts: { at: number; amount?: number }): BumpKey
  * the node's own units: for a landing its lowest point, so that it squashes
  * against the ground. It is a look only, like a bump.
  */
-export function squash(id: string, opts: { at: number; amount?: number; dur?: number; pivot?: Vec2 }): SquashKey {
+export function squash(id: string, opts: { at: number; amount?: number; dur?: number; pivot?: Vec2; sound?: string | false }): SquashKey {
   const w = `squash("${id}")`;
-  only(w, opts, ['at', 'amount', 'dur', 'pivot']);
+  only(w, opts, ['at', 'amount', 'dur', 'pivot', 'sound']);
   return {
     kind: 'squash',
     target: target(w, id),
@@ -549,22 +604,24 @@ export function squash(id: string, opts: { at: number; amount?: number; dur?: nu
     amount: num(w, 'amount', opts.amount ?? -0.22, -0.6, 0.6),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.1, 5),
     pivot: opts.pivot === undefined ? [0, 0] : point(w, 'pivot', opts.pivot),
+    ...voiced(w, opts),
   };
 }
 
 /** Draw a link on from its `from` end. The link is hidden before `at`. */
-export function drawOn(linkId: string, opts: { at: number; dur?: number }): DrawOnKey {
+export function drawOn(linkId: string, opts: { at: number; dur?: number; sound?: string | false }): DrawOnKey {
   const w = `drawOn("${linkId}")`;
   return {
     kind: 'drawOn',
     target: target(w, linkId),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 30),
+    ...voiced(w, opts),
   };
 }
 
 /** Send a glowing pulse along a link, from its `from` end to its `to` end. */
-export function pulse(linkId: string, opts: { at: number; dur?: number; bump?: number }): PulseKey {
+export function pulse(linkId: string, opts: { at: number; dur?: number; bump?: number; sound?: string | false }): PulseKey {
   const w = `pulse("${linkId}")`;
   return {
     kind: 'pulse',
@@ -572,6 +629,29 @@ export function pulse(linkId: string, opts: { at: number; dur?: number; bump?: n
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     dur: num(w, 'dur', opts.dur ?? 0.7, 0.05, 30),
     bump: num(w, 'bump', opts.bump ?? 0.14, 0, 0.5),
+    ...voiced(w, opts),
+  };
+}
+
+/**
+ * A sound placed at a moment by hand, for example on a word of the narration:
+ * `key` is a sound of the bank. It always sounds, whatever else happens then.
+ * With `node` it is panned to where that node is on screen; without, to the
+ * middle. `gain` multiplies the gain the bank gives the sound.
+ *
+ *   sfx('chime', { at: 6.5 })
+ *   sfx('marble', { at: 3.2, node: 'jar', gain: 0.7 })
+ */
+export function sfx(key: string, opts: { at: number; node?: string; gain?: number }): SfxKey {
+  const w = `sfx(${JSON.stringify(key)})`;
+  if (!isSoundKey(key)) throw new IntentError(`${w}: the first argument is the key of a sound such as "chime" or "glass.small"`);
+  only(w, opts, ['at', 'node', 'gain']);
+  return {
+    kind: 'sfx',
+    target: opts.node === undefined ? null : target(w, opts.node),
+    at: num(w, 'at', opts.at, 0, MAX_T),
+    sound: key,
+    gain: num(w, 'gain', opts.gain ?? 1, 0, 8),
   };
 }
 

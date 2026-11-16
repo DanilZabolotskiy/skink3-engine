@@ -1,5 +1,6 @@
 // Command-line entry point: bake, still, strip, sheet, render, check, the
-// motion review (motion, trail, graph) and the physics review (physics).
+// motion review (motion, trail, graph), the physics review (physics), and the
+// sound of a shot (events, sfx).
 // Output goes to ./out and the bake cache to ./cache of the caller's working
 // directory, wherever the scene module and the engine live.
 
@@ -8,6 +9,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { loadBank } from '../audio/bank.ts';
+import { EVENT_KINDS, sceneEvents } from '../audio/events.ts';
+import { formatSoundReport, renderSound, soundReportJson } from '../audio/track.ts';
 import { formatReport, runChecks } from '../checks/index.ts';
 import { FPS } from '../core/time.ts';
 import { ensureBake } from '../physics/bake.ts';
@@ -40,6 +44,8 @@ Commands
   physics the physics review: overlap, tunnelling, escapes, jitter, piles that do not settle, energy, unseen hits
   trail   a ghost trail: nodes drawn at every k-th frame in one picture
   graph   a speed graph of a node, an emitter or the camera
+  events  what happens in the shot, as events: every intent, every contact, every burst
+  sfx     the sound track of the shot, from its events and a bank of sounds
 
 Common options
   --lang <tag>        language of the string tables (default: the first table)
@@ -53,11 +59,13 @@ strip   --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x
 sheet   [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render  [--workers <n>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [--hashes] [--force]
 bake    [--force]
-check   (no options; --lang limits the text checks to some languages)
+check   [--bank <bank.json>]        with a bank, a sound key it does not know fails the checks; --lang limits the text checks
 motion  [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/motion.json
 physics [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/physics.json
 trail   --node <id[,id...]> [--from <frame>] [--to <frame>] | [--time <s,s>]  [--every <k>] [--space stage|screen]
 graph   --node <id> | --camera      [--from <frame>] [--to <frame>] | [--time <s,s>]
+events  (no options)                the events as JSON in out/<shot>/events.json
+sfx     --bank <bank.json>          a WAV of 48 kHz, stereo, as long as the shot; its report as text, and as JSON in out/<shot>/sfx.json
 
 --crop is in stage units (1920 x 1080, origin top-left). --hash and --hashes
 print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes
@@ -157,6 +165,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       space: { type: 'string' },
       pictures: { type: 'boolean', default: false },
       top: { type: 'string' },
+      bank: { type: 'string' },
     },
   });
   const str = (name: string): string | undefined => {
@@ -205,7 +214,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   switch (command) {
     case 'check': {
       const { bake } = await ensureBake(c, common.cacheDir);
-      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true, physics: true });
+      const bankFile = str('bank');
+      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true, physics: true, ...(bankFile === undefined ? {} : { bank: loadBank(bankFile) }) });
       console.log(`check ${c.spec.id}: ${c.frames} frames, ${c.nodes.length} nodes, ${c.layers.length} layers`);
       console.log(formatReport(report));
       return report.ok ? 0 : 1;
@@ -435,6 +445,33 @@ full report: ${file}`);
       const file = outFile(`graph_${name}${whole ? '' : `_${String(graph.from).padStart(5, '0')}-${String(graph.to).padStart(5, '0')}`}.png`);
       write(file, graph.png);
       console.log(`graph of ${subject}: frames ${graph.from}-${graph.to}, ${graph.panels.length} panel(s): ${file}`);
+      return 0;
+    }
+
+    case 'events': {
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const events = sceneEvents(c, bake, { lang: common.lang });
+      const file = outFile('events.json');
+      write(file, `${JSON.stringify({ shot: c.spec.id, frames: c.frames, seconds: c.frames / FPS, kinds: EVENT_KINDS, events }, null, 1)}\n`);
+      const byKind = EVENT_KINDS.map((kind) => [kind, events.filter((e) => e.kind === kind).length] as const).filter(([, n]) => n > 0);
+      console.log(`events ${c.spec.id}: ${events.length} event(s) in ${c.frames} frames, ${events.filter((e) => e.seen).length} of them seen`);
+      if (byKind.length > 0) console.log(`  ${byKind.map(([kind, n]) => `${kind} ${n}`).join(', ')}`);
+      console.log(`full list: ${file}`);
+      return 0;
+    }
+
+    case 'sfx': {
+      const bank = loadBank(str('bank') ?? fail('sfx: give --bank <bank.json>, the bank of sounds'));
+      const { bake } = await ensureBake(c, common.cacheDir);
+      const track = renderSound(c, bake, bank, { lang: common.lang });
+      const file = outFile(`${c.spec.id}_sfx.wav`);
+      write(file, track.wav);
+      // The report lies next to the track when the track is put somewhere else.
+      const reportFile = str('out') ? `${file}.json` : join(common.outDir, 'sfx.json');
+      write(reportFile, soundReportJson(track.report));
+      console.log(formatSoundReport(track.report));
+      console.log(`\ntrack: ${file}`);
+      console.log(`full report: ${reportFile}`);
       return 0;
     }
 

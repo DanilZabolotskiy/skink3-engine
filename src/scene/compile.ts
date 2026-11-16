@@ -167,6 +167,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     subtreeEnd: number;
   }
   const drafts: Draft[] = [];
+  // True once a node or a key of the shot says anything about sound.
+  let voiced = false;
   const idIndex = new Map<string, number>();
   const layerIds = new Set<string>();
   const layerNodes: number[][] = [];
@@ -176,6 +178,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       fail(`${where}: a node in layer "${spec.layers[layer]!.id}" is not a scene node (use the factory functions)`);
     }
     if (idIndex.has(node.id)) fail(`${where}: duplicate node id "${node.id}"; ids must be unique within the shot`);
+    if (node.sound !== undefined) voiced = true;
     const index = drafts.length;
     idIndex.set(node.id, index);
     const draft: Draft = { index, node, layer, parent, subtreeEnd: index };
@@ -236,6 +239,18 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   };
   for (const key of spec.timeline as readonly Key[]) {
     if (!key || typeof key !== 'object' || typeof key.kind !== 'string') fail(`${where}: the timeline holds something that is not a key (use moveTo, popIn, ...)`);
+    if (key.sound !== undefined) voiced = true;
+    if (key.kind === 'sfx') {
+      // A sound placed by hand: it animates nothing. With a node, it comes from where that node is.
+      if (key.at > spec.seconds) fail(`${where}: sfx("${key.sound}") is placed at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      if (key.target !== null) {
+        const at = idIndex.get(key.target);
+        if (at === undefined) fail(`${where}: sfx("${key.sound}") names the node "${key.target}", which does not exist (nodes: ${known()})`);
+        const from = drafts[at]!.node;
+        if (!isPlaced(from) && from.type !== 'label') fail(`${where}: sfx("${key.sound}") names ${from.type} "${key.target}"; it must be a shape, a group, an eye or a label`);
+      }
+      continue;
+    }
     const index = idIndex.get(key.target);
     if (index === undefined) fail(`${where}: ${key.kind} targets "${key.target}", which does not exist (nodes: ${known()})`);
     const node = drafts[index]!.node;
@@ -543,8 +558,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
 
   // Text does not influence the bake, so the tables stay out of the hash; a
   // translation re-renders without re-baking. The same holds for the intended
-  // exceptions of the reviews, which only change a report.
-  const sceneHash = hashOf({ ...spec, palette: spec.palette.spec, strings: null, intended: undefined });
+  // exceptions of the reviews, which only change a report, and for everything
+  // about sound: a sound key on a node or on an intent, and a sound placed by
+  // hand, change neither the bake nor a pixel.
+  const sceneHash = hashOf({ ...(voiced ? withoutSound(spec) : spec), palette: spec.palette.spec, strings: null, intended: undefined });
 
   return {
     spec,
@@ -566,6 +583,19 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     sceneHash,
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
+  };
+}
+
+/** The shot as it is without its sound: no sound key on a node or on an intent, no sound placed by hand. */
+function withoutSound(spec: ShotSpec): ShotSpec {
+  const mute = (node: SceneNode): SceneNode => {
+    const quiet = { ...node, sound: undefined };
+    return quiet.type === 'shape' || quiet.type === 'group' ? { ...quiet, children: quiet.children.map(mute) } : quiet;
+  };
+  return {
+    ...spec,
+    layers: spec.layers.map((layer) => ({ ...layer, nodes: layer.nodes.map(mute) })),
+    timeline: spec.timeline.filter((key) => key.kind !== 'sfx').map((key) => ({ ...key, sound: undefined })),
   };
 }
 

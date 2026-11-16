@@ -7,7 +7,7 @@ import type { Vec2 } from '../core/math.ts';
 import { lightVector, type LightSpec } from '../look/light.ts';
 import { ROLES, type ColorRef, type Palette } from '../look/palette.ts';
 import { DEFAULT_RAMP, type MoveProfile } from '../motion/curves.ts';
-import type { Key } from '../motion/intents.ts';
+import { isSoundKey, type Key } from '../motion/intents.ts';
 import { pathLength } from '../motion/paths.ts';
 import {
   blobShape,
@@ -92,6 +92,15 @@ function color(where: string, name: string, value: unknown): ColorRef {
   return value as ColorRef;
 }
 
+/** The sound key of a node, written into it only when it is given: a node without one is the data it always was. */
+function voice(where: string, value: unknown): { sound?: string } {
+  if (value === undefined) return {};
+  if (!isSoundKey(value)) {
+    fail(where, `sound must be the key of a sound such as "marble" or "glass.small" (lower-case parts joined by ".", "_" or "-"), got ${JSON.stringify(value)}`);
+  }
+  return { sound: value };
+}
+
 function spring(where: string, name: string, value: SpringSpec | undefined): SpringSpec | null {
   if (value === undefined) return null;
   try {
@@ -173,11 +182,13 @@ export interface ShapeOptions {
    * surface, wave: { amp, length?, speed? }. Animate it with levelTo().
    */
   level?: number | { at: number; wave?: { amp: number; length?: number; speed?: number } };
+  /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
+  sound?: string;
 }
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'glow', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound',
 ];
 
 function flag(where: string, name: string, value: unknown): boolean {
@@ -220,6 +231,7 @@ function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: Sprin
   if (o.level !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a level');
   return {
     ...extras(where, o),
+    ...voice(where, o.sound),
     type: 'shape',
     id: idOf(where, o.id),
     shape,
@@ -319,12 +331,15 @@ export function group(o: {
   idle?: IdleSpec;
   /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
   clipTo?: string;
+  /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
+  sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound']);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...voice(where, o.sound),
     type: 'group',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
@@ -358,12 +373,15 @@ export function link(o: {
   glow?: number;
   /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
   clipTo?: string;
+  /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
+  sound?: string;
 }): LinkNode {
   const where = `link("${o?.id}")`;
-  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow', 'clipTo']);
+  checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow', 'clipTo', 'sound']);
   const c = color(where, 'color', o.color);
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...voice(where, o.sound),
     type: 'link',
     id: idOf(where, o.id),
     from: idOf(where, o.from),
@@ -406,9 +424,11 @@ export function label(o: {
   /** 0..1 at the start; default 1. */
   opacity?: number;
   follow?: SpringSpec;
+  /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
+  sound?: string;
 }): LabelNode {
   const where = `label("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow']);
+  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow', 'sound']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "label.core", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
@@ -416,6 +436,7 @@ export function label(o: {
   if (!['top', 'bottom', 'left', 'right'].includes(side)) fail(where, `side must be top, bottom, left or right, got ${JSON.stringify(side)}`);
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 400);
   return {
+    ...voice(where, o.sound),
     type: 'label',
     id: idOf(where, o.id),
     text: o.text,
@@ -452,10 +473,13 @@ export function eye(o: {
   blink?: boolean;
   /** Lids at the start, 0 (shut) .. 1 (open); default 1. */
   open?: number;
+  /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
+  sound?: string;
 }): EyeNode {
   const where = `eye("${o?.id}")`;
-  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open']);
+  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open', 'sound']);
   return {
+    ...voice(where, o.sound),
     type: 'eye',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
@@ -513,11 +537,13 @@ export function emitter(o: {
   sizing?: 'spark' | 'steady';
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   clipTo?: string;
+  /** Key of the emitter's voice in the bank of sounds: what its bursts sound like. */
+  sound?: string;
 }): EmitterNode {
   const where = `emitter("${o?.id}")`;
   checkKeys(where, o, [
     'id', 'colors', 'size', 'life', 'at', 'attach', 'area', 'rate', 'from', 'until', 'bursts', 'onContact', 'prewarm',
-    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo',
+    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo', 'sound',
   ]);
   if (o.sizing !== undefined && o.sizing !== 'spark' && o.sizing !== 'steady') fail(where, `sizing must be "spark" or "steady", got ${JSON.stringify(o.sizing)}`);
   if (!Array.isArray(o.colors) || o.colors.length === 0) fail(where, 'colors must be a non-empty array of palette references');
@@ -552,6 +578,7 @@ export function emitter(o: {
   return {
     ...(o.sizing === undefined ? {} : { sizing: o.sizing }),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...voice(where, o.sound),
     type: 'emitter',
     id: idOf(where, o.id),
     at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),

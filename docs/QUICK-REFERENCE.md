@@ -106,6 +106,17 @@ rect({ id: 'wall', fill: 'dark.indigo', w: 240, h: 300, cover: true, backdrop: t
 - An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `'steady'` keeps the size, `'spark'` shrinks away. Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
 - `cover`: glow drawn before it in its layer does not shine through, and the motion review does not judge what is wholly behind it. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape's outline. `level` (also a number, 0 to 1): the shape fills from the bottom, `wave` (units; units per second) ripples it, its children ride on the surface.
 
+## Sound (opt-in)
+
+```ts
+circle({ id: 'marble', fill: 'accent.amber', r: 30, sound: 'marble' }); // the node's voice: the bank's sound "marble.<kind>", or "marble"
+popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names the sound of its start
+sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a word; + node: it is panned to that node
+```
+
+- Every intent, contact and burst is an event. `skink3 sfx` makes the track of the shot from them and a bank of sounds that the production brings: the engine holds none. One event makes one sound; a kind the bank does not map is silent.
+- Sound is in measure: only what is seen sounds, and the rules of the bank drop most of the rest (by default no two starts within 0.5 s, and 4 starts in any 10 s). It changes no pixel and no bake.
+
 ## Words, subtitles, generated content
 
 No key is anchored to a word: work out `at` from the word times of the narration; `arrive`, `land` and `at + dur` are exact.
@@ -119,7 +130,7 @@ new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuff
 
 ```
 npx skink3 <command> <scene.ts> [options]     (in the engine: node bin/skink3.mjs)
-check    palette, strings, text fit in every language; both reviews in short
+check    palette, strings, text fit in every language; both reviews in short   [--bank bank.json]
 bake     [--force]
 still    frames as PNG   --frame n[,n] | --time s[,s]   [--hash]
 strip    frames side by side   --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -129,6 +140,8 @@ motion   [--pictures [--top 3]]
 physics  [--pictures [--top 3]]
 trail    a ghost trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph    a speed graph   --node id | --camera   [--from f] [--to f] | [--time s,s]
+events   every intent, contact and burst of the shot, as JSON
+sfx      the sound track, a WAV   --bank bank.json
 common   --lang tag (the first table)   --width px (1920)   --cpu   --out file   --cache dir
 ```
 
@@ -163,7 +176,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page** (the rules the API enforces); **Minimal example** (running a scene); **Space, time, units** (where the origin is); **Colours: the palette** (its laws); **Text: string tables** (keys, languages, the font); **`shot`** (every option; the camera, its path, the physics); **`layer`** (what the depth gives); **Nodes** (every node in full; glow, covers, clipping, levels); **Timeline: intents** (every intent and rule; profiles, travel, opacity, stagger); **Springs: secondary motion** (how they behave); **Rigid bodies** (what a body can and cannot do); **Generating content in a scene** (seeded numbers); **Checks** (what fails, what warns); **Motion review**, **Physics review** (what to know when writing); **Command line** (output files); **From another repository** (depending on the engine); **Programmatic use** (a bake, a node or a frame in a test); **What is not there yet** (what to do without).
+SCENES.md: **The model in one page** (the rules the API enforces); **Minimal example** (running a scene); **Space, time, units** (where the origin is); **Colours: the palette** (its laws); **Text: string tables** (keys, languages, the font); **`shot`** (every option; the camera, its path, the physics); **`layer`** (what the depth gives); **Nodes** (every node in full; glow, covers, clipping, levels); **Timeline: intents** (every intent and rule; profiles, travel, opacity, stagger); **Springs: secondary motion** (how they behave); **Rigid bodies** (what a body can and cannot do); **Generating content in a scene** (seeded numbers); **Checks** (what fails, what warns); **Motion review**, **Physics review** (what to know when writing); **Sound** (events, the bank of sounds, its rules, the track); **Command line** (output files); **From another repository** (depending on the engine); **Programmatic use** (a bake, a node or a frame in a test); **What is not there yet** (what to do without).
 
 MOTION-REVIEW.md: **The findings** (each kind in full; what is not flagged), **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

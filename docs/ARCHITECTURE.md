@@ -15,6 +15,7 @@ scene (TypeScript) ──► look ──► motion ──► physics bake ──
 checks (before render): types, palette laws, string tables, text fit per language
 review (no render needed): the motion of every node as findings, ghost trails, speed graphs;
                            the soundness of the simulation as findings, close-ups
+sound (no render needed):  the events of a shot; its sound track from a bank of sounds, in measure
 ```
 
 ## Modules
@@ -30,12 +31,12 @@ review (no render needed): the motion of every node as findings, ghost trails, s
 | `camera` | steady drift plus low-frequency wander, exponential push-in, parallax view per depth layer; instead of the straight drift, a free-form path: round a closed loop or there and back at a set speed, or once over the shot with eased ends; closed-form in the frame number | spring follow, zoom through scales, keyed zoom |
 | `text` | per-language string tables; one bundled OFL family (Latin, Latin Extended, Cyrillic, Vietnamese) registered under the engine's own family name; auto-fit layout (wrap at spaces, keep words joined by a no-break space together, balance, shrink, report overflow); label geometry; subtitles from the word timings of a narration (cues cut at sentences and pauses, written as .srt, .vtt and .ytt) | a check that the font has every glyph of a string; shaping and fallback fonts for all scripts (CJK, Arabic, Devanagari…), right-to-left text, bubbles, titles, counters |
 | `render` | compositing on Skia GPU with CPU fallback: background gradient, glow lift, layers back to front with blur by depth and atmospheric perspective, group opacity (a faded subtree is drawn as one picture, then faded), tapered pulses, links that glow, two-tone particles, halos, vignette; covers that take what is behind them out of the halo and of the background lift; clipping to a shape and to the filled part of a content; squash and stretch of a subtree; raw RGBA out; stills, strips and contact sheets; ffmpeg encoding; parallel chunk workers with progress, concatenation, and a clean stop when a worker fails | sub-frame motion blur, transitions, 4K master presets |
-| `audio` | — (contact events are recorded by the bake for later use) | narration import, sound effects from physics and UI events, music bed with ducking, mixdown |
-| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning); the findings of the motion review and of the physics review in short form, as warnings | — |
+| `audio` | the events of a shot: every intent, every contact and every burst, on its frame, with what is seen of it (size, speed and place on screen, and whether it is seen at all); a bank of sounds that a production brings (sounds by key, a table from kinds of events to sounds, curves of gain against size, speed and impulse, density rules with quiet defaults); the plan of what is heard (one sound per event, only what is seen, thresholds, merging, gaps, a cap on the starts in a window and on the voices at once, priorities, a seeded jitter of pitch and gain); the track of a shot: 48 kHz stereo, each sound on the first sample of its frame, panned by its place on screen, the same bytes for the same scene, bank and seed; PCM WAV read and written without a library | narration import, music bed with ducking, the mix of a film; sounds that follow a node or last as long as an action |
+| `checks` | strict `tsc --noEmit`; unit and determinism tests on `node:test`; palette laws; string tables complete in every language; text fit per language (overflow, leaving the frame, label overlaps as errors; a label covering a node other than its target as a warning); the findings of the motion review and of the physics review in short form, as warnings; the sound keys of a shot against a bank of sounds, when one is given | — |
 | `review` | the motion review, for reviewers that cannot watch a video: the series of every node, link, emitter, spring and of the camera at every frame, in the space of the layer and on screen; findings from it (jump, abrupt start and stop, mechanical move, strobing speed, springs that ring or never bounce, dead areas of the frame) with every threshold in one file; the level of a content judged like a move; what is wholly behind a cover or outside its clip left out; the life of the background in numbers (the camera's drift, travel and the box it stays in, the slide of every layer, the speed of the particles); intended exceptions marked in the scene; a report as capped text and complete JSON; ghost trails and speed graphs drawn on the engine's canvas. The physics review, from the bake: the distance and depth of every pair of colliders worked out in plain arithmetic, apart from the physics library; findings (overlap, tunnelling through a wall or a gap, escape, jitter at rest, a pile that does not settle, speed from nowhere, a hit by a body that is not drawn, broken numbers) with every threshold in one file; the same intended exceptions; a report of the same form; close-ups with the bodies ringed | calibration of the thresholds against reference videos; the physics review for soft bodies, ropes, fluids and joints when those are built |
-| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`, `motion`, `trail`, `graph`, `physics`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
+| `cli` | `check`, `bake`, `still`, `strip`, `sheet`, `render`, `motion`, `trail`, `graph`, `physics`, `events`, `sfx`; scene modules from any directory; output and cache under the caller's working directory | `preview` window, per-language batch render |
 
-Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`; `scene` uses all of these plus `text` and `camera`; `physics` bakes what `scene` describes; `render` draws what `scene` evaluates; `review` reads what `scene` evaluates and draws its pictures with `render`; `checks` and `cli` sit on top.
+Dependencies point one way: `core` ← `shape` ← `look`; `motion` uses `core`; `scene` uses all of these plus `text` and `camera`; `physics` bakes what `scene` describes; `render` draws what `scene` evaluates; `review` reads what `scene` evaluates and draws its pictures with `render`; `audio` reads the series of `review` and the contacts of the bake, and draws nothing; `checks` and `cli` sit on top.
 
 ## Data flow
 
@@ -69,13 +70,23 @@ Whether the simulation is sound is answered from the bake, in one pass over the 
 
 It is synchronous and takes a fraction of a second on a shot with five hundred bodies, so it runs in every `skink3 check`. When the physics of the engine changes, this review changes with it in the same piece of work. Guide: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
 
+## The sound of a shot
+
+The sound effects of a shot are made from what happens in it, in three steps, none of which draws anything:
+
+1. **Events.** `sceneEvents` reads the timeline, the contacts the bake recorded and the bursts of the emitters, and the motion series of the shot. Every key of the timeline is an event (two when it has a start and an arrival that both matter), every contact and every burst is one. An event falls on a frame and says what is seen of it: its size, its peak speed and its place on screen, and whether it is seen at all, by the rules of the motion review.
+2. **Plan.** `planSound` holds the events against a bank of sounds. One event makes one sound: the scene's own word first, then the voice of the node, then the bank's table of kinds. What is not seen is dropped, then what is too small, too slow or too weak, and then the density rules thin the rest: events of one kind close together sound as one, sounds of one kind keep a gap and a crowd of them is a few, any two starts keep a gap, a window of time holds only so many starts, and only so many voices sound at once. Where a rule has to choose, the event that matters more stays. Every dropped event is kept with its rule, for the report.
+3. **Mix.** `mixVoices` brings each take to 48 kHz and to its pitch in one band-limited resampling, lays it on the first sample of its frame, panned by its place on screen, and cuts it where the shot ends. The track is written as a 24-bit PCM WAV exactly as long as the shot.
+
+A film is never crowded with sound, so the defaults of the rules are quiet, and they are data of the bank, not code. The engine holds no sound files. Sound is no part of the scene hash: it changes neither the bake nor a pixel. Guide: [SCENES.md](SCENES.md#sound).
+
 ## The bake cache
 
 A cache file is `cache/<shot id>-<key>.bake` under the caller's working directory. The key is derived from:
 
 - the **engine version**: the package version plus a fingerprint of the engine's sources, so any engine change invalidates old caches;
 - the **physics version**: the exact pin of the rigid-body library;
-- the **scene hash**: everything in the shot except the string tables (a translation does not re-bake);
+- the **scene hash**: everything in the shot except the string tables (a translation does not re-bake), the intended exceptions of the reviews, and everything about sound (a sound key never re-bakes);
 - the **seed**.
 
 The file holds a JSON header (the key, slot names, contact events) and five binary sections: body poses, spring positions, the particle index, the particles and the particle velocities, as 32-bit floats. The evaluator reads state only from this representation, whether the bake was just computed or loaded from disk. Nothing is drawn from the velocities; the motion review reads them to know how fast a particle travels.
@@ -88,6 +99,8 @@ The file holds a JSON header (the key, slot names, contact events) and five bina
 - Rapier runs in its deterministic build; bodies join the world in a fixed order.
 - Caches inside a process (paths, lit parts, text outlines, layouts) are keyed by their full input, so a hit returns what a miss would compute.
 - GPU frames are exported with 4× MSAA. Stacked fills that share an edge (a crescent on its shape) resolve cleanly this way. On one machine and driver the GPU output is bit-exact between processes, between single frames and full renders, and between worker counts; the tests and the numbers in the README cover this. The CPU path is also deterministic but its pixels differ from the GPU's, and different GPUs or drivers are not expected to match bit for bit.
+
+- The sound track of a shot is a pure function of the scene, the bake, the bank and the seed. Events fall on frames, the jitter of a sound comes from a stream of the shot's seed named by its event, and resampling and mixing are plain arithmetic in a fixed order: the same inputs give the same bytes.
 
 ## Output formats
 
