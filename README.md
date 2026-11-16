@@ -155,7 +155,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
 | 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths and camera keys, covers, clipping and levels, strokes, free-standing text and counters, free-form regions are built) | three reference shots (dark, light, microscopic) | next |
-| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, squashes, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
+| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, turns and travels whose speed is keyed over time, squashes, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
 | 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | planned |
 

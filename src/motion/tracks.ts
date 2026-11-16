@@ -527,6 +527,8 @@ export interface TurnSeg {
   /** How its speed is spread, without an overshoot; null: the turn that shoots past and settles. */
   readonly profile: Exclude<MoveProfile, 'settle'> | null;
   readonly ramp: number;
+  /** A speed that changes over the turn, in degrees per second, or null. */
+  readonly speeds: SpeedKeys | null;
 }
 
 export interface RotTrack {
@@ -546,7 +548,7 @@ export function buildRotTrack(id: string, base: number, keys: readonly TurnToKey
     }
     // A key made with a speed turns by so many degrees from where the node is.
     const to = k.by === undefined ? k.to : from + k.by;
-    segs.push({ at: k.at, dur: k.dur, from, to, overshoot: k.overshoot, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP });
+    segs.push({ at: k.at, dur: k.dur, from, to, overshoot: k.overshoot, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP, speeds: k.speeds ?? null });
     from = to;
     free = k.at + k.dur;
   }
@@ -563,6 +565,8 @@ export function sampleRot(track: RotTrack, t: number): number {
   if (!seg) return track.base;
   const u = (t - seg.at) / seg.dur;
   if (u >= 1) return seg.to;
+  // Keys of speed: the angle is what the speeds have added up to by then.
+  if (seg.speeds) return seg.from + speedDistance(seg.speeds, t - seg.at);
   if (seg.profile !== null) {
     const [a, b] = profileRamps(seg.profile, seg.ramp);
     return seg.from + (seg.to - seg.from) * rampProgress(Math.max(0, u), a, b);

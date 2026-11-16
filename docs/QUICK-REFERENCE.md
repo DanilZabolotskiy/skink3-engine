@@ -83,7 +83,7 @@ moveTo('dot', { at: 1.2, to: [260, -40], /* = */ dur: 1.1, anticipation: 0.08, o
 moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive, instead of at: when it first reaches `to`
 hop('buddy', { at: 4.3, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur:, or speeds: [[s, speed], ...]); + roll: r, a wheel of that radius
-turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); speed: degrees per second, instead of to
+turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); instead of to: speed (degrees per second), or speeds: [[s, speed], ...]
 scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes (a bar from one end)
 fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 }); // an opacity
 popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at

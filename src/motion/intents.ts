@@ -3,7 +3,7 @@
 // overshoot and settle; see curves.ts and tracks.ts.
 
 import type { Vec2 } from '../core/math.ts';
-import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
+import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDistance, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
 import { pathLength, type PathSpec } from './paths.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
 
@@ -108,8 +108,13 @@ export interface TurnToKey extends Voiced {
    */
   readonly profile?: Exclude<MoveProfile, 'settle'>;
   readonly ramp?: number;
-  /** Degrees to turn by from wherever the node is, instead of to an absolute angle (a key made with `speed`). */
+  /** Degrees to turn by from wherever the node is, instead of to an absolute angle (a key made with `speed` or with `speeds`). */
   readonly by?: number;
+  /**
+   * A speed that changes over the turn: [seconds after the start, degrees per second], joined smoothly; after the
+   * last key it stays. Left out: a turn to an angle, or at one speed with the eased ends of its profile.
+   */
+  readonly speeds?: SpeedKeys;
 }
 
 export interface BumpKey extends Voiced {
@@ -602,14 +607,34 @@ export function popOut(id: string, opts: { at: number; dur?: number; sound?: str
  *
  *   turnTo('wheel', { at: 0, dur: 14, speed: 72, profile: 'steady' })
  *   turnTo('wheel', { at: 14, dur: 6, speed: 72, profile: 'out' })
+ *
+ * With `speeds` the speed of the turn is keyed over time, as the speed of a
+ * travel is: [[seconds after the start, degrees per second], ...], the first
+ * at 0. Between two keys the speed changes smoothly; after the last it stays,
+ * until `dur` ends the turn (left out: at its last key). A speed may be 0 (the
+ * node rests there) and may be negative.
+ *
+ *   turnTo('wheel', { at: 2, speeds: [[0, 90], [1.5, 40], [4, 12]], dur: 9 })
  */
 export function turnTo(
   id: string,
-  opts: { at: number; to?: number; speed?: number; dur?: number; overshoot?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; sound?: string | false },
+  opts: {
+    at: number;
+    to?: number;
+    speed?: number;
+    /** Keys of speed over time, instead of `to` or `speed`: [[seconds after the start, degrees per second], ...], the first at 0. */
+    speeds?: SpeedKeys;
+    dur?: number;
+    overshoot?: number;
+    profile?: Exclude<MoveProfile, 'settle'>;
+    ramp?: number;
+    sound?: string | false;
+  },
 ): TurnToKey {
   const w = `turnTo("${id}")`;
-  only(w, opts, ['at', 'to', 'speed', 'dur', 'overshoot', 'profile', 'ramp', 'sound']);
-  if ((opts.to === undefined) === (opts.speed === undefined)) throw new IntentError(`${w}: give either to (an angle in degrees) or speed (degrees per second, from where it is)`);
+  only(w, opts, ['at', 'to', 'speed', 'speeds', 'dur', 'overshoot', 'profile', 'ramp', 'sound']);
+  if (opts.speeds !== undefined) return turnAtSpeeds(w, id, opts);
+  if ((opts.to === undefined) === (opts.speed === undefined)) throw new IntentError(`${w}: give either to (an angle in degrees) or speed (degrees per second, from where it is), or speeds (keys of speed over time)`);
   // A speed is the speed of a steady stretch: it asks for a profile, and takes 'steady' when none is named.
   const profile = opts.profile === undefined && opts.speed === undefined ? undefined : profileOf(w, opts.profile, RAMPED, 'steady');
   if (profile !== undefined && (opts.overshoot ?? 0) !== 0) throw new IntentError(`${w}: a turn with a profile has no overshoot; leave overshoot out`);
@@ -632,6 +657,36 @@ export function turnTo(
     // A turn without a profile is the key it always was.
     ...(profile === undefined ? {} : { profile, ...(profile === 'steady' ? {} : { ramp }) }),
     ...(by === undefined ? {} : { by }),
+    ...voiced(w, opts),
+  };
+}
+
+/** A turn whose speed is keyed over time: the angle is what the speeds add up to. */
+function turnAtSpeeds(w: string, id: string, opts: Parameters<typeof turnTo>[1]): TurnToKey {
+  if (opts.to !== undefined || opts.speed !== undefined || opts.profile !== undefined || opts.ramp !== undefined || opts.overshoot !== undefined) {
+    throw new IntentError(`${w}: speeds says how fast the turn goes at every moment; leave to, speed, profile, ramp and overshoot out`);
+  }
+  if (!Array.isArray(opts.speeds) || opts.speeds.length < 2) throw new IntentError(`${w}: speeds must be a list of at least two keys [seconds, degrees per second]`);
+  const speeds = opts.speeds.map((k, i) => {
+    if (!Array.isArray(k) || k.length !== 2) throw new IntentError(`${w}: speeds[${i}] must be [seconds, degrees per second]`);
+    return [num(w, `speeds[${i}][0]`, k[0], 0, 3600), num(w, `speeds[${i}][1]`, k[1], -1e5, 1e5)] as [number, number];
+  });
+  if (speeds[0]![0] !== 0) throw new IntentError(`${w}: the first key of speeds is at 0 seconds: the speed the turn starts with`);
+  for (let i = 1; i < speeds.length; i++) {
+    if (!(speeds[i]![0] > speeds[i - 1]![0])) throw new IntentError(`${w}: the keys of speeds must be in order of time; key ${i} is at ${speeds[i]![0]} s, after ${speeds[i - 1]![0]} s`);
+  }
+  const last = speeds[speeds.length - 1]![0];
+  const dur = num(w, 'dur', opts.dur ?? last, 0.05, 3600);
+  if (dur < last - 1e-9) throw new IntentError(`${w}: dur (${dur} s) ends the turn before its last key of speed, at ${last} s; lengthen dur or drop the key`);
+  return {
+    kind: 'turnTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: 0,
+    dur,
+    overshoot: 0,
+    by: speedDistance(speeds, dur),
+    speeds,
     ...voiced(w, opts),
   };
 }

@@ -587,6 +587,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
 | `turnTo(id, { at, speed, ... })` | shape, group, stroke, text | `dur` (0.8), `profile` (`'steady'`), `ramp` (0.3) | turns at a speed, with a profile (see A turn at a speed) |
+| `turnTo(id, { at, speeds, ... })` | shape, group, stroke, text | `dur` (up to its last key) | turns at a speed that is keyed over time (see A turn whose speed changes) |
 | `turnTo(id, { at, to, ... })` | shape, group, stroke, text | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
 | `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
@@ -724,10 +725,29 @@ turnTo('wheel', { at: 14, dur: 4, speed: 50, profile: 'out' }),         // on at
 | `ramp` | `0.3` | the share of `dur` an eased end takes, for `'ease'`, `'in'` and `'out'` |
 | `speed` | none | instead of `to`: degrees per second on the steady stretch, from wherever the node is; negative turns the other way. The profile is `'steady'` unless another is named |
 
-- Give either `to` or `speed`. With `to` the angle is absolute, and a turn of many revolutions is a large angle: `to: 3600` is ten turns. `dur` may be as long as the shot.
-- **Keys with one `speed` join without a step:** a `'steady'` key, then an `'out'` key with the same speed, is a wheel that spins and slows down. An eased end covers half of what the steady stretch would in its time; the engine works the angle out.
+- Give either `to` or `speed` (or `speeds`, see below). With `to` the angle is absolute, and a turn of many revolutions is a large angle: `to: 3600` is ten turns. `dur` may be as long as the shot.
+- **Keys with one `speed` join without a step:** a `'steady'` key, then an `'out'` key with the same speed, is a wheel that spins and slows down. An eased end covers half of what the steady stretch would in its time; the engine works the angle out. Keys of two speeds meet with a step: for a wheel that changes its speed and turns on, key the speed over time (below).
 - A key may start before the shot (a negative `at`): the wheel is under way at frame 0.
 - The motion review judges a turn like a move: one speed between two rests in view is `mechanical`, also with eased ends when the steady stretch is most of it. A wheel that is already turning when the shot starts, or still turns when it ends, is a flow and is not reported.
+
+### A turn whose speed changes
+
+A `turnTo` with a `speed` keeps one speed on its steady stretch, and two keys of two speeds meet with a step. With `speeds` the speed of the turn is keyed over time, as the speed of a `travel` is: a wheel that slows in two steps and turns on, rollers that turn faster and faster.
+
+```ts
+turnTo('wheel', { at: -1, speed: 90, dur: 3 }),                                   // under way when the shot starts
+turnTo('wheel', { at: 2, speeds: [[0, 90], [1.5, 40], [4, 12]], dur: 9 }),         // slower, slower again, and on at 12 degrees a second
+turnTo('dial', { at: 3, speeds: [[0, 0], [1, 240], [2.5, 0]] }),                   // from rest, up to speed, and back to rest
+```
+
+- `speeds` is a list of keys `[seconds, speed]`: seconds after the start of the turn, and degrees per second. The first key is at 0: the speed the turn starts with. At least two keys, in order of time.
+- **Between two keys the speed changes smoothly** from one to the other, without a kink; after the last key it stays. Half-way between two keys it is half-way between their speeds.
+- **The angle follows from the speeds:** the node turns from wherever it is by what they add up to. `dur` is how long the key lasts; left out, it ends at its last key. It may not end before it.
+- A speed may be 0, where the node rests, and negative, where it turns the other way: a key from a speed to 0 slows to rest, a key through 0 swings back.
+- `speeds` stands in for `to`, `speed`, `profile`, `ramp` and `overshoot`.
+- **Keys join without a step** where the speed is the same on both sides: a `'steady'` key at 90 degrees a second, then `speeds` that start at 90, then a `'steady'` key at the last of them.
+- **In step with a travel.** A roller of radius `r` under a belt turns `speed / r` radians a second: give it the keys of the travel with each speed times `180 / (π × r)`, and it turns exactly as far as a thing on the belt rolls.
+- The motion review judges it as any turn: a start at speed from rest in view is an `abrupt-start`.
 
 ### Size along one axis
 

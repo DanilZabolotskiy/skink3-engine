@@ -144,6 +144,7 @@ Whether the simulation itself is sound is a different question: bodies that sink
 
 - **Strokes and free-standing texts** are nodes like shapes: their moves, turns, sizes and fades are judged as a shape's. A stroke that is being drawn, a counter that runs and a link that bends are not judged for their speed; they count as life.
 - **A change of width and height** (`scaleTo` with `to: [sx, sy]`) is judged on the scale channel, as the travel of the edge along each axis, the larger of the two.
+- **A turn whose speed is keyed** (`turnTo` with `speeds`) is judged as any turn, on the rotation channel: a start at speed from rest in view is an abrupt start, a wheel that never rests in the shot is a flow. Where two keys meet at one speed there is nothing to report.
 - **Camera keys** (`cameraTo`) are judged as the camera always is: a jump, an abrupt start or stop of its position or of its zoom. A keyed zoom is measured as a ratio, because that is what it is to the eye: a zoom from 10 to 20 is the change that one from 1 to 2 is.
 
 ## Thresholds
