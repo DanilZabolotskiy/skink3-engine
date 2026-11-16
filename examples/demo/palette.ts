@@ -1,7 +1,9 @@
-// The demo palette. It was built for this shot under the look laws (see
-// docs/PRINCIPLES.md): the darks are saturated and sit between blue and violet,
-// nothing is gray, and the accents come in warm/cool pairs. Colours are given
-// as hue, saturation and value so that the construction stays visible.
+// The demo palette: the colour scheme of the examples. Colours are given as
+// hue, saturation and value so that the construction stays visible.
+//
+// The engine has no rule about colour. The `rules` below are this palette's
+// own: what the examples promise about their colours, held by `skink3 check`.
+// A palette without `rules` is not checked for anything.
 
 import { definePalette, hsv } from 'skink3-engine';
 
@@ -39,5 +41,15 @@ export const palette = definePalette({
   pairs: [
     ['amber', 'aqua'],
     ['coral', 'azure'],
+  ],
+  rules: [
+    { name: 'deep is the darkest', roles: ['deep'], lightness: [0, 12] },
+    { name: 'dark stays dark', roles: ['dark'], lightness: [12, 30] },
+    { name: 'mid lies between', roles: ['mid'], lightness: [30, 60] },
+    { name: 'light is light', roles: ['light'], lightness: [85, 100] },
+    { name: 'no gray in the dark', roles: ['deep', 'dark'], saturation: [0.5, 1] },
+    { name: 'accents are vivid', roles: ['accent'], saturation: [0.6, 1] },
+    { name: 'accents are bright', roles: ['accent'], value: [0.7, 1] },
+    { name: 'a warm accent with a cool one', pairs: { atLeast: 1, first: [330, 75], second: [150, 270], apart: 90 } },
   ],
 });

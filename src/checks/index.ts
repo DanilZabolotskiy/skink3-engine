@@ -1,4 +1,4 @@
-// Pre-render checks of a shot: palette laws, string tables, the glyphs of every
+// Pre-render checks of a shot: the rules its palette declares, string tables, the glyphs of every
 // string, text fit in every language, the sound keys against a bank when one is given, and, when asked
 // for, the motion review and the physics review in short form. `tsc` and the
 // unit tests are separate steps (see the npm scripts).
@@ -53,7 +53,8 @@ export interface CheckOptions {
 export function runChecks(c: CompiledShot, bake: Bake, langs?: readonly string[], opts: CheckOptions = {}): CheckReport {
   const languages = langs ?? languagesOf(c.spec.strings);
   const issues: CheckIssue[] = [];
-  for (const i of checkPalette(c.spec.palette)) issues.push({ check: 'palette', severity: 'error', message: `${i.law}: ${i.message}` });
+  // The rules the palette declares for itself; a palette without rules has none to break.
+  for (const i of checkPalette(c.spec.palette)) issues.push({ check: 'palette', severity: 'error', message: `${i.rule}: ${i.message}` });
   for (const i of checkStrings(c.spec.strings, c.stringKeys)) issues.push({ check: 'strings', severity: 'error', message: i.message });
   for (const i of checkGlyphs(c, languages)) issues.push({ check: 'glyphs', severity: 'error', message: i.message });
   const fit = checkTextFit(c, bake, languages);

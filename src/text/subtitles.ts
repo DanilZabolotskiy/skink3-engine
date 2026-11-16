@@ -186,10 +186,10 @@ export function formatVtt(cues: readonly Cue[]): string {
 }
 
 export interface YttStyle {
-  /** Text colour, "#RRGGBB"; default "#FEFEFE" (the player drops pure white). */
-  readonly color?: string;
-  /** Colour of the outline and of the box behind the line; default "#080808". */
-  readonly edge?: string;
+  /** Text colour, "#RRGGBB". The engine has none of its own: the production gives it. (The player drops pure white: use "#FEFEFE".) */
+  readonly color: string;
+  /** Colour of the outline and of the box behind the line, "#RRGGBB". */
+  readonly edge: string;
   /** Opacity of the box behind the line, 0..255; default 150. */
   readonly box?: number;
   /** Size in percent of the viewer's own size; default 100. */
@@ -205,13 +205,15 @@ export interface YttStyle {
  * .srt it carries the colour, the outline, the size and the place of the text.
  * One pen and one position for the whole file.
  */
-export function formatYtt(cues: readonly Cue[], style: YttStyle = {}): string {
-  const hex = (name: string, v: string): string => {
-    if (!/^#[0-9a-fA-F]{6}$/.test(v)) throw new Error(`subtitles: ${name} must be "#RRGGBB", got ${JSON.stringify(v)}`);
+export function formatYtt(cues: readonly Cue[], style: YttStyle): string {
+  const hex = (name: string, v: unknown): string => {
+    if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) {
+      throw new Error(`subtitles: ${name} must be "#RRGGBB", got ${JSON.stringify(v)}; the colours of a subtitle are the production's to give (color: the text, edge: its outline and its box)`);
+    }
     return v.toUpperCase();
   };
-  const color = hex('color', style.color ?? '#FEFEFE');
-  const edge = hex('edge', style.edge ?? '#080808');
+  const color = hex('color', style?.color);
+  const edge = hex('edge', style?.edge);
   const box = Math.max(0, Math.min(255, Math.round(style.box ?? 150)));
   const size = Math.round(style.size ?? 100);
   const [ah, av] = (style.position ?? [50, 96]).map((v) => Math.max(0, Math.min(100, Math.round(v)))) as [number, number];

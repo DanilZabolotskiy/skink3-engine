@@ -1,6 +1,6 @@
 # Metrics tools
 
-`tools/metrics/` measures the look and motion of any video: a reference you study, or your own render. The same numbers on both make the comparison objective. The targets are in [PRINCIPLES.md](PRINCIPLES.md#6-measured-look).
+`tools/metrics/` measures the look and motion of any video: a reference you study, or your own render. The same numbers on both make the comparison objective. The targets of motion are in [PRINCIPLES.md](PRINCIPLES.md#6-measured-look); for tone and colour the engine has none: they are the production's choice, and these tools only measure them.
 
 Requirements: Python 3.11+ with numpy, scipy, opencv-python and Pillow; ffmpeg on `PATH`. Run the scripts with `python -I` when they read downloaded files.
 
@@ -37,6 +37,6 @@ python -I tools/metrics/palette.py $METRICS_DIR <id> 0
 
 ## Reading the numbers
 
-**Tone depends on the kind of shot.** The norm "about 60 % of pixels below L* 30" is an average over whole videos, which mix dark and bright shots. `roles.py` therefore also prints the share per frame, separately for dark frames (V below 0.3 on more than half of the frame) and for the others. Compare a single dark shot with the dark frames of the reference, not with the average: on the six reference videos the dark frames have a median of 88 % below L* 30 (quartiles 78–95 %), and the other frames a median of 40 %.
+**Tone depends on the kind of shot.** A share such as "about 60 % of pixels below L* 30", measured on reference videos, is an average over whole videos, which mix dark and bright shots; it is a number to compare with, not a rule. `roles.py` therefore also prints the share per frame, separately for dark frames (V below 0.3 on more than half of the frame) and for the others. Compare a single dark shot with the dark frames of the reference, not with the average: on the six reference videos the dark frames have a median of 88 % below L* 30 (quartiles 78–95 %), and the other frames a median of 40 %.
 
 **Drift is the strongest motion in the picture, not always the camera.** `still.py` finds the shift between frames by phase correlation. When something large moves through the shot (a stream of falling things, a crowd, a wipe), the number is that motion: the output shows it as a median shift straight along the flow (`dx`, `dy`). To read the camera on such a shot, give `still.py` a crop that the flow does not cross, for example the half of the frame beside it: `python -I tools/metrics/still.py shot.mp4 0 960,0,960,1080`. A crop also changes the static share and the holds, which are then those of that region. The analysis runs at 160 px across, so a slow drift is read a little low: a camera travelling 0.45–0.7 px per frame measured 0.3–0.5.

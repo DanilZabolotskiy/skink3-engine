@@ -7,8 +7,9 @@
 
 import { Path2D, type CanvasRenderingContext2D } from 'skia-canvas';
 import { quadAt, TAU, vrot, type Quad, type Vec2 } from '../core/math.ts';
-import { atmosphereTone, lightTone, shadowTone, withAlpha } from '../look/color.ts';
+import { atmosphereTone, HIGHLIGHT_HUE, lightTone, SHADOW_HUE, shadowTone, withAlpha } from '../look/color.ts';
 import { litParts } from '../look/light.ts';
+import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
@@ -20,16 +21,18 @@ import { ensureFonts, fontString } from '../text/fonts.ts';
 
 export type ToneKind = 'base' | 'shadow1' | 'shadow2' | 'rim' | 'highlight' | 'glow' | 'pulse' | 'pulseHead';
 
-function derive(kind: ToneKind, hex: string): string {
+const DEFAULT_HUES: ToneHues = { shadow: SHADOW_HUE, highlight: HIGHLIGHT_HUE };
+
+function derive(kind: ToneKind, hex: string, hues: ToneHues): string {
   switch (kind) {
     case 'base': return hex;
-    case 'shadow1': return shadowTone(hex, 1);
-    case 'shadow2': return shadowTone(hex, 2);
-    case 'rim': return lightTone(hex, 0.36);
-    case 'highlight': return lightTone(hex, 0.7);
-    case 'glow': return lightTone(hex, 0.22);
-    case 'pulse': return lightTone(hex, 0.4);
-    case 'pulseHead': return lightTone(hex, 0.72);
+    case 'shadow1': return shadowTone(hex, 1, hues.shadow);
+    case 'shadow2': return shadowTone(hex, 2, hues.shadow);
+    case 'rim': return lightTone(hex, 0.36, hues.highlight);
+    case 'highlight': return lightTone(hex, 0.7, hues.highlight);
+    case 'glow': return lightTone(hex, 0.22, hues.highlight);
+    case 'pulse': return lightTone(hex, 0.4, hues.highlight);
+    case 'pulseHead': return lightTone(hex, 0.72, hues.highlight);
   }
 }
 
@@ -44,12 +47,13 @@ export interface Paint {
 const paints = new Map<string, Paint>();
 
 /**
- * The paint of a layer: the shot's light, and atmospheric perspective of the
- * given strength (0..1) toward the atmosphere colour. Cached; the result for the
- * same arguments is always the same.
+ * The paint of a layer: the shot's light, atmospheric perspective of the
+ * given strength (0..1) toward the atmosphere colour, and the hues the tones
+ * lean to (those of the shot's palette). Cached; the result for the same
+ * arguments is always the same.
  */
-export function makePaint(light: Vec2, atmosphere: string, tint: number): Paint {
-  const key = `${light[0]},${light[1]}|${atmosphere}|${tint}`;
+export function makePaint(light: Vec2, atmosphere: string, tint: number, hues: ToneHues = DEFAULT_HUES): Paint {
+  const key = `${light[0]},${light[1]}|${atmosphere}|${tint}|${hues.shadow}|${hues.highlight}`;
   let paint = paints.get(key);
   if (!paint) {
     const cache = new Map<string, string>();
@@ -59,7 +63,7 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number): Paint 
         const k = `${kind}${hex}`;
         let v = cache.get(k);
         if (!v) {
-          v = atmosphereTone(derive(kind, hex), atmosphere, tint);
+          v = atmosphereTone(derive(kind, hex, hues), atmosphere, tint);
           cache.set(k, v);
         }
         return v;

@@ -115,31 +115,39 @@ function hueToward(h: number, target: number, maxDeg: number): number {
   return (h + step + 360) % 360;
 }
 
-/** The hue shadows lean to (indigo) and the hue highlights lean to (warm yellow). */
+/**
+ * The hues the automatic light leans to when a palette says nothing about it
+ * (`tones`): shadows toward this hue, lit tones toward that one. They are the
+ * lean the engine was built with, kept so that a palette which does not name
+ * its own draws as it always did. A palette replaces them, or turns the lean
+ * off, with `tones`.
+ */
 export const SHADOW_HUE = 262;
 export const HIGHLIGHT_HUE = 52;
 
 /**
- * The shadow tone of a colour: darker, more saturated, hue leaning to indigo.
- * `depth` 1 is the normal crescent; 2 is a stacked, deeper shadow.
+ * The shadow tone of a colour: darker, more saturated, its hue leaning toward
+ * `toward` (degrees; null: it keeps its hue). `depth` 1 is the normal
+ * crescent; 2 is a stacked, deeper shadow.
  */
-export function shadowTone(hex: string, depth = 1): string {
+export function shadowTone(hex: string, depth = 1, toward: number | null = SHADOW_HUE): string {
   const c = hexToHsv(hex);
   return toHex(hsvToRgb({
-    h: hueToward(c.h, SHADOW_HUE, 14 * depth),
+    h: toward === null ? c.h : hueToward(c.h, toward, 14 * depth),
     s: clamp01(c.s * 1.12 + 0.08 * depth),
     v: c.v * 0.6 ** depth,
   }));
 }
 
 /**
- * The lit tone of a colour: lighter, less saturated, hue leaning to warm.
- * `amount` 0..1 sets how far it goes toward white.
+ * The lit tone of a colour: lighter, less saturated, its hue leaning toward
+ * `toward` (degrees; null: it keeps its hue). `amount` 0..1 sets how far it
+ * goes toward white.
  */
-export function lightTone(hex: string, amount = 0.4): string {
+export function lightTone(hex: string, amount = 0.4, toward: number | null = HIGHLIGHT_HUE): string {
   const c = hexToHsv(hex);
   return toHex(hsvToRgb({
-    h: hueToward(c.h, HIGHLIGHT_HUE, 16 * amount),
+    h: toward === null ? c.h : hueToward(c.h, toward, 16 * amount),
     s: clamp01(c.s * (1 - 0.55 * amount)),
     v: c.v + (1 - c.v) * amount,
   }));

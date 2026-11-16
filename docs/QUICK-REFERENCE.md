@@ -2,32 +2,33 @@
 
 What a scene can use, in short. Open [SCENES.md](SCENES.md) or a review document only at a section the index names. What is in neither is not built.
 
-- A test runs the `ts` blocks. What follows `/* = */` is a default (tested too): it may be left out.
+- A test runs the `ts` blocks. What follows `/* = */` is a default: it may be left out.
 - Units: a stage of 1920 x 1080, origin in the centre, y down; `[x, y]` (a `Vec2`) in the parent's space; seconds of 60 frames; degrees clockwise, 0 right.
 
 ## A scene module
 
 ```ts
-import { circle, definePalette, hsv, label, layer, moveTo, popIn, shot } from 'skink3-engine';
+import { circle, definePalette, hsv, layer, moveTo, popIn, shot } from 'skink3-engine';
 
 const palette = definePalette({
   deep: { night: hsv(250, 0.88, 0.2), abyss: hsv(240, 0.9, 0.11) }, dark: { indigo: hsv(258, 0.8, 0.5) },
   mid: { mist: hsv(250, 0.46, 0.74) }, accent: { amber: hsv(40, 0.86, 0.99), aqua: hsv(176, 0.72, 0.93) },
-  light: { cream: hsv(52, 0.34, 0.99) }, pairs: [['amber', 'aqua']],
+  light: { cream: hsv(52, 0.34, 0.99) },
 });
+const dawn = definePalette({ ...palette.spec, deep: { ...palette.spec.deep, night: hsv(214, 0.7, 0.34) }, rules: [{ roles: ['accent'], saturation: [0.6, 1] }], tones: { shadowHue: 250 } }); // a variant: same names, other colours; a shot draws with the palette it names
 const scene = shot({
   id: 'minimal', seconds: 4, seed: 1, palette, strings: { en: { 'label.dot': 'A dot' } },
   background: { inner: 'deep.night', outer: 'deep.abyss' }, atmosphere: 'mid.mist',
   layers: [layer({ id: 'stage', depth: 0, nodes: [
     circle({ id: 'dot', at: [-300, 60], r: 90, fill: 'accent.aqua' }),
-    label({ id: 'tag', text: 'label.dot', target: 'dot', fill: 'light.cream', ink: 'deep.night' }),
   ] })],
   timeline: [popIn('dot', { at: 0.3 }), moveTo('dot', { at: 1.2, to: [260, -40] })],
 });
 export default scene;
 ```
 
-Colours: palette references only. On-screen text: keys of `strings`, every key in every language. Random numbers: `Rng` only. A mistake or an option that is not taken is refused, with what to change.
+- Colours: palette references only. On-screen text: keys of `strings`, every key in every language. Random numbers: `Rng` only. A mistake or an option that is not taken is refused, with what to change.
+- The engine has no colour rule. `rules`: the palette's own, held by `check` (per `roles`: `lightness`, `saturation`, `value`, `meanSaturation`, `hue` + `share`; `pairs`). `tones`: where shadows and lights lean (`null`: nowhere).
 
 ## Shot, camera, layers
 
@@ -41,7 +42,7 @@ layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 
 - `drift.speed`: units per frame along `heading` (the norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers the path once.
-- `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to`: where it looks at the end. Drift, wander and push-in stay on top.
+- `cameraTo`: `zoom` is a factor of the authored view; `to`: where it looks at the end. Drift, wander and push-in stay on top.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
 
 ## Nodes
@@ -110,8 +111,7 @@ stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); /
 
 ```ts
 emitter({ id: 'fizz', colors: ['accent.aqua'], size: [4, 8], life: 4, rate: 9, sizing: 'steady', clipTo: 'drink', /* = */ area: [0, 0], prewarm: 0, direction: -90, spread: 360, speed: [20, 60], gravity: [0, 0], drag: 0.8 });
-rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { amp: 5, length: 160, speed: 40 } }, children: [group({ id: 'surface' })] });
-rect({ id: 'wall', fill: 'dark.indigo', w: 240, h: 300, cover: true, backdrop: true });
+rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { amp: 5, length: 160, speed: 40 } } });
 ```
 
 - An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
@@ -125,12 +125,11 @@ popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names 
 sfx('chime', { at: 6.5, /* = */ gain: 1 }); // placed by hand, as on a word; + node: panned to it
 ```
 
-- `skink3 sfx` makes the track from the shot's events (every intent, contact and burst) and the production's bank: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes.
-- You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`): a tile per sound, its frame, its node ringed, an arrow along a move.
+- `skink3 sfx` makes the track from the shot's events and the production's bank; only what is seen sounds. Read it on `sfx --sheet`: a tile per sound, with its frame and node.
 
 ## Words, generated content
 
-No key is anchored to a word: work out `at` from the word times of the narration; `arrive`, `land` and `at + dur` are exact. Subtitles from those times: `cuesFromWords` (Programmatic use).
+No key is anchored to a word: work out `at` from the word times of the narration; `arrive`, `land` and `at + dur` are exact.
 
 ```ts
 new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuffle, next, sign, gauss, stream
@@ -140,7 +139,7 @@ new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuff
 
 ```
 npx skink3 <command> <scene.ts> [options]     (in the engine: node bin/skink3.mjs)
-check    palette, strings, glyphs, text fit in every language; both reviews in short  [--bank bank.json]
+check    palette, strings, glyphs, text fit in every language; the reviews in short  [--bank bank.json]
 bake     [--force]
 still    frames as PNG  --frame n[,n] | --time s[,s]  [--hash]
 strip    frames side by side  --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -155,14 +154,14 @@ sfx      the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 4
 common   --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
-Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a palette law, a missing string, a character no bundled font has, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
+Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a broken rule of the palette, a missing string, a character no bundled font has, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
 
 ## Reading the reviews
 
 Each kind of finding (a warning) and its usual fix:
 
 - `jump`: a teleport or pop: check the keys there; change place while hidden.
-- `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or use `'ease'` or `'in'`.
+- `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or `'ease'`, `'in'`.
 - `abrupt-stop`: no ease-out: `'ease'` or `'out'`, or an overshoot.
 - `mechanical`: one speed between two rests in view: `'ease'`, or let it enter and leave the frame.
 - `too-fast`: over half its size per frame, it strobes: slower, or larger.
@@ -178,6 +177,7 @@ Each kind of finding (a warning) and its usual fix:
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
 
+
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
 ```ts
@@ -186,16 +186,16 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables** (fonts, their characters); **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, reshape, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
-MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
+MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 
-PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**, **What the review cannot tell**.
+PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**.
 
 ## Other exports
 
 ```
-constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES PALETTE_LAWS CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
+constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
 errors: SceneError IntentError PaletteError
-functions (see Generating content in a scene): hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt frameToSeconds secondsToFrame Noise
+functions: hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt frameToSeconds secondsToFrame Noise
 ```

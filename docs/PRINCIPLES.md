@@ -39,7 +39,7 @@ Drawing must be perfect, so motion must be perfect too: no glitches, no crooked 
 - One light direction per shot.
 - Shadow crescent = shape minus the shape shifted toward the light; rim highlight = shape minus the shape shifted away; deep shadows stack.
 - Rounded corners come from a stroke in the shape's own colour; layered outlines are strokes clipped to the shape.
-- Highlights are lighter, less saturated and hue-shifted; shadows are darker and more saturated.
+- Highlights are lighter and less saturated; shadows are darker and more saturated. The hue each leans to is the palette's to set.
 - Glowing things get a line, a halo and a lift of the background.
 
 ## 6. Measured look
@@ -52,11 +52,9 @@ Target norms (checked with `tools/metrics` on renders):
 | Fully static frame pairs | 3–9 %; no hold longer than ~4 s |
 | Camera drift (median) | 0.3–0.7 px per frame at 1080p |
 | Average shot between hard cuts | 8–16 s |
-| Pixels with L* < 30 | about 60 % over a whole video, which mixes dark and bright shots; 78–95 % on a dark shot (median 88 %) |
-| Saturation of dark pixels | about 0.8 |
-| Near-gray pixels (S < 0.12) | about 6 % or less |
-| Hue of dark pixels | mostly 210–300° (blue, indigo, violet) |
 | Texture or grain | none: clean vector and gradients |
+
+These are norms of motion and of the frame. Colour has none here: it is the production's (principle 10). `tools/metrics` still measures the tone of any video, as numbers to compare, not to obey.
 
 ## 7. Checks that can be trusted
 
@@ -66,7 +64,7 @@ Target norms (checked with `tools/metrics` on renders):
 
 ## 8. A reference that follows the code
 
-- [QUICK-REFERENCE.md](QUICK-REFERENCE.md) is the page a scene author reads instead of the whole guide: every feature with its defaults and an example, the command line, how to read the two reviews, and an index of the guide by question.
+- [QUICK-REFERENCE.md](QUICK-REFERENCE.md) is the page a scene author reads instead of the whole guide: every feature with its defaults and an example, the command line, how to read the reviews, and an index of the guide by question.
 - **Whoever adds or changes a feature updates it in the same commit:** an export for scenes, an option or its default, a command or a flag of the CLI, a kind of finding, a section of the guide. The guide ([SCENES.md](SCENES.md)) gets the full text.
 - **A test holds it to the code.** `test/quick-reference.test.ts` fails and names what is missing, runs every example, and holds every default the page shows against the engine.
 - **It stays short.** The same test caps its length. What does not fit goes to the guide, and the page points to the section.
@@ -81,3 +79,11 @@ Target norms (checked with `tools/metrics` on renders):
 - **Every sound has an event the author can see.** The report names the node of each sound, and the sound sheet shows the frame and the node it belongs to: an author who cannot hear checks the track by eye.
 - The engine holds no sounds: a production brings its bank. The limits (thresholds, gaps, caps, priorities) are data of the bank, and the defaults in the engine are quiet rather than busy.
 - Sound never changes a pixel or a bake.
+
+## 10. Colour belongs to the production
+
+- **The engine holds no colour and no rule about colour.** A palette is the scheme of a channel or of a series. Every colour of a frame is one of the shot's palette or derived from one; none is written in the engine code that draws a frame. A test scans the sources for one.
+- **Rules are the production's.** A production may declare rules for its palette, in the palette itself. With none declared the engine checks none.
+- A role of a palette is a name, not a band of lightness or of hue.
+- Review pictures (graphs, trails, close-ups, sheets) have colours of their own: they are no frame of a video.
+- One default remains, for a palette that does not name its own: the two hues the automatic light leans to. A palette replaces them with `tones`.

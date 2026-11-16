@@ -263,7 +263,7 @@ export async function renderTrail(c: CompiledShot, bake: Bake, series: MotionSer
     const i = order.get(g.frame)!;
     const u = count > 1 ? i / (count - 1) : 1;
     const layer = c.layers[nodes[g.node]!.layer]!;
-    const paint = makePaint(c.light, c.atmosphere, layer.tint);
+    const paint = makePaint(c.light, c.atmosphere, layer.tint, c.tones);
     const one = new Canvas(W, H, { gpu: false });
     scratch.push(one);
     const gx = one.getContext('2d');

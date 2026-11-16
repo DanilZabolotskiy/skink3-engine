@@ -161,29 +161,10 @@ const GOOD: PaletteSpec = {
   pairs: [['warm', 'cool']],
 };
 
-test('palette: the demo palette obeys the laws', () => {
+test('palette: the demo palette keeps the rules it declares', () => {
+  assert.ok((demoPalette.spec.rules ?? []).length > 0, 'the demo palette declares rules of its own');
   assert.deepEqual(checkPalette(demoPalette), []);
   assert.deepEqual(checkPalette(definePalette(GOOD)), []);
-});
-
-test('palette: every law is enforced', () => {
-  const laws = (spec: PaletteSpec): string[] => checkPalette(definePalette(spec)).map((i) => i.law);
-  // Gray darks.
-  assert.ok(laws({ ...GOOD, dark: { a: hsv(258, 0.2, 0.5), b: hsv(230, 0.74, 0.46) } }).includes('no-gray'));
-  // Darks that are saturated one by one but too pale on average.
-  assert.ok(laws({ ...GOOD, deep: { a: hsv(250, 0.55, 0.12) }, dark: { a: hsv(258, 0.55, 0.5), b: hsv(230, 0.55, 0.46) } }).includes('saturated-shadows'));
-  // Dark hues outside blue..violet.
-  assert.ok(laws({ ...GOOD, deep: { a: hsv(120, 0.9, 0.12) }, dark: { a: hsv(20, 0.8, 0.4), b: hsv(230, 0.74, 0.46) } }).includes('dark-hue'));
-  // A colour in the wrong lightness band.
-  assert.ok(laws({ ...GOOD, deep: { a: hsv(250, 0.9, 0.6) } }).includes('role-lightness'));
-  assert.ok(laws({ ...GOOD, light: { a: hsv(52, 0.34, 0.6) } }).includes('role-lightness'));
-  // A dull accent.
-  assert.ok(laws({ ...GOOD, accent: { warm: hsv(40, 0.4, 0.99), cool: hsv(176, 0.72, 0.93) } }).includes('accent'));
-  // Pairs: missing, two warm colours, colours too close.
-  assert.ok(laws({ ...GOOD, pairs: [] }).includes('accent-pairs'));
-  assert.ok(laws({ ...GOOD, accent: { warm: hsv(40, 0.86, 0.99), cool: hsv(20, 0.8, 0.95) } }).includes('accent-pairs'));
-  // Gray mid tone.
-  assert.ok(laws({ ...GOOD, mid: { a: hsv(266, 0.1, 0.6) } }).includes('no-gray'));
 });
 
 test('palette: malformed input and unknown references fail loudly', () => {

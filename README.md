@@ -1,6 +1,6 @@
 # skink3-engine
 
-A code-first engine for animated science-explainer videos in a flat-vector style. It draws crisp shapes lit automatically, with dark saturated palettes, depth of field and glow, and computes their motion with physics at 60 fps. Scenes are TypeScript, written by people or by LLM agents. Skia draws the frames on the GPU without a browser, and they are piped straight into ffmpeg.
+A code-first engine for animated science-explainer videos in a flat-vector style. It draws crisp shapes lit automatically, in the colours of the production's palette, with depth of field and glow, and computes their motion with physics at 60 fps. Scenes are TypeScript, written by people or by LLM agents. Skia draws the frames on the GPU without a browser, and they are piped straight into ffmpeg.
 
 > **Status: pre-alpha, phase 0 done (November 2026).** The first engine code is in: a vertical slice through the whole path (scene → look and light → motion → physics bake → camera → render → ffmpeg) and a 15-second demo shot that goes through it. Every layer is real but minimal; what is built and what is only planned is listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The roadmap is at the end of this file.
 
@@ -19,7 +19,8 @@ In this genre, every movement on screen is usually keyframed by hand by a team o
 1. **Deterministic.** Frame *n* is a pure function of the scene, the bake cache and *n*. Everything stateful (physics, particles, springs) is baked beforehand with fixed seeds. Any frame can be rendered alone, chunks render in parallel, and a re-render matches pixel for pixel.
 2. **Simple forms, flawless motion.** Drawing must be perfect, so motion must be bug-free. The engine avoids objects whose motion viewers know precisely and would instantly judge as wrong. Humanoid limbs are rounded sticks with no hands, fingers or feet, and there are no human limb mechanics (stepping, grasping, gestures). The API has no such parts, so they cannot be drawn by accident. See [docs/PRINCIPLES.md](docs/PRINCIPLES.md).
 3. **Text is data.** Scenes never contain on-screen text, only keys into per-language string tables. Labels and free-standing texts size and wrap themselves to the string, and a pre-render check reports overflow and overlaps in every language.
-4. **Measured look.** Palette and motion norms are numbers (share of dark pixels, saturation of shadows, camera drift, static-frame share) checked by `tools/metrics` on renders.
+4. **Measured look.** Motion norms are numbers (camera drift, static-frame share, frame rate) checked by `tools/metrics` on renders.
+5. **Colour belongs to the production.** The engine holds no colour and no rule about colour. A palette is the scheme of a channel or a series; a production may declare its own rules for it and give a set or a chapter a variant of it.
 
 ## Stack
 
@@ -101,10 +102,10 @@ The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 3
 | Camera drift, median | 0.3–0.7 px per frame at 1080p | 0.50 |
 | Duplicated frames in motion | none | 0 of 733 |
 | Fully static frame pairs; longest hold | 3–9 % over a whole video; no hold above ~4 s | 0.0 %; 0.0 s (one continuously moving shot, no cuts) |
-| Pixels with L* < 30 | about 60 % over a whole video; 78–95 % on a dark shot | 62.4 % (the demo is a mid-tone shot: V is below 0.3 on about half of its pixels) |
-| Saturation of dark pixels | about 0.8 | 0.81 |
-| Near-gray pixels (S < 0.12) | about 6 % or less | below 0.1 % |
-| Hue of dark pixels | mostly 210–300° | 100 % (210–240°: 1 %, 240–270°: 87 %, 270–300°: 12 %) |
+| Pixels with L* < 30 | none: the palette's choice | 62.4 % (the demo is a mid-tone shot: V is below 0.3 on about half of its pixels) |
+| Saturation of dark pixels | none: the palette's choice | 0.81 |
+| Near-gray pixels (S < 0.12) | none: the palette's choice | below 0.1 % |
+| Hue of dark pixels | none: the palette's choice | 210–240°: 1 %, 240–270°: 87 %, 270–300°: 12 % |
 
 ## Benchmarks
 
@@ -131,14 +132,14 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 |---|---|
 | `src/core` | time base (60 fps, 1/240 s simulation step), seeded random with named streams, easing, second-order dynamics, seeded noise, stable hashing |
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
-| `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
+| `src/look` | colour math, palette by role with the check of the rules a production declares for it, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
 | `src/scene` | scene description types, factory functions (shapes as covers, backdrops, clips and contents with a level), compiler (validation, tracks, bake slots), pure evaluation of a frame |
 | `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `bendTo`, `reshape`, `countTo`, `pulse`, `openTo`, `blink`, `cameraTo`, `backgroundTo`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
 | `src/text` | string tables, the bundled fonts and what characters they have, auto-fit layout, label geometry, the block of a free-standing text, counters, subtitles from word timings (.srt, .vtt, .ytt) |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
-| `src/checks` | palette laws, string tables, the glyphs of every string, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
+| `src/checks` | the rules a palette declares, string tables, the glyphs of every string, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
 | `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), the sound sheet, PCM WAV read and written |
 | `src/cli`, `bin/` | the `skink3` command |
@@ -154,7 +155,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | Phase | Scope | Done when | State |
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
-| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths and camera keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change, fallback fonts for symbols and Greek with a check of every glyph are built) | three reference shots (dark, light, microscopic) | next |
+| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths and camera keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change, fallback fonts for symbols and Greek with a check of every glyph, palettes without rules of the engine's own are built) | three reference shots (dark, light, microscopic) | next |
 | 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, turns and travels whose speed is keyed over time, pulses of light along links and along strokes, squashes, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
 | 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | planned |

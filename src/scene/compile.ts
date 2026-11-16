@@ -10,8 +10,9 @@ import type { Vec2 } from '../core/math.ts';
 import { Noise } from '../core/noise.ts';
 import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
+import { HIGHLIGHT_HUE, SHADOW_HUE } from '../look/color.ts';
 import { lightVector } from '../look/light.ts';
-import { resolveColor, type Palette } from '../look/palette.ts';
+import { resolveColor, toneHues, type Palette, type ToneHues } from '../look/palette.ts';
 import { PULSE_BUMP } from '../motion/intents.ts';
 import type {
   BackgroundToKey,
@@ -148,6 +149,8 @@ export interface CompiledShot {
   readonly cameraNoise: Noise;
   readonly background: { readonly inner: string; readonly outer: string };
   readonly atmosphere: string;
+  /** The hues the automatic light leans to: those of the palette, or the engine's default lean. */
+  readonly tones: ToneHues;
   /** String keys the scene uses. */
   readonly stringKeys: readonly string[];
   /** Hash of everything that can influence the bake. */
@@ -691,7 +694,17 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   // exceptions of the reviews, which only change a report, and for everything
   // about sound: a sound key on a node or on an intent, and a sound placed by
   // hand, change neither the bake nor a pixel.
-  const sceneHash = hashOf({ ...(voiced ? withoutSound(spec) : spec), palette: spec.palette.spec, strings: null, intended: undefined });
+  // Of the palette it takes what a frame is drawn with: the colours, and the hues its light leans to when they
+  // are not the default lean (a palette that names the default is the picture of one that names nothing). The
+  // rules a palette declares only change a report.
+  const tones = toneHues(palette);
+  const ownTones = tones.shadow === SHADOW_HUE && tones.highlight === HIGHLIGHT_HUE ? undefined : tones;
+  const sceneHash = hashOf({
+    ...(voiced ? withoutSound(spec) : spec),
+    palette: { ...spec.palette.spec, rules: undefined, tones: ownTones },
+    strings: null,
+    intended: undefined,
+  });
 
   const background = {
     inner: resolveColorOrFail(palette, spec.background.inner, `${where} background.inner`),
@@ -737,6 +750,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     cameraNoise: new Noise(spec.seed, 'camera'),
     background,
     atmosphere,
+    tones,
     stringKeys: [...stringKeys],
     sceneHash,
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),

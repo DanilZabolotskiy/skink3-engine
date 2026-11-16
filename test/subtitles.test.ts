@@ -112,16 +112,21 @@ test('subtitles: the three formats', () => {
   ];
   assert.equal(formatSrt(cues), '1\n00:00:00,550 --> 00:00:02,400\nFish & chips,\nhe said.\n\n2\n01:02:03,004 --> 01:02:05,500\n<later>\n');
   assert.equal(formatVtt(cues), 'WEBVTT\n\n00:00:00.550 --> 00:00:02.400\nFish &amp; chips,\nhe said.\n\n01:02:03.004 --> 01:02:05.500\n&lt;later&gt;\n');
-  const ytt = formatYtt(cues, { color: '#ffd24d', position: [50, 90] });
+  const ytt = formatYtt(cues, { color: '#ffd24d', edge: '#080808', position: [50, 90] });
   assert.match(ytt, /^<\?xml version="1\.0" encoding="utf-8"\?>\n<timedtext format="3">\n<head>\n/);
   assert.match(ytt, /<pen id="1" b="1" fc="#FFD24D" fo="254" bc="#080808" bo="150" et="3" ec="#080808" fs="4" sz="100"\/>/);
   assert.match(ytt, /<wp id="1" ap="7" ah="50" av="90"\/>/);
   assert.match(ytt, /<p t="550" d="1850" wp="1" ws="1"><s p="1">Fish &amp; chips,\nhe said\.<\/s><\/p>/);
   assert.match(ytt, /<p t="3723004" d="2496" wp="1" ws="1"><s p="1">&lt;later&gt;<\/s><\/p>\n<\/body>\n<\/timedtext>\n$/);
-  // The player drops pure white and fractional positions: the defaults avoid both.
-  assert.match(formatYtt(cues), /fc="#FEFEFE"/);
-  assert.match(formatYtt(cues, { position: [49.6, 95.4] }), /ah="50" av="95"/);
-  assert.throws(() => formatYtt(cues, { color: 'white' }), /color must be "#RRGGBB"/);
+  // The player drops fractional positions: they are rounded.
+  const pen = { color: '#fefefe', edge: '#101010' };
+  assert.match(formatYtt(cues, pen), /fc="#FEFEFE".* bc="#101010".* ec="#101010"/);
+  assert.match(formatYtt(cues, { ...pen, position: [49.6, 95.4] }), /ah="50" av="95"/);
+  assert.throws(() => formatYtt(cues, { ...pen, color: 'white' }), /color must be "#RRGGBB"/);
+  // The engine has no colour of its own for a subtitle: the two colours are the production's to give.
+  assert.throws(() => formatYtt(cues, { edge: '#101010' } as never), /color must be "#RRGGBB", got undefined; the colours of a subtitle are the production's to give/);
+  assert.throws(() => formatYtt(cues, { color: '#fefefe' } as never), /edge must be "#RRGGBB"/);
+  assert.throws(() => (formatYtt as unknown as (c: Cue[]) => string)(cues), /color must be "#RRGGBB"/);
   // The same cues always give the same files.
-  assert.equal(formatYtt(cues), formatYtt(cues));
+  assert.equal(formatYtt(cues, pen), formatYtt(cues, pen));
 });

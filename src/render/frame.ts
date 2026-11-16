@@ -313,7 +313,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     .map((x) => ({
       layer: x.layer,
       leaves: flatItems(x.layer.items),
-      paint: makePaint(c.light, bg.atmosphere, x.layer.layer.tint),
+      paint: makePaint(c.light, bg.atmosphere, x.layer.layer.tint, c.tones),
       seen: hides ? seenShares(x.layer.items) : null,
     }));
 

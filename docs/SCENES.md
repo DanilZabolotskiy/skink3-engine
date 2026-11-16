@@ -2,7 +2,7 @@
 
 This is the guide and the API reference for scene authors, people or agents. It describes what exists today (phase 0). If something is not here, the engine does not have it yet.
 
-For one shot, read [QUICK-REFERENCE.md](QUICK-REFERENCE.md) first: every feature with its defaults and an example, the command line and how to read the two reviews, on one page. Its index names the section of this guide to open for more.
+For one shot, read [QUICK-REFERENCE.md](QUICK-REFERENCE.md) first: every feature with its defaults and an example, the command line and how to read the reviews, on one page. Its index names the section of this guide to open for more.
 
 ## The model in one page
 
@@ -66,7 +66,7 @@ export default shot({
 ```
 
 ```
-node bin/skink3.mjs check examples/minimal/scene.ts            # palette laws, strings, text fit
+node bin/skink3.mjs check examples/minimal/scene.ts            # the palette's own rules, strings, text fit
 node bin/skink3.mjs still examples/minimal/scene.ts --time 2.9 # -> out/minimal/still_00174_en.png
 node bin/skink3.mjs sheet examples/minimal/scene.ts            # contact sheet of the whole shot
 node bin/skink3.mjs render examples/minimal/scene.ts           # -> out/minimal/minimal_en.mp4
@@ -84,31 +84,89 @@ Two larger examples: `examples/demo/scene.ts` (a network, a creature, a pile of 
 
 ## Colours: the palette
 
+Colour belongs to the production. The engine has no colour of its own and no rule about colour: a palette is the scheme of a channel or of a series, and what it may hold is for the production to say.
+
 ```ts
 const palette = definePalette({
-  deep:   { name: '#RRGGBB', ... },  // background tones, L* below 12
-  dark:   { ... },                   // L* 12 to 30
-  mid:    { ... },                   // L* 30 to 60
-  accent: { ... },                   // saturation above 0.6 and value above 0.7
-  light:  { ... },                   // L* above 85
-  pairs:  [['warmAccentName', 'coolAccentName'], ...],
+  deep:   { name: '#RRGGBB', ... },
+  dark:   { ... },
+  mid:    { ... },
+  accent: { ... },
+  light:  { ... },
+  pairs:  [['oneAccent', 'another'], ...],             // optional: pairs of accents, for a rule to hold
+  rules:  [{ roles: ['deep'], lightness: [0, 15] }],   // optional: the production's own rules
+  tones:  { shadowHue: 220, highlightHue: 60 },        // optional: the hues the light leans to
 });
 ```
 
 - `hsv(hueDegrees, saturation, value)` returns a `#RRGGBB` string; it keeps the construction of a palette readable.
-- Scenes refer to a colour as `"role.name"`, for example `"accent.amber"`.
-- `checkPalette(palette)` (run by `skink3 check` and before every render) enforces the measured laws:
+- Scenes refer to a colour as `"role.name"`, for example `"accent.amber"`. Every colour of a frame is one of the shot's palette, or derived from one: the background, the atmosphere, every fill, line, letter and particle.
+- **A role is a name.** The five roles group the colours of a palette, by custom from its darkest (`deep`) to its lightest (`light`), with the `accent`s apart. The engine reads no lightness, hue or saturation into a role: any colour may stand under any of them. Each role holds at least one colour.
 
-| Law | Rule |
+### Rules of a palette
+
+A production may write down what it promises about its colours, in the palette itself. `checkPalette(palette)`, which `skink3 check` runs and every render runs first, holds the palette to those rules and fails on one that is broken. **A palette without `rules` is not checked for anything.**
+
+A rule names the `roles` whose colours it holds (all five when left out) and one thing to hold them to:
+
+| In a rule | Holds |
 |---|---|
-| role lightness | each colour sits in its role's L* band (above) |
-| no gray | deep and dark colours have saturation ≥ 0.5; mid tones ≥ 0.3 |
-| saturated shadows | mean saturation of deep and dark colours ≥ 0.7 |
-| dark hue | at least 66 % of deep and dark colours have a hue of 210–300° (blue to violet) |
-| accents | saturation > 0.6 and value > 0.7 |
-| accent pairs | at least one pair; in each, the first is warm (hue 330–75°), the second cool (150–270°), at least 90° apart |
+| `lightness: [min, max]` | the CIE L* of every colour of those roles, 0 to 100 |
+| `saturation: [min, max]`, `value: [min, max]` | its HSV saturation, its HSV value, 0 to 1 |
+| `meanSaturation: [min, max]` | the mean saturation of those colours together |
+| `hue: [from, to]`, with `share` | a band of hue in degrees, clockwise, which may pass 360 (`[330, 75]`); `share` is the share of those colours that lie in it: a number is the least share, `[min, max]` a least and a most. Left out, all of them lie in it |
+| `pairs: { atLeast?, first?, second?, apart? }` | the `pairs` of the palette: how many there are at least, the band of hue of the first and of the second colour of each, and how many degrees apart the two are at least. It takes no `roles` |
+| `name` | what the rule is called in a message |
 
-Shadow, rim and highlight tones are derived from a shape's `fill` automatically (shadows darker, more saturated, leaning to indigo; highlights lighter, paler, leaning to warm). You never specify them.
+```ts
+rules: [
+  { name: 'the sky is the darkest', roles: ['deep'], lightness: [0, 14] },
+  { name: 'accents are vivid', roles: ['accent'], saturation: [0.6, 1] },
+  { name: 'never one hue', roles: ['deep', 'dark'], hue: [210, 300], share: [0, 0.5] },   // at most half of the dark colours between blue and violet
+  { name: 'a warm accent with a cool one', pairs: { atLeast: 1, first: [330, 75], second: [150, 270], apart: 90 } },
+],
+```
+
+A broken rule is reported with its name and the colour that breaks it: `accents are vivid: accent.dust #8A8F99: saturation 0.10 is outside 0.6..1`.
+
+### Tones: the hues the light leans to
+
+Shadow, rim and highlight tones are derived from a shape's `fill`: shadows darker and more saturated, lit tones lighter and paler. You never specify them. Each also leans a little in hue, as light does: the shadow by up to 14 degrees (the deep shadow by 28) toward one hue, the lit tones by up to 16 degrees toward another. `tones` names those two hues for a palette:
+
+```ts
+tones: { shadowHue: 220, highlightHue: 60 },     // blue shadows, yellow lights
+tones: { shadowHue: null, highlightHue: null },  // no lean: every tone keeps the hue of its colour
+```
+
+- **A palette that names none keeps the lean the engine was built with:** shadows toward 262 (indigo), lit tones toward 52 (a warm yellow). It is the one thing about colour that the engine still supplies by itself, so that a palette written before `tones` draws as it did. A palette that names both owns its light entirely.
+- Far layers fade toward the shot's `atmosphere`, which is a colour of the palette too (see `layer`).
+
+### Variants of a palette
+
+A series has one scheme, and a set or a chapter may have a light of its own. A variant is the base palette with some colours replaced: build it from the `spec` of the base, and give each shot the variant it draws with.
+
+```ts
+export const series = definePalette({ ... });                        // the scheme of the series
+const variant = (over: Partial<PaletteSpec>): Palette =>
+  definePalette({
+    ...series.spec,                                                  // its rules, its tones, its pairs
+    deep: { ...series.spec.deep, ...over.deep }, dark: { ...series.spec.dark, ...over.dark }, mid: { ...series.spec.mid, ...over.mid },
+    accent: { ...series.spec.accent, ...over.accent }, light: { ...series.spec.light, ...over.light },
+    ...(over.tones ? { tones: over.tones } : {}),
+  });
+export const palettes = {
+  night: series,
+  dawn: variant({ deep: { night: hsv(214, 0.7, 0.34), abyss: hsv(232, 0.82, 0.16) }, mid: { haze: hsv(18, 0.6, 0.86) }, tones: { shadowHue: 250 } }),
+};
+// a shot names the variant it draws with
+shot({ palette: palettes.dawn, background: { inner: 'deep.night', outer: 'deep.abyss' }, atmosphere: 'mid.haze', ... })
+```
+
+- **Every reference resolves against the palette of its shot:** fills, the background, the atmosphere, and the colours a `backgroundTo` names. A shot written for the base draws in any variant, because a variant has every name of the base.
+- A variant carries the `rules` of its base and is held to them; it may bring `tones` of its own: the light of its set.
+- **Give an override the name of a colour the base has.** A name the base does not have is a new colour: nothing refuses it, and the colour it was meant to replace stays as it was. Comparing `[...variant.colors.keys()]` with those of the base shows it.
+- To change the light of a whole chapter, change which variant its shots name, in one place of the production (a table from chapter to palette): no shot is edited.
+- One shot has one palette. A change of light inside a shot is a `backgroundTo`, between colours of that palette.
 
 ## Text: string tables
 
@@ -295,7 +353,7 @@ A point of a layer lands on the screen at `p × zoom + (tx, ty)` (origin at the 
 
 **Tint is atmospheric perspective.** With tint *t*, every colour drawn in the layer (fills, shadows, highlights, links, particles, labels) loses `0.6 × t` of its saturation and then moves *t* of the way to the shot's `atmosphere` colour: hue along the short way round the colour wheel, saturation and value straight. So far things are paler, less saturated and close to one tone, and a warm colour fading into a cool atmosphere never turns gray. At tint 1 everything is the atmosphere colour.
 
-A good dark shot has at least three layers: a far one with large pale shapes, the stage at depth 0 where the action is, and a near one with a few big dark blurred shapes at the edges. Keep far shapes away from the spot behind the subject: the depth tint separates them by tone, but a diagram reads best against the deep background. A far layer moves less than the stage, so "behind the subject" is a band there, as wide as the camera's travel times `1 - parallax`.
+A shot with depth has at least three layers: a far one with large shapes, the stage at depth 0 where the action is, and a near one with a few big blurred shapes at the edges. Keep far shapes away from the spot behind the subject: the depth tint separates them by tone, but a diagram reads best against the plain background. A far layer moves less than the stage, so "behind the subject" is a band there, as wide as the camera's travel times `1 - parallax`.
 
 ## Nodes
 
@@ -990,7 +1048,7 @@ Other helpers a scene may call:
 
 | Check | Fails when |
 |---|---|
-| palette | a law above is broken |
+| palette | a rule that the palette declares for itself is broken (see Rules of a palette); a palette without rules has none to break |
 | strings | a used key is missing or empty in a language |
 | glyphs | a string that is used holds, in a language, a character that none of the bundled fonts has (see Fonts) |
 | text fit: overflow | the string of a label or of a text does not fit its `maxWidth` and `maxLines` even at `minSize` |
@@ -1003,7 +1061,7 @@ A warning is printed with the label, the language, the node and the time ("label
 
 `skink3 check` also runs the motion review and the physics review and shows each in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion` or `skink3 physics`. They are warnings and never fail the checks.
 
-`skink3 render` runs the palette, string, glyph and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the two reviews.
+`skink3 render` runs the palette, string, glyph and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the reviews.
 
 `npm run check` in the engine repository also runs `tsc --noEmit` and the unit tests.
 
@@ -1373,7 +1431,7 @@ Read it tile by tile. Is the ring on the thing a viewer would take for the sourc
 ```
 skink3 <command> <scene module> [options]
 
-check   palette laws, string tables, glyphs and text fit in every language; motion and physics findings in short   [--bank <bank.json>]
+check   the palette's own rules, string tables, glyphs and text fit in every language; the reviews in short   [--bank <bank.json>]
 bake    simulate physics, springs and particles; write the cache        [--force]
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -1439,9 +1497,11 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 `evaluate` wraps what it draws in three kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape) and `'stretch'` (a node that is being squashed). `flatItems` opens all three.
 
+For colour, `checkPalette(palette)` returns the rules of a palette that are broken.
+
 For text, `BUNDLED_FONTS` lists the bundled families in the order they are tried for a character, `fontOf(char)` and `missingGlyphs(text)` answer from their character maps, and `checkGlyphs(c, langs)` is the check `runChecks` makes of the strings a shot uses.
 
-For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration (`[{ w: 'Hello.', start: 0, end: 0.4 }, ...]`) into subtitle cues: lines of a set length, breaks at the ends of sentences and at pauses. Its options, with their defaults: `maxChars` (42) a line, `maxLines` (2) a cue, and `pause` (0.5), the seconds of silence at which a cue ends. `formatSrt`, `formatVtt` and `formatYtt` write the cues out; see `src/text/subtitles.ts`.
+For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration (`[{ w: 'Hello.', start: 0, end: 0.4 }, ...]`) into subtitle cues: lines of a set length, breaks at the ends of sentences and at pauses. Its options, with their defaults: `maxChars` (42) a line, `maxLines` (2) a cue, and `pause` (0.5), the seconds of silence at which a cue ends. `formatSrt`, `formatVtt` and `formatYtt` write the cues out; see `src/text/subtitles.ts`. `formatYtt(cues, { color, edge, ... })` needs the colour of the text and of its outline: the engine has no colour of its own for a subtitle.
 
 For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, `takePeak(take)` measures the loudest point of a take, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption`, `tileRing` and `tileArrow` are what is on it). See `src/audio`.
 
