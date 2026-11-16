@@ -282,7 +282,7 @@ Mark an exception on the subject the finding names. A defect of a parent is repo
 - **What is hidden behind what, unless it is said.** The review knows that a node is covered only when the shape in front is marked `cover: true` and lies in the same layer. A jump or a start behind any other shape, or behind a nearer layer, is still reported: mark the shape as a cover, or the finding as intended. A node that comes out from behind a cover in one frame is not reported as a jump: it was not seen before.
 - **Links, labels and particles behind a cover or outside a clip.** Only shapes and eyes are tested against covers and clips. A label is taken as seen; particles are counted wherever they are.
 - **Squashes.** A `squash` changes the picture of a node, not its place or its size as the review reads them: the kick itself is not measured.
-- **What it does not measure**: the pupils and lids of eyes, the drawing-on of a link, the shape of a link as its ends move, colour, glow, blur, and the look of text.
+- **What it does not measure**: the pupils and lids of eyes, the drawing-on of a link, the shape of a link as its ends move, glow, blur, and the look of text. Colour is not its question either: whether a thing stands out from what is behind it is the contrast review's, for a shot that turns it on ([SCENES.md](SCENES.md#contrast-review)).
 - **A fast spin.** Speed is judged on how far a node travels. A shape that spins fast in place is seen only through parts that ride on it off its centre.
 - **The limits themselves.** They are first settings. A finding close to its limit is a question, not a verdict; the numbers in the report say how close it is.
 

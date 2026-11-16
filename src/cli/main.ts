@@ -222,7 +222,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'check': {
       const { bake } = await ensureBake(c, common.cacheDir);
       const bankFile = str('bank');
-      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true, physics: true, ...(bankFile === undefined ? {} : { bank: loadBank(bankFile) }) });
+      const report = runChecks(c, bake, wantedLangs ?? undefined, { motion: true, physics: true, contrast: true, ...(bankFile === undefined ? {} : { bank: loadBank(bankFile) }) });
       console.log(`check ${c.spec.id}: ${c.frames} frames, ${c.nodes.length} nodes, ${c.layers.length} layers`);
       console.log(formatReport(report));
       return report.ok ? 0 : 1;

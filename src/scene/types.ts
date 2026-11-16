@@ -447,10 +447,33 @@ export const PHYSICS_FINDING_KINDS = ['overlap', 'tunnelling', 'escape', 'jitter
 
 export type PhysicsFindingKind = (typeof PHYSICS_FINDING_KINDS)[number];
 
-export type FindingKind = MotionFindingKind | PhysicsFindingKind;
+/** Kinds of findings of the contrast review (src/review/contrast.ts), which a shot turns on with `contrast`. */
+export const CONTRAST_FINDING_KINDS = ['low-contrast'] as const;
+
+export type ContrastFindingKind = (typeof CONTRAST_FINDING_KINDS)[number];
+
+export type FindingKind = MotionFindingKind | PhysicsFindingKind | ContrastFindingKind;
 
 /** Every kind of finding a shot can mark as intended. */
-export const FINDING_KINDS_ALL: readonly FindingKind[] = [...MOTION_FINDING_KINDS, ...PHYSICS_FINDING_KINDS];
+export const FINDING_KINDS_ALL: readonly FindingKind[] = [...MOTION_FINDING_KINDS, ...PHYSICS_FINDING_KINDS, ...CONTRAST_FINDING_KINDS];
+
+/**
+ * What a shot asks of the contrast review: the nodes that must stand out from
+ * what lies behind them, and how far. The numbers are the production's: the
+ * engine has no threshold of its own. It never influences the picture.
+ */
+export interface ContrastSpec {
+  /** Ids of the nodes that are held: shapes, strokes, texts and labels. */
+  readonly nodes: readonly string[];
+  /** The least difference in lightness (CIE L*, 0..100) that is enough by itself. */
+  readonly lightness: number;
+  /** The least difference in colour (hue and saturation: the distance in the a*b* plane of CIELAB) that is enough by itself. */
+  readonly colour: number;
+  /** The share of the node's outline that has to blend before it is a finding. */
+  readonly edge: number;
+  /** The seconds it has to last. */
+  readonly seconds: number;
+}
 
 /** The camera as the subject of a motion finding. Node ids cannot hold parentheses, so these never collide with one. */
 export const CAMERA_SUBJECT = '(camera)';
@@ -460,7 +483,7 @@ export const FRAME_SUBJECT = '(frame)';
 export const FRAME_REGIONS = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const;
 
 /**
- * An intended exception to the motion review or to the physics review: findings
+ * An intended exception to the motion review, to the physics review or to the contrast review: findings
  * of this kind on these subjects are what the author wants. The review leaves
  * them out of its warnings and lists them as honoured. It never influences the
  * picture.
@@ -494,4 +517,6 @@ export interface ShotSpec {
   readonly timeline: readonly Key[];
   /** Intended exceptions to the motion review and to the physics review. */
   readonly intended: readonly IntendedSpec[];
+  /** The contrast review of the shot. Left out: it is off. */
+  readonly contrast?: ContrastSpec;
 }

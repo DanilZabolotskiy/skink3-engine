@@ -91,6 +91,27 @@ export function lightness(hex: string): number {
   return y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y;
 }
 
+/**
+ * A colour in CIELAB (D65): L* is its lightness, 0..100; a* and b* place its
+ * hue and its saturation, so that the distance of two colours in that plane
+ * says how far apart they are in colour at one lightness.
+ */
+export function hexToLab(hex: string): { readonly l: number; readonly a: number; readonly b: number } {
+  const c = parseHex(hex);
+  const lin = (u: number): number => {
+    const x = u / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  const r = lin(c.r);
+  const g = lin(c.g);
+  const b = lin(c.b);
+  const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fx = f((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047);
+  const fy = f(0.2126729 * r + 0.7151522 * g + 0.072175 * b);
+  const fz = f((0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883);
+  return { l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+}
+
 /** `rgba(...)` string of a hex colour at the given opacity. */
 export function withAlpha(hex: string, alpha: number): string {
   const c = parseHex(hex);

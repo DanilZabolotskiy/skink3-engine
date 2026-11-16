@@ -1,12 +1,13 @@
 // Pre-render checks of a shot: the rules its palette declares, string tables, the glyphs of every
 // string, text fit in every language, the sound keys against a bank when one is given, and, when asked
-// for, the motion review and the physics review in short form. `tsc` and the
+// for, the motion review, the physics review and the contrast review in short form. `tsc` and the
 // unit tests are separate steps (see the npm scripts).
 
 import type { SoundBank } from '../audio/bank.ts';
 import { checkSound } from '../audio/track.ts';
 import { checkPalette } from '../look/palette.ts';
 import type { Bake } from '../physics/cache.ts';
+import { formatContrastShort, reviewContrast, type ContrastReport } from '../review/contrast.ts';
 import { formatPhysicsShort } from '../review/physics-report.ts';
 import { reviewPhysics, type PhysicsReport } from '../review/physics.ts';
 import { formatMotionShort, reviewMotion, type MotionReport } from '../review/report.ts';
@@ -36,6 +37,8 @@ export interface CheckReport {
   readonly motion: MotionReport | null;
   /** The physics review, when it was asked for. Its findings are warnings too. */
   readonly physics: PhysicsReport | null;
+  /** The contrast review, when it was asked for and the shot turns it on (`contrast`). Its findings are warnings too. */
+  readonly contrast: ContrastReport | null;
   /** The sound keys the shot uses, when a bank was given to hold them against; null without one. */
   readonly sound: readonly string[] | null;
 }
@@ -45,6 +48,8 @@ export interface CheckOptions {
   readonly motion?: boolean;
   /** Also run the physics review (overlap, tunnelling, escapes, jitter, piles that do not settle, energy, unseen hits); default false. */
   readonly physics?: boolean;
+  /** Also run the contrast review, for a shot that turns it on with `contrast` (a named node that blends into what is behind it); default false. */
+  readonly contrast?: boolean;
   /** A bank of sounds: a sound key of the shot that it does not know fails the checks, as a missing string does. */
   readonly bank?: SoundBank;
 }
@@ -63,7 +68,8 @@ export function runChecks(c: CompiledShot, bake: Bake, langs?: readonly string[]
   for (const message of sound?.issues ?? []) issues.push({ check: 'sound', severity: 'error', message });
   const motion = opts.motion ? reviewMotion(c, bake, { lang: languages[0] ?? languagesOf(c.spec.strings)[0]! }).report : null;
   const physics = opts.physics ? reviewPhysics(c, bake) : null;
-  return { ok: !issues.some((i) => i.severity === 'error'), issues, labels: fit.stats, languages, motion, physics, sound: sound ? sound.keys : null };
+  const contrast = opts.contrast ? reviewContrast(c, bake, { lang: languages[0] ?? languagesOf(c.spec.strings)[0]! }) : null;
+  return { ok: !issues.some((i) => i.severity === 'error'), issues, labels: fit.stats, languages, motion, physics, contrast, sound: sound ? sound.keys : null };
 }
 
 export function formatReport(report: CheckReport): string {
@@ -85,7 +91,9 @@ export function formatReport(report: CheckReport): string {
   }
   if (report.motion) lines.push(...formatMotionShort(report.motion));
   if (report.physics) lines.push(...formatPhysicsShort(report.physics));
-  const warnings = report.issues.filter((i) => i.severity === 'warning').length + (report.motion?.findings.length ?? 0) + (report.physics?.findings.length ?? 0);
+  if (report.contrast) lines.push(...formatContrastShort(report.contrast));
+  const warnings =
+    report.issues.filter((i) => i.severity === 'warning').length + (report.motion?.findings.length ?? 0) + (report.physics?.findings.length ?? 0) + (report.contrast?.findings.length ?? 0);
   lines.push(report.ok ? `checks passed${warnings > 0 ? ` with ${warnings} warning(s)` : ''}` : 'checks FAILED');
   return lines.join('\n');
 }

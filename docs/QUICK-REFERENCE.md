@@ -177,16 +177,18 @@ Each kind of finding (a warning) and its usual fix:
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
 
+- `low-contrast` (with `contrast`): a node blends into what is behind it: change one of the two colours.
 
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
 ```ts
+shot({ ...scene, contrast: { nodes: ['dot'], lightness: 18, colour: 24 } }); // off unless given; it blends below both: L*, a*b* (colourDistance(a, b)); + edge, seconds
 shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // window optional; also for '(camera)', '(frame)', '(frame:top-left)'
 ```
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 
@@ -195,7 +197,7 @@ PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**.
 ## Other exports
 
 ```
-constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
+constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CONTRAST_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
 errors: SceneError IntentError PaletteError
 functions: hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt frameToSeconds secondsToFrame Noise
 ```

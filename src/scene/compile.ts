@@ -691,9 +691,17 @@ export function compileShot(spec: ShotSpec): CompiledShot {
 
   // Text does not influence the bake, so the tables stay out of the hash; a
   // translation re-renders without re-baking. The same holds for the intended
-  // exceptions of the reviews, which only change a report, and for everything
+  // exceptions of the reviews and their settings, which only change a report, and for everything
   // about sound: a sound key on a node or on an intent, and a sound placed by
   // hand, change neither the bake nor a pixel.
+  // The contrast review reads the shot and changes nothing in it either.
+  for (const id of spec.contrast?.nodes ?? []) {
+    const n = byId.get(id);
+    if (!n) fail(`${where}: contrast names "${id}", which does not exist (nodes: ${known()})`);
+    if (!['shape', 'stroke', 'text', 'label'].includes(n.node.type)) {
+      fail(`${where}: contrast names ${n.node.type} "${id}"; it holds shapes, strokes, texts and labels: name the shapes that are in the group`);
+    }
+  }
   // Of the palette it takes what a frame is drawn with: the colours, and the hues its light leans to when they
   // are not the default lean (a palette that names the default is the picture of one that names nothing). The
   // rules a palette declares only change a report.
@@ -704,6 +712,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     palette: { ...spec.palette.spec, rules: undefined, tones: ownTones },
     strings: null,
     intended: undefined,
+    contrast: undefined,
   });
 
   const background = {

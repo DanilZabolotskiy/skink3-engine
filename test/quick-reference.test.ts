@@ -117,8 +117,8 @@ test('quick reference: it has a line for every command of the CLI and names ever
   assert.deepEqual(noOption, [], `the option(s) ${noOption.join(', ')} of the CLI are not named; ${RULE}`);
 });
 
-test('quick reference: it names every kind of finding of the two reviews', () => {
-  const missing = [...engine.MOTION_FINDING_KINDS, ...engine.PHYSICS_FINDING_KINDS].filter((kind) => !named(kind));
+test('quick reference: it names every kind of finding of the reviews', () => {
+  const missing = [...engine.MOTION_FINDING_KINDS, ...engine.PHYSICS_FINDING_KINDS, ...engine.CONTRAST_FINDING_KINDS].filter((kind) => !named(kind));
   assert.deepEqual(missing, [], `the kind(s) of finding ${missing.join(', ')} have no line under "Reading the reviews"; ${RULE}`);
 });
 

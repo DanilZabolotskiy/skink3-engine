@@ -127,7 +127,7 @@ rules: [
 ],
 ```
 
-A broken rule is reported with its name and the colour that breaks it: `accents are vivid: accent.dust #8A8F99: saturation 0.10 is outside 0.6..1`.
+A broken rule is reported with its name and the colour that breaks it: `accents are vivid: accent.dust #8A8F99: saturation 0.10 is outside 0.6..1`. To choose colours that stand apart, `colourDistance(a, b)` gives the difference of two colours in lightness and in colour (see Contrast review).
 
 ### Tones: the hues the light leans to
 
@@ -217,7 +217,8 @@ Text is drawn with three bundled typefaces and with no font of the machine, so a
 | `vignette` | 0..1 | `0.5` | darkening of the corners toward `background.outer` |
 | `camera` | see below | see below | drift, push-in, depth of field |
 | `physics` | see below | see below | style of the rigid-body world |
-| `intended` | `intended()[]` | `[]` | findings of the motion review or of the physics review that are what you want, each with a reason (see Motion review, Physics review) |
+| `intended` | `intended()[]` | `[]` | findings of the motion review, of the physics review or of the contrast review that are what you want, each with a reason (see Motion review, Physics review, Contrast review) |
+| `contrast` | `{ nodes, lightness, colour, edge?, seconds? }` | off | turns the contrast review on for the nodes it names (see Contrast review) |
 
 ### Camera
 
@@ -1059,7 +1060,7 @@ Other helpers a scene may call:
 
 A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted, and neither is a shape marked `backdrop: true` (ground, a wall: things that are there to have labels in front of them). Frames are sampled ten times a second, so a touch shorter than that can be missed.
 
-`skink3 check` also runs the motion review and the physics review and shows each in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion` or `skink3 physics`. They are warnings and never fail the checks.
+`skink3 check` also runs the motion review and the physics review and shows each in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion` or `skink3 physics`. For a shot that turns it on, it runs the contrast review as well and prints every finding of it. They are warnings and never fail the checks.
 
 `skink3 render` runs the palette, string, glyph and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the reviews.
 
@@ -1135,6 +1136,33 @@ Things to know when you write a scene with bodies:
 - A dynamic body collides from its release on, drawn or not. One that is faded out or has not popped in yet, in the way of bodies that are seen, makes them bounce off nothing.
 
 The full guide, with every threshold, how to read the pictures, and what the review cannot tell: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
+
+## Contrast review
+
+Things must not blend into what is behind them. The contrast review says when a named node does, without drawing anything. It is off unless a shot turns it on, and its two thresholds are the production's: the engine has none.
+
+```ts
+shot({
+  // ...
+  contrast: { nodes: ['hero', 'ball', 'title'], lightness: 18, colour: 24 },
+});
+```
+
+| Option of `contrast` | Default | Meaning |
+|---|---|---|
+| `nodes` | required | ids of the nodes that are held: shapes, strokes, texts and labels. For a group, name the shapes in it |
+| `lightness` | required | the least difference in lightness that is enough by itself: CIE L*, 0 to 100 |
+| `colour` | required | the least difference in colour that is enough by itself: hue and saturation together, as the distance in the a*b* plane of CIELAB |
+| `edge` | `0.5` | the share of the node's outline that has to blend |
+| `seconds` | `0.5` | how long it has to last |
+
+- **A node blends** where it differs from what is seen beside it by less than `lightness` **and** by less than `colour`. Either difference alone tells two things apart: a light thing on a dark ground, or a red thing on a green ground of one lightness.
+- **What is behind** is what a viewer sees next to the outline of the node: the topmost thing drawn there, in its layer or in another, each in the haze of its depth; or the background of the frame, with its gradient and its vignette, as a `backgroundTo` has made it by then. A stroke and the letters of a text are held against what lies under them; letters on a box of their own, and the letters of a label, against that box. A label is held twice: its box against what is round it, its letters against its box.
+- **Only what is seen is judged:** not a node that is hidden or outside the frame, and not the part of its outline that something drawn later covers. A node that is not opaque shows its ground through itself, and is judged as it looks.
+- `skink3 check` prints the review after the other two (`contrast: ok (3 node(s) held: lightness 18, colour 24)`) and each finding as a warning of the kind `low-contrast`, with the share of the outline, the two colours, their two differences and the frames. Findings never fail the checks.
+- **To choose the thresholds,** `colourDistance(hexA, hexB)` returns `{ lightness, colour }` for two colours, and `resolveColor(palette, 'dark.ground')` the colour of a reference. Two neighbouring dark blues are about 3 and 16 apart; an amber accent on a dark ground about 60 and 130. Where the line runs between what must pass and what must not is the production's rule.
+- A finding that is meant is marked like any other: `intended('ghost', 'low-contrast', 'it is a ghost')`.
+- **It reads flat colours,** as the palette and the depth of a layer give them. The light on a shape (its shadow and its rim), blur, glow and the lift of the background are left out; clips, levels, squashes and a size changed along one axis are followed. Frames are sampled ten times a second, and an outline at 24 places.
 
 ## Sound
 
@@ -1497,7 +1525,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 `evaluate` wraps what it draws in three kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape) and `'stretch'` (a node that is being squashed). `flatItems` opens all three.
 
-For colour, `checkPalette(palette)` returns the rules of a palette that are broken.
+For colour, `checkPalette(palette)` returns the rules of a palette that are broken, `colourDistance(a, b)` the difference of two colours in lightness and in colour, and `reviewContrast(c, bake)` the contrast review of a shot that asks for one (null otherwise); `runChecks(c, bake, langs, { contrast: true })` adds it to the checks.
 
 For text, `BUNDLED_FONTS` lists the bundled families in the order they are tried for a character, `fontOf(char)` and `missingGlyphs(text)` answer from their character maps, and `checkGlyphs(c, langs)` is the check `runChecks` makes of the strings a shot uses.
 

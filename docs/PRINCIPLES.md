@@ -83,7 +83,7 @@ These are norms of motion and of the frame. Colour has none here: it is the prod
 ## 10. Colour belongs to the production
 
 - **The engine holds no colour and no rule about colour.** A palette is the scheme of a channel or of a series. Every colour of a frame is one of the shot's palette or derived from one; none is written in the engine code that draws a frame. A test scans the sources for one.
-- **Rules are the production's.** A production may declare rules for its palette, in the palette itself. With none declared the engine checks none.
+- **Rules are the production's.** A production may declare rules for its palette, and thresholds for the contrast of its shots, in its own palettes and shots. With none declared the engine checks none.
 - A role of a palette is a name, not a band of lightness or of hue.
 - Review pictures (graphs, trails, close-ups, sheets) have colours of their own: they are no frame of a video.
 - One default remains, for a palette that does not name its own: the two hues the automatic light leans to. A palette replaces them with `tones`.

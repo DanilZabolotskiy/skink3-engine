@@ -23,6 +23,7 @@ export type {
   BodySpec,
   CameraPathSpec,
   CameraSpec,
+  ContrastSpec,
   LevelSpec,
   EmitterNode,
   EyeNode,
@@ -42,7 +43,7 @@ export type {
   ShotSpec,
   TurbulenceSpec,
 } from './scene/types.ts';
-export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, PHYSICS_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
+export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, PHYSICS_FINDING_KINDS, CONTRAST_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
 export type { Vec2 } from './core/math.ts';
 
 // --- Core helpers a scene may use to generate content ----------------------
@@ -70,6 +71,7 @@ export { reviewPhysics, PHYSICS_KINDS, type PhysicsReport, type PhysicsFinding, 
 export { formatPhysicsReport, formatPhysicsShort, physicsReportJson } from './review/physics-report.ts';
 export { PHYSICS_THRESHOLDS, type PhysicsThresholdName } from './review/physics-thresholds.ts';
 export { physicsPictures, renderCloseUp, type PhysicsPicture, type CloseUpOptions } from './review/physics-pictures.ts';
+export { reviewContrast, formatContrastShort, colourDistance, type ContrastReport, type ContrastFinding } from './review/contrast.ts';
 export { drawFrame, frameRaw, framePng, heightFor, rendererInfo, type RenderOptions } from './render/frame.ts';
 export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './render/sheet.ts';
 export { renderParallel, type RenderJob, type RenderResult } from './render/parallel.ts';

@@ -28,6 +28,7 @@ import type {
   BodySpec,
   CameraPathSpec,
   CameraSpec,
+  ContrastSpec,
   EmitterNode,
   EyeNode,
   GroupNode,
@@ -915,10 +916,19 @@ export function shot(o: {
   physics?: Partial<PhysicsSpec>;
   /** Intended exceptions to the motion review and the physics review, made with intended(); nested arrays are flattened. */
   intended?: Nested<IntendedSpec>;
+  /**
+   * Turns the contrast review on: the nodes named must stand out from what
+   * lies behind them in the frame. A node blends when it differs from what is
+   * behind it by less than `lightness` (CIE L*) and by less than `colour` (hue
+   * and saturation, in CIELAB) along at least `edge` of its outline (default
+   * 0.5), for `seconds` or longer (default 0.5). The two thresholds are the
+   * production's to set. Left out: the review is off.
+   */
+  contrast?: { nodes: readonly string[]; lightness: number; colour: number; edge?: number; seconds?: number };
 }): ShotSpec {
   const where = `shot("${o?.id}")`;
   checkKeys(where, o, [
-    'id', 'seconds', 'seed', 'palette', 'strings', 'background', 'atmosphere', 'layers', 'timeline', 'light', 'vignette', 'camera', 'physics', 'intended',
+    'id', 'seconds', 'seed', 'palette', 'strings', 'background', 'atmosphere', 'layers', 'timeline', 'light', 'vignette', 'camera', 'physics', 'intended', 'contrast',
   ]);
   if (!o.palette || !(o.palette.colors instanceof Map)) fail(where, 'palette must be made with definePalette()');
   if (!o.strings || typeof o.strings !== 'object' || Object.keys(o.strings).length === 0) {
@@ -1004,6 +1014,24 @@ export function shot(o: {
   } catch (e) {
     fail(where, (e as Error).message);
   }
+  let contrast: ContrastSpec | null = null;
+  if (o.contrast !== undefined) {
+    const w = `${where} contrast`;
+    checkKeys(w, o.contrast, ['nodes', 'lightness', 'colour', 'edge', 'seconds']);
+    if (!Array.isArray(o.contrast.nodes) || o.contrast.nodes.length === 0 || !o.contrast.nodes.every((n) => typeof n === 'string' && n.length > 0)) {
+      fail(w, 'nodes must be a non-empty list of the ids of the nodes to hold');
+    }
+    if (o.contrast.lightness === undefined || o.contrast.colour === undefined) {
+      fail(w, 'give both thresholds, lightness and colour: the least differences that are enough. The engine has none of its own');
+    }
+    contrast = {
+      nodes: [...o.contrast.nodes],
+      lightness: num(w, 'lightness', o.contrast.lightness, 0, 100),
+      colour: num(w, 'colour', o.contrast.colour, 0, 200),
+      edge: num(w, 'edge', o.contrast.edge ?? 0.5, 0.05, 1),
+      seconds: num(w, 'seconds', o.contrast.seconds ?? 0.5, 0, 60),
+    };
+  }
   const spec: ShotSpec = {
     id: idOf(where, o.id),
     seconds: num(where, 'seconds', o.seconds, 1 / 60, 3600),
@@ -1019,6 +1047,8 @@ export function shot(o: {
     layers: o.layers,
     timeline: flatten<Key>(o.timeline ?? []),
     intended: flatten<IntendedSpec>(o.intended ?? []),
+    // A shot that does not ask for the contrast review is the data it always was.
+    ...(contrast ? { contrast } : {}),
   };
   // Validate the shot as a whole now, so that mistakes surface where it is defined.
   compileShot(spec);
