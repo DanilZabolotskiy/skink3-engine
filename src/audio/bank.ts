@@ -4,7 +4,7 @@
 //   {
 //     "about":  "any note",
 //     "gain":   1,
-//     "sounds": { "<key>": { "file": "pop.wav", "gain": 0.8, "pitchJitter": 0.5, "gainJitter": 0.1, "priority": 0 }, ... },
+//     "sounds": { "<key>": { "file": "pop.wav", "gain": 0.8, "pitchJitter": 0.5, "gainJitter": 0.1, "priority": 0, "rules": { ... } }, ... },
 //     "kinds":  { "appear": "pop", "contact": "tick", "move": null, ... },
 //     "curves": { "size": [[24, 0.5], [320, 1]], "speed": [[4, 0.6], [40, 1]], "impulse": [[0.25, 0.4], [2, 1]] },
 //     "rules":  { "gap": 0.5, "starts": 4, "startsWindow": 10, ... }
@@ -16,7 +16,9 @@
 // nothing else decides; a kind that is left out, or set to null, is silent.
 // "curves" turn the size, the speed and the impulse of an event into gain;
 // "rules" keep a film from being crowded with sound. Curves and rules have
-// defaults here, chosen to be quiet rather than busy.
+// defaults here, chosen to be quiet rather than busy. A sound may set rules
+// for its own events ("rules" inside the sound): that is how a pour of many
+// small things is heard as a shower of impacts, apart from the accents.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -27,6 +29,35 @@ export class BankError extends Error {}
 
 /** Gain against a measurement: points [x, gain] in order of x, joined by straight lines and held flat beyond the ends. */
 export type Curve = readonly (readonly [number, number])[];
+
+/**
+ * Rules a sound sets for its own events, in place of the rules of the bank. A
+ * sound that has any is thinned by itself: its events are merged, spaced and
+ * counted among themselves, apart from the other events of their kind.
+ */
+export interface SoundOwnRules {
+  /** The thresholds, for its events. */
+  readonly minSize?: number;
+  readonly minSpeed?: number;
+  readonly minImpulse?: number;
+  /** Among its events: the window in which they sound as one, the least gap between two of them, and the crowd. */
+  readonly mergeWindow?: number;
+  readonly kindGap?: number;
+  readonly crowdVoices?: number;
+  readonly crowdWindow?: number;
+  /** Its own cap: at most `starts` of its sounds start within any `startsWindow` seconds (the window of the bank when it names none). */
+  readonly starts?: number;
+  readonly startsWindow?: number;
+  /** At most this many of its sounds are heard at once. */
+  readonly voices?: number;
+  /**
+   * True: its starts stand apart from the limits of the whole track. They are
+   * not held to the bank's `gap`, `starts` and `voices`, and they do not count
+   * toward them: a shower does not take the place of the accents. Its own
+   * `starts` and `voices` are then all that caps it.
+   */
+  readonly apart?: boolean;
+}
 
 export interface BankSound {
   /** The takes of the sound: absolute paths of PCM WAV files. */
@@ -39,6 +70,8 @@ export interface BankSound {
   readonly gainJitter: number;
   /** When a rule has to drop some events, those of a sound with a higher priority keep theirs. 0 unless the bank says otherwise. */
   readonly priority: number;
+  /** Rules of its own for its events, or null: the rules of the bank. */
+  readonly rules: SoundOwnRules | null;
 }
 
 /** The rules that keep a shot from being crowded with sound. */
@@ -164,6 +197,33 @@ function curve(where: string, value: unknown): Curve {
   return points;
 }
 
+/** The rules a sound sets for its own events, checked: only the ones it names. */
+function ownRules(where: string, value: unknown): SoundOwnRules {
+  if (!isObject(value)) throw new BankError(`${where} must be an object of rules for the events of this sound`);
+  known(where, value, ['minSize', 'minSpeed', 'minImpulse', 'mergeWindow', 'kindGap', 'crowdVoices', 'crowdWindow', 'starts', 'startsWindow', 'voices', 'apart']);
+  const out: { -readonly [K in keyof SoundOwnRules]: SoundOwnRules[K] } = {};
+  const take = (name: Exclude<keyof SoundOwnRules, 'apart'>, min: number, max: number, whole = false): void => {
+    if (value[name] === undefined) return;
+    const n = num(`${where}.${name}`, value[name], min, max);
+    out[name] = whole ? Math.round(n) : n;
+  };
+  take('minSize', 0, 4000);
+  take('minSpeed', 0, 1000);
+  take('minImpulse', 0, 1e6);
+  take('mergeWindow', 0, 60);
+  take('kindGap', 0, 600);
+  take('crowdVoices', 1, 1000, true);
+  take('crowdWindow', 0, 600);
+  take('starts', 1, 100000, true);
+  take('startsWindow', 0, 3600);
+  take('voices', 1, 1000, true);
+  if (value['apart'] !== undefined) {
+    if (typeof value['apart'] !== 'boolean') throw new BankError(`${where}.apart must be true or false, got ${JSON.stringify(value['apart'])}`);
+    out.apart = value['apart'];
+  }
+  return out;
+}
+
 /** The gain a curve gives a measurement. */
 export function curveAt(points: Curve, x: number): number {
   const first = points[0]!;
@@ -190,8 +250,8 @@ export function parseBank(json: unknown, dir: string): SoundBank {
   for (const [key, raw] of Object.entries(json['sounds'])) {
     const where = `bank: sound "${key}"`;
     if (!isSoundKey(key)) throw new BankError(`${where}: a key is lower-case parts joined by ".", "_" or "-", such as "pop" or "marble.contact"`);
-    if (!isObject(raw)) throw new BankError(`${where} must be { "file": "<path>", "gain"?, "pitchJitter"?, "gainJitter"?, "priority"? }`);
-    known(where, raw, ['file', 'gain', 'pitchJitter', 'gainJitter', 'priority']);
+    if (!isObject(raw)) throw new BankError(`${where} must be { "file": "<path>", "gain"?, "pitchJitter"?, "gainJitter"?, "priority"?, "rules"? }`);
+    known(where, raw, ['file', 'gain', 'pitchJitter', 'gainJitter', 'priority', 'rules']);
     const list = typeof raw['file'] === 'string' ? [raw['file']] : raw['file'];
     if (!Array.isArray(list) || list.length === 0 || !list.every((f) => typeof f === 'string' && f.length > 0)) {
       throw new BankError(`${where}: "file" must be the path of a WAV file relative to the bank, or a list of such paths`);
@@ -202,6 +262,7 @@ export function parseBank(json: unknown, dir: string): SoundBank {
       pitchJitter: raw['pitchJitter'] === undefined ? 0.5 : num(`${where}: pitchJitter`, raw['pitchJitter'], 0, 12),
       gainJitter: raw['gainJitter'] === undefined ? 0.1 : num(`${where}: gainJitter`, raw['gainJitter'], 0, 0.9),
       priority: raw['priority'] === undefined ? 0 : num(`${where}: priority`, raw['priority'], -1000, 1000),
+      rules: raw['rules'] === undefined ? null : ownRules(`${where}: rules`, raw['rules']),
     };
   }
 

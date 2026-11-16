@@ -17,30 +17,41 @@
 // priority the bank gives the sound, then the order of the kinds, then the
 // stronger event.
 //
+// A sound may set rules for its own events. It is then thinned by itself, and
+// when it stands apart from the limits of the whole track it is a shower: a
+// pour of many small things is heard impact by impact, beside the accents and
+// not in their place.
+//
 // Every event that is not heard is kept with the reason, so the report of a
 // track says what each rule took out. Planning draws nothing and reads no
 // file; it is a pure function of the events, the bank and the seed.
 
 import { Rng } from '../core/rng.ts';
 import { FPS } from '../core/time.ts';
-import { curveAt, type SoundBank } from './bank.ts';
+import { curveAt, type SoundBank, type SoundOwnRules } from './bank.ts';
 import type { SceneEvent } from './events.ts';
 
 /**
  * Why an event that has a sound is not heard.
  *
- *   unseen     it is not seen
- *   small      smaller on screen than rules.minSize
- *   slow       a move or a landing slower than rules.minSpeed
- *   weak       a contact, or the burst it sets off, weaker than rules.minImpulse
- *   merged     an event of its kind within rules.mergeWindow matters more: the two sound as one
- *   kind-gap   a sound of its kind starts within the least gap of that kind (rules.kindGap, rules.kindGaps)
- *   crowd      its kind already has rules.crowdVoices sounds within rules.crowdWindow
- *   gap        another sound starts within rules.gap
- *   starts     rules.starts sounds already start within rules.startsWindow
- *   voices     rules.voices sounds are already heard at that moment
+ *   unseen         it is not seen
+ *   small          smaller on screen than minSize
+ *   slow           a move or a landing slower than minSpeed
+ *   weak           a contact, or the burst it sets off, weaker than minImpulse
+ *   merged         an event of its kind within mergeWindow matters more: the two sound as one
+ *   kind-gap       a sound of its kind starts within the least gap of that kind (kindGap, kindGaps)
+ *   crowd          its kind already has crowdVoices sounds within crowdWindow
+ *   sound-starts   its sound already has its own `starts` within its own `startsWindow`
+ *   sound-voices   its sound already has its own `voices` heard at that moment
+ *   gap            another sound starts within rules.gap
+ *   starts         rules.starts sounds already start within rules.startsWindow
+ *   voices         rules.voices sounds are already heard at that moment
+ *
+ * From `small` to `crowd` the values are those of the sound where it has rules
+ * of its own, and "its kind" is then "its sound". The last three are the
+ * limits of the whole track; a sound that stands apart is not held to them.
  */
-export const DROP_RULES = ['unseen', 'small', 'slow', 'weak', 'merged', 'kind-gap', 'crowd', 'gap', 'starts', 'voices'] as const;
+export const DROP_RULES = ['unseen', 'small', 'slow', 'weak', 'merged', 'kind-gap', 'crowd', 'sound-starts', 'sound-voices', 'gap', 'starts', 'voices'] as const;
 
 export type DropRule = (typeof DROP_RULES)[number];
 
@@ -60,6 +71,8 @@ export interface Voice {
   readonly pan: number;
   /** Seconds it is heard. */
   readonly seconds: number;
+  /** Its sound stands apart from the limits of the whole track: it is part of a shower. */
+  readonly apart: boolean;
 }
 
 export interface Dropped {
@@ -119,6 +132,10 @@ interface Candidate {
   readonly order: number;
   /** The scene placed it by hand: it always sounds. */
   readonly forced: boolean;
+  /** The rules its sound sets for its own events, or null. */
+  readonly own: SoundOwnRules | null;
+  /** What it is thinned with: the events of its sound when the sound has rules of its own, else the events of its kind. */
+  readonly pool: string;
   /** What ranks it when a rule has to choose, the most important first; smaller comes first. */
   readonly rank: readonly number[];
   readonly voice: Voice;
@@ -145,6 +162,16 @@ function fits(starts: readonly number[], t: number, most: number, window: number
   return true;
 }
 
+/** The most of `heard` that sound at one moment while `c` does: at its own start, or where one of them starts in it. */
+function overlap(heard: readonly Candidate[], c: Candidate): number {
+  const from = c.voice.time;
+  const to = from + c.voice.seconds;
+  // Only what sounds somewhere in its span can be heard with it; a long shower stays cheap this way.
+  const near = heard.filter((h) => h.voice.time <= to + 1e-9 && h.voice.time + h.voice.seconds >= from - 1e-9);
+  const at = (t: number): number => near.filter((h) => h.voice.time <= t + 1e-9 && t < h.voice.time + h.voice.seconds - 1e-9).length;
+  return Math.max(at(from), ...near.filter((h) => h.voice.time > from && h.voice.time < to - 1e-9).map((h) => at(h.voice.time)));
+}
+
 /** Plans the sounds of a shot from its events. */
 export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: PlanOptions): SoundPlan {
   const rules = bank.rules;
@@ -165,6 +192,8 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     const sound = bank.sounds[key];
     if (!sound) throw new Error(`event ${event.id} asks for the sound "${key}", which the bank does not have (skink3 check --bank names such keys)`);
     const forced = event.kind === 'sfx';
+    // A placed sound sounds as it is placed: the rules of its sound are for the events that find it by themselves.
+    const own = forced ? null : sound.rules;
     const moving = event.kind === 'move' || event.kind === 'land';
     const curves = forced
       ? (event.gain ?? 1)
@@ -182,31 +211,50 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     const source = forced ? 0 : from === 'scene' ? 1 : 2;
     const kindRank = rules.priority.indexOf(event.kind);
     const rank = [source, -sound.priority, kindRank < 0 ? rules.priority.length : kindRank, -base];
-    const c: Candidate = { event, order, forced, rank, voice: { event, key, take, frame: event.frame, time: event.time, gain, pitch, pan, seconds } };
+    const c: Candidate = {
+      event,
+      order,
+      forced,
+      own,
+      pool: own ? `sound:${key}` : `kind:${event.kind}`,
+      rank,
+      voice: { event, key, take, frame: event.frame, time: event.time, gain, pitch, pan, seconds, apart: own?.apart === true },
+    };
     if (forced) return void live.push(c);
     if (!event.seen) return drop('unseen', c);
     if (from !== 'scene') {
       // A sound the scene named itself is wanted whatever the size of the thing.
-      if (event.size < rules.minSize) return drop('small', c);
-      if (moving && event.speed < rules.minSpeed) return drop('slow', c);
-      if (event.impulse !== undefined && event.impulse < rules.minImpulse) return drop('weak', c);
+      if (event.size < (own?.minSize ?? rules.minSize)) return drop('small', c);
+      if (moving && event.speed < (own?.minSpeed ?? rules.minSpeed)) return drop('slow', c);
+      if (event.impulse !== undefined && event.impulse < (own?.minImpulse ?? rules.minImpulse)) return drop('weak', c);
     }
     live.push(c);
   });
 
-  const kinds = [...new Set(live.filter((c) => !c.forced).map((c) => c.event.kind))];
   const without = (lost: ReadonlySet<Candidate>): void => {
     live = live.filter((c) => !lost.has(c));
   };
+  /** What is still live, by pool: the events of a kind, or of a sound that has rules of its own. */
+  const pools = (): Candidate[][] => {
+    const by = new Map<string, Candidate[]>();
+    for (const c of live) {
+      if (c.forced) continue;
+      const list = by.get(c.pool);
+      if (list) list.push(c);
+      else by.set(c.pool, [c]);
+    }
+    return [...by.values()];
+  };
 
-  // 2. Events of one kind close together sound as one: the one that matters most.
+  // 2. Events of one pool close together sound as one: the one that matters most.
   {
     const lost = new Set<Candidate>();
-    for (const kind of kinds) {
-      const row = live.filter((c) => !c.forced && c.event.kind === kind).sort((a, b) => a.event.frame - b.event.frame || a.order - b.order);
+    for (const members of pools()) {
+      const window = members[0]!.own?.mergeWindow ?? rules.mergeWindow;
+      const row = [...members].sort((a, b) => a.event.frame - b.event.frame || a.order - b.order);
       for (let i = 0; i < row.length; ) {
         let j = i + 1;
-        while (j < row.length && row[j]!.event.time - row[i]!.event.time < rules.mergeWindow - 1e-9) j++;
+        while (j < row.length && row[j]!.event.time - row[i]!.event.time < window - 1e-9) j++;
         const cluster = row.slice(i, j);
         const best = [...cluster].sort(byRank)[0]!;
         for (const c of cluster) {
@@ -220,13 +268,16 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     without(lost);
   }
 
-  // 3. A least gap between two sounds of one kind, and 4. a crowd of one kind as a few voices.
+  // 3. A least gap between two sounds of one pool, and 4. a crowd of them as a few voices.
   {
     const lost = new Set<Candidate>();
-    for (const kind of kinds) {
-      const gap = rules.kindGaps[kind] ?? rules.kindGap;
+    for (const members of pools()) {
+      const own = members[0]!.own;
+      const gap = own ? (own.kindGap ?? rules.kindGap) : (rules.kindGaps[members[0]!.event.kind] ?? rules.kindGap);
+      const crowdVoices = own?.crowdVoices ?? rules.crowdVoices;
+      const crowdWindow = own?.crowdWindow ?? rules.crowdWindow;
       const kept: Candidate[] = [];
-      for (const c of live.filter((x) => !x.forced && x.event.kind === kind).sort(byRank)) {
+      for (const c of [...members].sort(byRank)) {
         const near = kept.find((k) => Math.abs(k.event.time - c.event.time) < gap - 1e-9);
         if (near) {
           lost.add(c);
@@ -235,7 +286,7 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
       }
       const starts: number[] = [];
       for (const c of kept) {
-        if (fits(starts, c.event.time, rules.crowdVoices, rules.crowdWindow)) starts.push(c.event.time);
+        if (fits(starts, c.event.time, crowdVoices, crowdWindow)) starts.push(c.event.time);
         else {
           lost.add(c);
           drop('crowd', c);
@@ -245,11 +296,49 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     without(lost);
   }
 
-  // 5. A least gap between any two starts. What the scene placed by hand is in first, and always.
+  // 5. The cap a sound sets for itself: on its starts in a window of time, and on its voices at once.
+  {
+    const lost = new Set<Candidate>();
+    for (const members of pools()) {
+      const own = members[0]!.own;
+      if (!own) continue;
+      let kept = [...members].sort(byRank);
+      if (own.starts !== undefined) {
+        const starts: number[] = [];
+        const next: Candidate[] = [];
+        for (const c of kept) {
+          if (fits(starts, c.event.time, own.starts, own.startsWindow ?? rules.startsWindow)) {
+            starts.push(c.event.time);
+            next.push(c);
+          } else {
+            lost.add(c);
+            drop('sound-starts', c);
+          }
+        }
+        kept = next;
+      }
+      if (own.voices !== undefined) {
+        const heard: Candidate[] = [];
+        for (const c of kept) {
+          if (overlap(heard, c) < own.voices) heard.push(c);
+          else {
+            lost.add(c);
+            drop('sound-voices', c);
+          }
+        }
+      }
+    }
+    without(lost);
+  }
+
+  // The limits of the whole track. A sound that stands apart is not held to them and does not count toward them.
+  const counted = (c: Candidate): boolean => !c.voice.apart;
+
+  // 6. A least gap between any two starts. What the scene placed by hand is in first, and always.
   {
     const lost = new Set<Candidate>();
     const kept: Candidate[] = [];
-    for (const c of [...live].sort(byRank)) {
+    for (const c of live.filter(counted).sort(byRank)) {
       const near = c.forced ? undefined : kept.find((k) => Math.abs(k.event.time - c.event.time) < rules.gap - 1e-9);
       if (near) {
         lost.add(c);
@@ -259,11 +348,11 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     without(lost);
   }
 
-  // 6. A cap on the starts in any window of time, whatever the kinds.
+  // 7. A cap on the starts in any window of time, whatever the kinds.
   {
     const lost = new Set<Candidate>();
     const starts: number[] = [];
-    for (const c of [...live].sort(byRank)) {
+    for (const c of live.filter(counted).sort(byRank)) {
       if (c.forced || fits(starts, c.event.time, rules.starts, rules.startsWindow)) starts.push(c.event.time);
       else {
         lost.add(c);
@@ -273,17 +362,12 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     without(lost);
   }
 
-  // 7. A cap on the voices at once.
+  // 8. A cap on the voices at once.
   {
     const lost = new Set<Candidate>();
     const heard: Candidate[] = [];
-    const at = (t: number): number => heard.filter((h) => h.voice.time <= t + 1e-9 && t < h.voice.time + h.voice.seconds - 1e-9).length;
-    for (const c of [...live].sort(byRank)) {
-      const from = c.voice.time;
-      const to = from + c.voice.seconds;
-      // The most voices are heard at its own start, or where one of the others starts while it sounds.
-      const most = Math.max(at(from), ...heard.filter((h) => h.voice.time > from && h.voice.time < to - 1e-9).map((h) => at(h.voice.time)));
-      if (c.forced || most < rules.voices) heard.push(c);
+    for (const c of live.filter(counted).sort(byRank)) {
+      if (c.forced || overlap(heard, c) < rules.voices) heard.push(c);
       else {
         lost.add(c);
         drop('voices', c);
@@ -310,4 +394,46 @@ export function density(voices: readonly Voice[], window: number): { mostStarts:
     mostVoices = Math.max(mostVoices, voices.filter((o) => o.time <= v.time + 1e-9 && v.time < o.time + o.seconds - 1e-9).length);
   }
   return { mostStarts, mostVoices };
+}
+
+/** Starts of one sound that stands apart are one shower while each follows the one before by less than this many seconds. */
+export const SHOWER_GAP = 1;
+
+/** A run of a sound that stands apart: many starts close together, heard as one thing. */
+export interface Shower {
+  /** Key of the sound. */
+  readonly sound: string;
+  /** Its starts, in order of time. */
+  readonly voices: readonly Voice[];
+  /** When its first sound starts, and the seconds from there to the end of its last. */
+  readonly time: number;
+  readonly seconds: number;
+  /** The most of its starts within any one second, and the most of its sounds heard at one moment. */
+  readonly mostStartsInASecond: number;
+  readonly mostVoices: number;
+}
+
+/** The showers of a plan: the runs of its sounds that stand apart, in order of time. */
+export function showersOf(voices: readonly Voice[]): Shower[] {
+  const bySound = new Map<string, Voice[]>();
+  for (const v of voices) {
+    if (!v.apart) continue;
+    const list = bySound.get(v.key);
+    if (list) list.push(v);
+    else bySound.set(v.key, [v]);
+  }
+  const out: Shower[] = [];
+  for (const [sound, list] of bySound) {
+    const row = [...list].sort((a, b) => a.time - b.time);
+    for (let i = 0; i < row.length; ) {
+      let j = i + 1;
+      while (j < row.length && row[j]!.time - row[j - 1]!.time < SHOWER_GAP - 1e-9) j++;
+      const run = row.slice(i, j);
+      const end = run.reduce((m, v) => Math.max(m, v.time + v.seconds), 0);
+      const { mostStarts, mostVoices } = density(run, 1);
+      out.push({ sound, voices: run, time: run[0]!.time, seconds: end - run[0]!.time, mostStartsInASecond: mostStarts, mostVoices });
+      i = j;
+    }
+  }
+  return out.sort((a, b) => a.time - b.time || (a.sound < b.sound ? -1 : 1));
 }

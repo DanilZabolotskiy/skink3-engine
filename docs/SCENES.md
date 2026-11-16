@@ -700,6 +700,7 @@ Sound changes no pixel. A sound key is not part of the scene hash, so it never r
 ```
 skink3 events <scene>                    every event of the shot          -> out/<shot>/events.json
 skink3 sfx <scene> --bank bank.json      the track and its report         -> out/<shot>/<shot>_sfx.wav, out/<shot>/sfx.json
+skink3 sfx <scene> --bank bank.json --sheet    also the sound sheet       -> out/<shot>/sfx_sheet.png
 skink3 check <scene> --bank bank.json    also fails on a sound key the bank does not know
 ```
 
@@ -790,6 +791,7 @@ A bank is a JSON file that lies next to its sounds:
   - `gain` (default 1) is the gain of the sound; 1 is as recorded.
   - `pitchJitter` (0.5) tunes each use up or down by at most that many semitones, and `gainJitter` (0.1) makes it louder or softer by at most that share of its gain: two repeats do not sound the same.
   - `priority` (0): see the rules below.
+  - `rules`: rules of its own for its events, in place of the rules of the bank; see "Rules of a sound".
 - **A file is a PCM WAV:** integer samples of 8, 16, 24 or 32 bits, or float samples of 32 or 64 bits; mono or stereo; any sample rate (a take is brought to 48 kHz when it is used). A compressed file (MP3, OGG, ADPCM in a WAV) is refused with a message: convert it first.
 - **`kinds`** maps a kind of event to the key of a sound: what such an event sounds like when nothing else decides. A kind that is left out, or mapped to `null`, is silent.
 - **`gain`** (1) is the gain of the whole track.
@@ -831,6 +833,7 @@ The gain of a sound in the track is the `gain` of the bank × the `gain` of the 
 Two more rules do not drop anything: `priority` (below), and `pan` (default `0.6`): how far to a side a sound at the edge of the frame is panned, 0 for the middle, 1 for hard left or right.
 
 - The rules are applied in the order of the table. A window or a gap of 0 turns its rule off.
+- The rules are the same for every event, unless the sound of the event has rules of its own (below).
 - A sound the scene named on an intent is not held to the three thresholds: it was asked for, whatever the size of the thing. It is held to all the other rules.
 - **A placed sound always sounds.** No rule drops an `sfx()`, and the other events make room for it.
 - **What matters more keeps its sound.** Where a rule has to choose between events, they rank in this order:
@@ -841,6 +844,45 @@ Two more rules do not drop anything: `priority` (below), and `pan` (default `0.6
   5. the gain, the stronger first; then the earlier event.
 - `rules.priority` lists kinds of events from the one that matters most. The default is `land`, `contact`, `appear`, `disappear`, `label`, `connect`, `pulse`, `burst`, `grow`, `shrink`, `level`, `squash`, `bump`, `draw`, `move`, `turn`, `fade`, `open`, `blink`: what hits and what arrives, then what changes, then what merely moves. A bank names the kinds it wants first; the rest follow in the order of the default.
 - A burst set off by a contact is an event of its own at the moment of that contact. With a `gap` above 0 only one of the two is heard.
+
+### Rules of a sound
+
+The rules of the bank treat every event alike. A sound may set rules of its own for its events, in `rules` of the sound:
+
+```json
+"marble.contact": {
+  "file": ["story/marble-1.wav", "story/marble-2.wav", "story/marble-3.wav"],
+  "pitchJitter": 2,
+  "gainJitter": 0.25,
+  "rules": { "minSize": 0, "minImpulse": 0.05, "mergeWindow": 0, "kindGap": 0, "crowdWindow": 0, "starts": 12, "startsWindow": 1, "voices": 8, "apart": true }
+}
+```
+
+| In `rules` of a sound | What it sets | In the report |
+|---|---|---|
+| `minSize`, `minSpeed`, `minImpulse` | the thresholds, for its events | `small`, `slow`, `weak` |
+| `mergeWindow` | the window in which its events sound as one | `merged` |
+| `kindGap` | the least gap between two of its sounds | `kind-gap` |
+| `crowdVoices`, `crowdWindow` | how many of its sounds may start within such a window | `crowd` |
+| `starts`, `startsWindow` | its own cap: at most `starts` of its sounds start within any `startsWindow` seconds (the window of the bank when it names none). There is no such cap unless it names one | `sound-starts` |
+| `voices` | at most this many of its sounds are heard at once. There is no such cap unless it names one | `sound-voices` |
+| `apart` | `true`: its sounds stand apart from the limits of the whole track | |
+
+- **A sound with `rules` is thinned by itself.** Its events are merged, spaced and counted among themselves, and no longer with the other events of their kind: the marbles above and the other contacts of the shot neither merge with each other nor crowd each other out. This holds for an empty `rules: {}` too.
+- A rule it does not name has the value of the bank. `kindGaps` of the bank is for kinds, and is not read for it. A field that is not in the table is refused: `gap`, `priority` and `pan` are the bank's.
+- The rules belong to the sound that is played: those of `marble` are for every event of that voice that has no sound of its own, those of `marble.contact` for its contacts.
+- A sound's own cap and voices are applied after the crowd, and before the limits of the whole track.
+- **`apart: true`** takes its sounds out of the limits of the whole track: they are not held to the `gap`, `starts` and `voices` of the bank, and they do not count toward them. The other sounds of the track, its **accents**, are then exactly what they are without it. A sound that stands apart has nothing but its own `starts` and `voices` to cap it, so set them.
+- A sound placed with `sfx()` is an accent whatever the rules of its sound: it always sounds, and it is counted.
+
+**A shower.** Under the rules of the bank a pour of many small things is one sound or two: the gaps and the crowd see to that, and a single tick does not say that forty marbles fell. The entry above makes the pour heard as it is seen:
+
+- every impact sounds on the frame of its contact (`mergeWindow` and `kindGap` of 0; `crowdWindow` of 0 turns the crowd off), small and weak ones too (`minSize`, `minImpulse`);
+- up to 12 of them start in any second and 8 are heard at once; where the cap has to choose, the harder impacts keep their sound;
+- the gain of each impact comes from its impulse, on the `impulse` curve, and `pitchJitter`, `gainJitter` and several takes keep two impacts from sounding the same;
+- `apart` keeps the pour from taking the place of the accents.
+
+A **shower** is a run of a sound that stands apart: starts that follow each other by less than a second. The report counts a shower as one thing, with its starts, its length and its busiest second, and the sound sheet gives it one tile. With about 8 to 12 starts a second single impacts are still heard; a sound of about a tenth of a second suits that.
 
 ### The track
 
@@ -855,16 +897,38 @@ The report is printed, and written in full to `out/<shot>/sfx.json`:
 
 | In the report | Meaning |
 |---|---|
-| `events`, `starts` | the events of the shot, and how many of them are heard |
-| `startsPerMinute` | starts per minute of the shot |
-| `mostStarts`, `startsWindow` | the most starts within any stretch of `startsWindow` seconds: the window of the rule `starts` |
-| `mostVoicesAtOnce` | the most sounds heard at one moment |
+| `events`, `heard` | the events of the shot, and how many of them are heard |
+| `starts`, `startsPerMinute` | the accents: the sounds that the limits of the whole track count, which is every sound but those that stand apart; and how many of them start per minute of the shot |
+| `mostStarts`, `startsWindow` | the most accents that start within any stretch of `startsWindow` seconds: the window of the rule `starts` |
+| `mostVoicesAtOnce` | the most accents heard at one moment |
+| `showerStarts`, `showers` | the sounds that stand apart, and their runs. A shower has its `sound`, the `id`, `node` and `time` of its first start, its `seconds` (to the end of its last sound), its `starts`, and `mostStartsInASecond` and `mostVoicesAtOnce` |
 | `silent`, `muted` | events of kinds the bank keeps silent; events the scene muted |
-| `dropped` | for each rule (`unseen`, `small`, `slow`, `weak`, `merged`, `kind-gap`, `crowd`, `gap`, `starts`, `voices`) the events it took out, each with the event that is heard instead where the rule names one |
+| `dropped` | for each rule (`unseen`, `small`, `slow`, `weak`, `merged`, `kind-gap`, `crowd`, `sound-starts`, `sound-voices`, `gap`, `starts`, `voices`) the events it took out, each with the event that is heard instead where the rule names one |
 | `byKind` | for each kind: its events, and how many of them are heard |
-| `voices` | the sounds of the track: the event, its time, the sound and its take, gain, pitch, pan and length |
+| `voices` | every sound of the track: the id of its event, its time and kind, the `node` it comes from (null for a sound placed by hand without one), the sound and its take, gain, pitch, pan and length; for a sound of a shower also `shower`, its place in `showers` |
 | `peak`, `clipped` | the largest sample of the mix (1 is full scale), and the samples above it |
-| `rules` | the rules as they were applied |
+| `rules`, `soundRules` | the rules as they were applied; the rules that sounds set for themselves, by the key of the sound |
+
+The printed report lists the accents one by one, each with its node, and every shower in one line.
+
+### The sound sheet
+
+```
+skink3 sfx <scene> --bank bank.json --sheet [--cols 4] [--tile 480]      -> out/<shot>/sfx_sheet.png
+```
+
+The sheet shows which event each sound belongs to, for an author who cannot hear the track. It has one tile for every sound, in order of time:
+
+- **The picture** is the frame on which the sound starts.
+- **A ring** goes around the node the sound comes from, where it is on that frame, as large as the node gets during the event. A link and an emitter get a small ring at the place of the event: the end of the link, the place of the burst. A sound placed by hand without a `node` has no ring.
+- **Written on the tile** are the time, the frame and the key of the sound; then the kind of event and the id of the node (`placed by hand` without one), and for a contact the other body: `contact  marble-3 on jar`.
+- **A shower is one tile,** at its first start, with a dashed ring and a third line: `shower: 40 starts in 3.5 s`.
+
+Read it tile by tile. Is the ring on the thing a viewer would take for the source of that sound at that moment, and does the sound suit what the thing does there? A sound whose ring holds nothing a viewer sees act is a sound to mute (`sound: false`) or to move. A pour that shows as a few single tiles is a few accents: give its sound `rules`, and set it `apart`.
+
+- An `appear` starts while its node is still invisible, so its ring is empty on that frame: it marks where the node is about to be.
+- The sheet holds at most 60 tiles, the first in time, and the command says how many sounds are left out. `--cols` sets the tiles in a row, `--tile` the width of a tile in px.
+- With `--out` the sheet is `<out>.sheet.png`, next to the track.
 
 ### What sound does not do
 
@@ -889,7 +953,7 @@ physics the physics review     [--pictures [--top 3]]                   report a
 trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
 graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
 events  the events of the shot                                           as JSON in out/<shot>/events.json
-sfx     the sound track        --bank <bank.json>                       a WAV, and its report as JSON in out/<shot>/sfx.json
+sfx     the sound track        --bank <bank.json> [--sheet [--cols 4] [--tile 480]]   a WAV, and its report as JSON in out/<shot>/sfx.json
 
 common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>
 ```
@@ -897,14 +961,14 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - Inside the engine repository the command is `node bin/skink3.mjs`; from a repository that depends on the engine it is `npx skink3`.
 - Output goes to `./out/<shot id>/`, the bake cache to `./cache/`, both relative to the directory the command is run from.
 - `still`, `strip`, `sheet`, `render`, `check`, `motion`, `physics`, `trail`, `graph`, `events` and `sfx` bake first if the cache is missing or stale.
-- `check --bank <bank.json>` also holds the sound keys of the shot against that bank; `sfx` writes `out/<shot>/<shot>_sfx.wav`, or the file `--out` names, with its report next to it (see Sound).
+- `check --bank <bank.json>` also holds the sound keys of the shot against that bank; `sfx` writes `out/<shot>/<shot>_sfx.wav`, or the file `--out` names, with its report next to it; `sfx --sheet` also writes the sound sheet, `out/<shot>/sfx_sheet.png`: which event each sound belongs to (see Sound).
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 
-Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, the simulation with `physics`, and the sound with the report of `sfx`; render the video when those look right.
+Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, the simulation with `physics`, and the sound with the report and the sheet of `sfx`; render the video when those look right.
 
 ## From another repository
 
@@ -946,7 +1010,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration into subtitle cues (lines of a set length, breaks at the ends of sentences and at pauses), and `formatSrt`, `formatVtt` and `formatYtt` write them out; see `src/text/subtitles.ts`.
 
-For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. See `src/audio`.
+For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption` and `tileRing` are what is on it). See `src/audio`.
 
 ## What is not there yet
 

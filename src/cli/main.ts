@@ -66,11 +66,16 @@ trail   --node <id[,id...]> [--from <frame>] [--to <frame>] | [--time <s,s>]  [-
 graph   --node <id> | --camera      [--from <frame>] [--to <frame>] | [--time <s,s>]
 events  (no options)                the events as JSON in out/<shot>/events.json
 sfx     --bank <bank.json>          a WAV of 48 kHz, stereo, as long as the shot; its report as text, and as JSON in out/<shot>/sfx.json
+        [--sheet [--cols 4] [--tile 480]]   also the sound sheet, out/<shot>/sfx_sheet.png: which event each sound belongs to
 
 --crop is in stage units (1920 x 1080, origin top-left). --hash and --hashes
 print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes
 pictures of the worst few subjects of the report: a trail and a graph for
-motion; a close-up, a trail or a graph, by the kind of finding, for physics.`;
+motion; a close-up, a trail or a graph, by the kind of finding, for physics.
+--sheet (of sfx) writes the sound sheet of the track: a tile for every sound,
+with the frame at which it starts, the node it comes from ringed, and the
+sound, the kind of event and the time written on it. A shower, the run of a
+sound that the bank sets apart, is one tile, with its count and its length.`;
 
 interface Common {
   compiled: CompiledShot;
@@ -166,6 +171,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       pictures: { type: 'boolean', default: false },
       top: { type: 'string' },
       bank: { type: 'string' },
+      sheet: { type: 'boolean', default: false },
     },
   });
   const str = (name: string): string | undefined => {
@@ -472,6 +478,23 @@ full report: ${file}`);
       console.log(formatSoundReport(track.report));
       console.log(`\ntrack: ${file}`);
       console.log(`full report: ${reportFile}`);
+      if (flag('sheet')) {
+        if (track.plan.voices.length === 0) console.log('sheet: none (the track is silent)');
+        else {
+          // The picture modules are loaded only by the commands that draw them.
+          const { renderSoundSheet } = await import('../audio/sheet.ts');
+          const sheet = await renderSoundSheet(c, bake, track.plan, {
+            cols: int('cols', str('cols'), 4, 1, 40),
+            tileWidth: int('tile', str('tile'), 480, 64, 3840),
+            lang: common.lang,
+            gpu: common.gpu,
+          });
+          const sheetFile = str('out') ? `${file}.sheet.png` : join(common.outDir, 'sfx_sheet.png');
+          write(sheetFile, sheet.png);
+          const showers = sheet.tiles.filter((t) => t.shower).length;
+          console.log(`sheet: ${sheet.tiles.length} tile(s), ${showers} of them shower(s)${sheet.more > 0 ? `; ${sheet.more} more sound(s) do not fit on it` : ''}: ${sheetFile}`);
+        }
+      }
       return 0;
     }
 

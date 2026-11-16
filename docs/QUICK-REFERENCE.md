@@ -116,6 +116,8 @@ sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a w
 
 - Every intent, contact and burst is an event. `skink3 sfx` makes the track of the shot from them and a bank of sounds that the production brings: the engine holds none. One event makes one sound; a kind the bank does not map is silent.
 - Sound is in measure: only what is seen sounds, and the rules of the bank drop most of the rest (by default no two starts within 0.5 s, and 4 starts in any 10 s). It changes no pixel and no bake.
+- A sound of the bank can have `rules` of its own and stand `apart` from those limits: a pour is then a shower, heard impact by impact.
+- You cannot hear the track: run `sfx --sheet` and read `out/<shot>/sfx_sheet.png`. It has a tile for every sound (one for a shower): the frame where it starts, its node ringed, and the sound, the kind of event and the time.
 
 ## Words, subtitles, generated content
 
@@ -141,7 +143,7 @@ physics  [--pictures [--top 3]]
 trail    a ghost trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph    a speed graph   --node id | --camera   [--from f] [--to f] | [--time s,s]
 events   every intent, contact and burst of the shot, as JSON
-sfx      the sound track, a WAV   --bank bank.json
+sfx      the sound track, a WAV   --bank bank.json   [--sheet [--cols 4] [--tile 480]]
 common   --lang tag (the first table)   --width px (1920)   --cpu   --out file   --cache dir
 ```
 
@@ -176,7 +178,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page** (the rules the API enforces); **Minimal example** (running a scene); **Space, time, units** (where the origin is); **Colours: the palette** (its laws); **Text: string tables** (keys, languages, the font); **`shot`** (every option; the camera, its path, the physics); **`layer`** (what the depth gives); **Nodes** (every node in full; glow, covers, clipping, levels); **Timeline: intents** (every intent and rule; profiles, travel, opacity, stagger); **Springs: secondary motion** (how they behave); **Rigid bodies** (what a body can and cannot do); **Generating content in a scene** (seeded numbers); **Checks** (what fails, what warns); **Motion review**, **Physics review** (what to know when writing); **Sound** (events, the bank of sounds, its rules, the track); **Command line** (output files); **From another repository** (depending on the engine); **Programmatic use** (a bake, a node or a frame in a test); **What is not there yet** (what to do without).
+SCENES.md: **The model in one page** (the rules the API enforces); **Minimal example** (running a scene); **Space, time, units** (where the origin is); **Colours: the palette** (its laws); **Text: string tables** (keys, languages, the font); **`shot`** (every option; the camera, its path, the physics); **`layer`** (what the depth gives); **Nodes** (every node in full; glow, covers, clipping, levels); **Timeline: intents** (every intent and rule; profiles, travel, opacity, stagger); **Springs: secondary motion** (how they behave); **Rigid bodies** (what a body can and cannot do); **Generating content in a scene** (seeded numbers); **Checks** (what fails, what warns); **Motion review**, **Physics review** (what to know when writing); **Sound** (events, the bank of sounds, its rules, the rules of one sound, the sound sheet, the track); **Command line** (output files); **From another repository** (depending on the engine); **Programmatic use** (a bake, a node or a frame in a test); **What is not there yet** (what to do without).
 
 MOTION-REVIEW.md: **The findings** (each kind in full; what is not flagged), **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

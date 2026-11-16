@@ -76,5 +76,7 @@ Target norms (checked with `tools/metrics` on renders):
 - **A film is never crowded with sound.** A sound marks an event that matters; it is not a click every second.
 - Only what is seen sounds. Small and slow moves are silent. A crowd of events sounds as a few.
 - One event makes one sound.
+- **A pour may be heard as it is seen.** Where the crowd is the point of the picture, a sound can stand apart from the limits and be a shower of impacts, beside the accents and never in their place.
+- **Every sound has an event the author can see.** The report names the node of each sound, and the sound sheet shows the frame and the node it belongs to: an author who cannot hear checks the track by eye.
 - The engine holds no sounds: a production brings its bank. The limits (thresholds, gaps, caps, priorities) are data of the bank, and the defaults in the engine are quiet rather than busy.
 - Sound never changes a pixel or a bake.

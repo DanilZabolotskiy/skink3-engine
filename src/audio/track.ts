@@ -5,10 +5,10 @@
 import { FPS } from '../core/time.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { BankError, type SoundBank, type SoundRules } from './bank.ts';
+import { BankError, type SoundBank, type SoundOwnRules, type SoundRules } from './bank.ts';
 import { EVENT_KINDS, sceneEvents, type EventKind, type SceneEvent } from './events.ts';
 import { loadTakes, mixVoices, SAMPLE_RATE } from './mix.ts';
-import { density, DROP_RULES, planSound, soundOf, type DropRule, type SoundPlan } from './plan.ts';
+import { density, DROP_RULES, planSound, showersOf, soundOf, type DropRule, type SoundPlan } from './plan.ts';
 import { writeWav } from './wav.ts';
 
 /** Bits of a sample of the track that is written. */
@@ -52,14 +52,31 @@ export interface SoundReport {
   readonly channels: number;
   readonly bits: number;
   readonly samples: number;
-  /** Events of the shot, and how many of them are heard. */
+  /** Events of the shot, and how many of them are heard: every sound of the track. */
   readonly events: number;
+  readonly heard: number;
+  /** The accents: the starts that the limits of the whole track count, which is every sound but those of showers. */
   readonly starts: number;
   readonly startsPerMinute: number;
-  /** The most starts within any `startsWindow` seconds: the window of the rule `starts`. */
+  /** The most of those starts within any `startsWindow` seconds: the window of the rule `starts`. */
   readonly mostStarts: number;
   readonly startsWindow: number;
+  /** The most of those sounds heard at one moment. */
   readonly mostVoicesAtOnce: number;
+  /** The starts of sounds that stand apart from those limits, and their runs. */
+  readonly showerStarts: number;
+  readonly showers: readonly {
+    readonly sound: string;
+    /** Its first start: the event, its node, its time. */
+    readonly id: string;
+    readonly node: string | null;
+    readonly time: number;
+    /** From its first start to the end of its last sound. */
+    readonly seconds: number;
+    readonly starts: number;
+    readonly mostStartsInASecond: number;
+    readonly mostVoicesAtOnce: number;
+  }[];
   /** Largest sample of the mix, 1 = full scale, and how many samples had to be held there. */
   readonly peak: number;
   readonly clipped: number;
@@ -70,11 +87,12 @@ export interface SoundReport {
   readonly byKind: Readonly<Partial<Record<EventKind, { readonly events: number; readonly heard: number }>>>;
   /** What each rule took out. `by` is the event that is heard instead, where the rule names one. */
   readonly dropped: Readonly<Record<DropRule, readonly { readonly id: string; readonly time: number; readonly kind: EventKind; readonly node: string | null; readonly by: string | null }[]>>;
-  /** The sounds of the track, in order of time. */
+  /** Every sound of the track, in order of time: its event, the node it comes from, and how it is played. */
   readonly voices: readonly {
     readonly id: string;
     readonly time: number;
     readonly kind: EventKind;
+    /** Id of the node the sound comes from; null for a sound placed by hand without one. */
     readonly node: string | null;
     readonly sound: string;
     readonly take: number;
@@ -82,9 +100,13 @@ export interface SoundReport {
     readonly pitch: number;
     readonly pan: number;
     readonly seconds: number;
+    /** Left out for an accent; for a sound of a shower, which one: its place in `showers`. */
+    readonly shower?: number;
   }[];
   /** The rules as they were applied: the bank's, with the engine's defaults for the ones it leaves out. */
   readonly rules: SoundRules;
+  /** The rules that sounds set for their own events, by the key of the sound. */
+  readonly soundRules: Readonly<Record<string, SoundOwnRules>>;
 }
 
 export interface SoundTrack {
@@ -122,7 +144,11 @@ export function soundReport(c: CompiledShot, bank: SoundBank, events: readonly S
   >;
   for (const d of plan.dropped) dropped[d.rule].push({ id: d.event.id, time: round(d.event.time), kind: d.event.kind, node: d.event.node, by: d.by });
   const seconds = c.frames / FPS;
-  const { mostStarts, mostVoices } = density(plan.voices, bank.rules.startsWindow);
+  // The limits of the whole track are about the accents; the showers are counted by themselves.
+  const accents = plan.voices.filter((v) => !v.apart);
+  const showers = showersOf(plan.voices);
+  const showerOf = new Map(showers.flatMap((s, i) => s.voices.map((v) => [v, i] as const)));
+  const { mostStarts, mostVoices } = density(accents, bank.rules.startsWindow);
   return {
     shot: c.spec.id,
     frames: c.frames,
@@ -133,11 +159,23 @@ export function soundReport(c: CompiledShot, bank: SoundBank, events: readonly S
     bits: TRACK_BITS,
     samples: mix.left.length,
     events: events.length,
-    starts: plan.voices.length,
-    startsPerMinute: round((plan.voices.length / seconds) * 60, 1),
+    heard: plan.voices.length,
+    starts: accents.length,
+    startsPerMinute: round((accents.length / seconds) * 60, 1),
     mostStarts,
     startsWindow: bank.rules.startsWindow,
     mostVoicesAtOnce: mostVoices,
+    showerStarts: plan.voices.length - accents.length,
+    showers: showers.map((s) => ({
+      sound: s.sound,
+      id: s.voices[0]!.event.id,
+      node: s.voices[0]!.event.node,
+      time: round(s.time),
+      seconds: round(s.seconds),
+      starts: s.voices.length,
+      mostStartsInASecond: s.mostStartsInASecond,
+      mostVoicesAtOnce: s.mostVoices,
+    })),
     peak: round(peak, 4),
     clipped,
     silent: plan.silent.length,
@@ -155,8 +193,10 @@ export function soundReport(c: CompiledShot, bank: SoundBank, events: readonly S
       pitch: round(v.pitch, 4),
       pan: round(v.pan, 3),
       seconds: round(v.seconds),
+      ...(showerOf.has(v) ? { shower: showerOf.get(v)! } : {}),
     })),
     rules: bank.rules,
+    soundRules: Object.fromEntries(Object.entries(bank.sounds).flatMap(([key, s]) => (s.rules ? [[key, s.rules] as const] : []))),
   };
 }
 
@@ -190,9 +230,17 @@ const SHOWN_PER_RULE = 6;
 export function formatSoundReport(r: SoundReport): string {
   const lines: string[] = [];
   lines.push(`sfx ${r.shot}: ${r.frames} frames (${r.seconds.toFixed(2)} s), ${r.sampleRate / 1000} kHz, ${r.channels} channels, ${r.bits} bits, seed ${r.seed}`);
-  lines.push(
-    `starts: ${r.starts} of ${r.events} event(s) are heard: ${r.startsPerMinute} per minute; at most ${r.mostStarts} in any ${r.startsWindow} s (limit ${r.rules.starts}); at most ${r.mostVoicesAtOnce} voice(s) at once (limit ${r.rules.voices})`,
-  );
+  const dense = `${r.startsPerMinute} per minute; at most ${r.mostStarts} in any ${r.startsWindow} s (limit ${r.rules.starts}); at most ${r.mostVoicesAtOnce} voice(s) at once (limit ${r.rules.voices})`;
+  if (r.showers.length === 0) lines.push(`starts: ${r.starts} of ${r.events} event(s) are heard: ${dense}`);
+  else {
+    lines.push(`starts: ${r.heard} of ${r.events} event(s) are heard: ${r.showerStarts} in ${r.showers.length} shower(s), and ${r.starts} accent(s): ${dense}`);
+    lines.push('showers (apart from those limits):');
+    for (const s of r.showers) {
+      lines.push(
+        `  ${s.time.toFixed(2).padStart(7)} s  ${s.sound.padEnd(16)} ${s.starts} start(s) over ${s.seconds.toFixed(2)} s; at most ${s.mostStartsInASecond} in a second, ${s.mostVoicesAtOnce} at once; from ${s.id}`,
+      );
+    }
+  }
   lines.push(`level: peak ${r.peak.toFixed(3)} of full scale${r.clipped > 0 ? `; ${r.clipped} sample(s) clipped: lower the gains` : ''}`);
   const kinds = EVENT_KINDS.filter((kind) => r.byKind[kind]);
   if (kinds.length > 0) lines.push(`by kind (heard of events): ${kinds.map((kind) => `${kind} ${r.byKind[kind]!.heard}/${r.byKind[kind]!.events}`).join(', ')}`);
@@ -203,10 +251,12 @@ export function formatSoundReport(r: SoundReport): string {
     const list = r.dropped[rule];
     if (list.length === 0) continue;
     const shown = list.slice(0, SHOWN_PER_RULE).map((d) => `${d.id}${d.by ? ` (for ${d.by})` : ''}`);
-    lines.push(`  ${rule.padEnd(9)} ${String(list.length).padStart(4)}  ${shown.join(', ')}${list.length > shown.length ? `, and ${list.length - shown.length} more` : ''}`);
+    lines.push(`  ${rule.padEnd(12)} ${String(list.length).padStart(4)}  ${shown.join(', ')}${list.length > shown.length ? `, and ${list.length - shown.length} more` : ''}`);
   }
-  if (r.voices.length > 0) lines.push('heard:');
-  for (const v of r.voices) {
+  // The sounds of a shower are listed by their shower above; the JSON report has each of them.
+  const accents = r.voices.filter((v) => v.shower === undefined);
+  if (accents.length > 0) lines.push('heard:');
+  for (const v of accents) {
     lines.push(`  ${v.time.toFixed(2).padStart(7)} s  ${v.kind.padEnd(9)} ${(v.node ?? '-').padEnd(16)} ${v.sound.padEnd(16)} gain ${v.gain.toFixed(2)}  pan ${v.pan >= 0 ? '+' : ''}${v.pan.toFixed(2)}  pitch ${v.pitch.toFixed(3)}`);
   }
   return lines.join('\n');

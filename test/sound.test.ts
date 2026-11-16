@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { Canvas, loadImage } from 'skia-canvas';
 import { palette } from '../examples/demo/palette.ts';
 import {
   bakeHash,
@@ -41,18 +42,24 @@ import {
   readWav,
   rect,
   renderSound,
+  renderSoundSheet,
   resample,
   runChecks,
+  sampleMotion,
   SAMPLE_RATE,
   SAMPLES_PER_FRAME,
   scaleTo,
   sceneEvents,
   sfx,
   shot,
+  showersOf,
   SOUND_CURVES,
   SOUND_RULES,
   soundOf,
+  soundTiles,
   squash,
+  tileCaption,
+  tileRing,
   travel,
   turnTo,
   WavError,
@@ -68,8 +75,10 @@ import {
 } from '../src/index.ts';
 
 // The sound of a shot: its events, the bank of sounds, the rules that keep a
-// track from being crowded, and the track itself. The engine holds no sound
-// files, so every sound here is a tone the test makes.
+// track from being crowded, the rules a sound sets for its own events, the
+// track itself, and the sheet that shows which event each sound belongs to.
+// The engine holds no sound files, so every sound here is a tone the test
+// makes.
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'bin', 'skink3.mjs');
@@ -98,6 +107,8 @@ interface ToneSpec {
   pitchJitter?: number;
   gainJitter?: number;
   priority?: number;
+  /** Rules of its own for its events, as the bank writes them. */
+  rules?: Record<string, unknown>;
 }
 
 let banks = 0;
@@ -118,7 +129,7 @@ function bankOf(spec: { sounds: Record<string, ToneSpec>; kinds?: Record<string,
       writeFileSync(join(dir, file), writeWav([tone((s.hz ?? 440) * (i + 1), s.seconds ?? 0.1, s.rate ?? SAMPLE_RATE)], s.rate ?? SAMPLE_RATE, 16));
       files.push(file);
     }
-    sounds[key] = { file: files.length === 1 ? files[0] : files, gain: s.gain ?? 1, pitchJitter: s.pitchJitter ?? 0, gainJitter: s.gainJitter ?? 0, ...(s.priority === undefined ? {} : { priority: s.priority }) };
+    sounds[key] = { file: files.length === 1 ? files[0] : files, gain: s.gain ?? 1, pitchJitter: s.pitchJitter ?? 0, gainJitter: s.gainJitter ?? 0, ...(s.priority === undefined ? {} : { priority: s.priority }), ...(s.rules === undefined ? {} : { rules: s.rules }) };
   }
   const json = {
     sounds,
@@ -516,7 +527,7 @@ test('sound rules: the defaults are quiet, and a bank changes only what it names
   const bank = parseBank({ sounds: { pop: { file: 'pop.wav' } }, rules: { gap: 1, priority: ['move', 'appear'] }, curves: { speed: [[0, 0.2], [10, 1]] } }, DIR);
   assert.deepEqual(bank.rules, { ...SOUND_RULES, gap: 1, priority: ['move', 'appear', ...SOUND_RULES.priority.filter((k) => k !== 'move' && k !== 'appear')] });
   assert.deepEqual(bank.curves, { ...SOUND_CURVES, speed: [[0, 0.2], [10, 1]] });
-  assert.deepEqual(bank.sounds['pop'], { files: [join(DIR, 'pop.wav')], gain: 1, pitchJitter: 0.5, gainJitter: 0.1, priority: 0 });
+  assert.deepEqual(bank.sounds['pop'], { files: [join(DIR, 'pop.wav')], gain: 1, pitchJitter: 0.5, gainJitter: 0.1, priority: 0, rules: null });
   assert.equal(curveAt(bank.curves.speed, -5), 0.2);
   assert.ok(Math.abs(curveAt(bank.curves.speed, 5) - 0.6) < 1e-12, 'half-way between two points');
   assert.equal(curveAt(bank.curves.speed, 50), 1);
@@ -540,6 +551,214 @@ test('sound rules: the defaults are quiet, and a bank changes only what it names
   bad({ sounds: { pop: { file: 'a.wav' } }, rules: { startsPerSecond: 4 } }, /unknown field "startsPerSecond"/);
   bad({ sounds: { pop: { file: 'a.wav' } }, curves: { size: [[10, 1], [5, 0.5]] } }, /rising order of x/);
   assert.throws(() => loadBank(join(DIR, 'no-such-bank.json')), /bank of sounds not found/);
+});
+
+test('rules of a sound: the bank reads the rules a sound names, and says what is wrong with them', () => {
+  const shower = { minSize: 0, minSpeed: 0, minImpulse: 0.05, mergeWindow: 0, kindGap: 0.05, crowdVoices: 100, crowdWindow: 0, starts: 12, startsWindow: 1, voices: 8, apart: true };
+  const bank = parseBank({ sounds: { pop: { file: 'pop.wav' }, 'marble.contact': { file: 'tick.wav', rules: shower }, bare: { file: 'b.wav', rules: {} } } }, DIR);
+  assert.equal(bank.sounds['pop']!.rules, null, 'no rules of its own: the rules of the bank');
+  assert.deepEqual(bank.sounds['marble.contact']!.rules, shower);
+  assert.deepEqual(bank.sounds['bare']!.rules, {}, 'only what it names');
+  assert.deepEqual(bank.rules, SOUND_RULES, 'and the rules of the bank stay what they are');
+
+  const bad = (rules: unknown, message: RegExp): void => {
+    assert.throws(() => parseBank({ sounds: { pop: { file: 'a.wav', rules } } }, DIR), (e: unknown) => e instanceof BankError && message.test(e.message));
+  };
+  bad([], /sound "pop": rules must be an object of rules for the events of this sound/);
+  // The limits of the whole track are not a sound's to set: it can only stand apart from them.
+  bad({ gap: 0 }, /unknown field "gap" \(allowed: minSize, minSpeed, minImpulse, mergeWindow, kindGap, crowdVoices, crowdWindow, starts, startsWindow, voices, apart\)/);
+  bad({ kindGaps: { contact: 0 } }, /unknown field "kindGaps"/);
+  bad({ apart: 1 }, /rules\.apart must be true or false, got 1/);
+  bad({ starts: 0 }, /rules\.starts must be a number in 1\.\.100000, got 0/);
+  bad({ voices: '8' }, /rules\.voices must be a number/);
+  bad({ minImpulse: -1 }, /rules\.minImpulse must be a number/);
+});
+
+test('rules of a sound: its thresholds stand in for the bank\'s, for its events only', () => {
+  const kinds = { appear: 'pop', move: 'whoosh', contact: 'tick' };
+  // A strict bank, and a voice that lets its small, slow and weak events through.
+  const loose = bankOf({
+    sounds: { pop: {}, whoosh: {}, tick: {}, marble: { rules: { minSize: 5 } }, 'marble.move': { rules: { minSpeed: 1 } }, 'marble.contact': { rules: { minSize: 0, minImpulse: 0.05 } } },
+    kinds,
+    rules: { minSize: 24, minSpeed: 4, minImpulse: 0.25 },
+  });
+  const p = plan(
+    [
+      ev({ node: 'plain', size: 10, time: 0 }),
+      ev({ node: 'm1', key: 'marble', size: 10, time: 1 }),
+      ev({ node: 'm2', key: 'marble', size: 4, time: 2 }),
+      ev({ kind: 'move', node: 'crawl', speed: 2, time: 3 }),
+      ev({ kind: 'move', node: 'm3', key: 'marble', speed: 2, time: 4 }),
+      ev({ kind: 'move', node: 'm4', key: 'marble', speed: 0.5, time: 5 }),
+      ev({ kind: 'move', node: 'm5', key: 'marble', speed: 2, size: 10, time: 6 }),
+      ev({ kind: 'contact', node: 'tap', impulse: 0.1, time: 7 }),
+      ev({ kind: 'contact', node: 'm6', key: 'marble', impulse: 0.1, size: 10, time: 8 }),
+      ev({ kind: 'contact', node: 'm7', key: 'marble', impulse: 0.01, time: 9 }),
+    ],
+    loose,
+  );
+  assert.deepEqual(heard(p), ['appear:m1@60', 'move:m3@240', 'contact:m6@480']);
+  assert.deepEqual(lost(p, 'small'), ['appear:plain@0', 'appear:m2@120', 'move:m5@360'], 'a threshold the sound does not name is the bank\'s');
+  assert.deepEqual(lost(p, 'slow'), ['move:crawl@180', 'move:m4@300']);
+  assert.deepEqual(lost(p, 'weak'), ['contact:tap@420', 'contact:m7@540']);
+  assert.deepEqual(heard(plan([ev({ node: 'asked', sound: 'marble', size: 1 })], loose)), ['appear:asked@0'], 'a sound the scene named is wanted whatever the size');
+
+  // The other way round: a bank that drops nothing, and a sound that wants more of its own events.
+  const strict = bankOf({ sounds: { tick: {}, 'bell.contact': { rules: { minImpulse: 1, minSize: 50 } } }, kinds: { contact: 'tick' } });
+  const q = plan(
+    [
+      ev({ kind: 'contact', node: 'a', impulse: 0.5 }),
+      ev({ kind: 'contact', node: 'b', key: 'bell', impulse: 0.5, time: 1 }),
+      ev({ kind: 'contact', node: 'c', key: 'bell', impulse: 2, size: 40, time: 2 }),
+      ev({ kind: 'contact', node: 'd', otherKey: 'bell', impulse: 2, time: 3 }),
+    ],
+    strict,
+  );
+  assert.deepEqual([heard(q), lost(q, 'weak'), lost(q, 'small')], [['contact:a@0', 'contact:d@180'], ['contact:b@60'], ['contact:c@120']]);
+});
+
+test('rules of a sound: it is thinned by itself: its own merge window, least gap and crowd, apart from the other events of its kind', () => {
+  const kinds = { contact: 'tick' };
+  const contact = (node: string, time: number, impulse = 1, key: string | null = 'marble'): SceneEvent => ev({ kind: 'contact', node, key, time, impulse });
+  const mine = (ids: string[], letter: string): string[] => ids.filter((id) => id.includes(`:${letter}`));
+  // The bank merges contacts within 0.08 s, keeps a second between two and lets two sound in five seconds. The marbles ask for none of that.
+  const rules = { mergeWindow: 0.08, kindGap: 1, crowdVoices: 2, crowdWindow: 5 };
+  const bank = bankOf({ sounds: { tick: {}, 'marble.contact': { rules: { mergeWindow: 0, kindGap: 0.1, crowdVoices: 100, crowdWindow: 1 } } }, kinds, rules });
+  const marbles = Array.from({ length: 10 }, (_, i) => contact(`m${i}`, 1 + i * 0.2));
+  const p = plan([...marbles, contact('a', 1, 1, null), contact('b', 1.05, 1, null), contact('c', 1.6, 1, null), contact('d', 3, 1, null), contact('e', 9, 1, null)], bank);
+  assert.equal(mine(heard(p), 'm').length, 10, 'every marble, each on its own frame');
+  assert.deepEqual(heard(p).filter((id) => !id.includes(':m')), ['contact:a@60', 'contact:d@180', 'contact:e@540'], 'the other contacts under the rules of the bank, as if no marble fell');
+  assert.deepEqual([lost(p, 'merged'), lost(p, 'kind-gap'), lost(p, 'crowd')], [['contact:b@63'], ['contact:c@96'], []]);
+  // A rule it does not name is the bank's: without a gap of its own its sounds keep the second of the bank.
+  const half = bankOf({ sounds: { tick: {}, 'marble.contact': { rules: { mergeWindow: 0, crowdWindow: 0 } } }, kinds, rules });
+  assert.deepEqual(heard(plan(marbles, half)), ['contact:m0@60', 'contact:m5@120']);
+  // Without rules of its own the same voice is one more contact among the contacts.
+  assert.equal(heard(plan(marbles, bankOf({ sounds: { tick: {}, 'marble.contact': {} }, kinds, rules }))).length, 2);
+
+  // A window of its own in which its events sound as one: the strongest of them.
+  const one = bankOf({ sounds: { tick: {}, 'bell.contact': { rules: { mergeWindow: 0.5 } } }, kinds, curves: { impulse: SOUND_CURVES.impulse } });
+  const m = plan([contact('x', 1, 0.5, 'bell'), contact('y', 1.2, 1.5, 'bell'), contact('z', 1.4, 1, 'bell'), contact('p', 1, 1, null), contact('q', 1.2, 1, null)], one);
+  assert.deepEqual([heard(m), lost(m, 'merged')], [['contact:p@60', 'contact:y@72', 'contact:q@72'], ['contact:x@60', 'contact:z@84']]);
+  assert.deepEqual(m.dropped.map((d) => d.by), ['contact:y@72', 'contact:y@72']);
+
+  // A least gap of its own between two of its sounds.
+  const spaced = bankOf({ sounds: { tick: {}, 'bell.contact': { rules: { kindGap: 0.3 } } }, kinds });
+  const g = plan([1, 1.1, 1.2, 1.3, 1.4].flatMap((t, i) => [contact(`b${i}`, t, 1, 'bell'), contact(`t${i}`, t, 1, null)]), spaced);
+  assert.deepEqual(mine(heard(g), 'b'), ['contact:b0@60', 'contact:b3@78']);
+  assert.deepEqual(lost(g, 'kind-gap'), ['contact:b1@66', 'contact:b2@72', 'contact:b4@84']);
+  assert.equal(mine(heard(g), 't').length, 5);
+
+  // A crowd of its own: at most three of its sounds in any two seconds.
+  const few = bankOf({ sounds: { tick: {}, 'bell.contact': { rules: { crowdVoices: 3, crowdWindow: 2 } } }, kinds });
+  const c = plan([0, 0.5, 1, 1.5, 2, 2.5].flatMap((t, i) => [contact(`b${i}`, t, 1, 'bell'), contact(`t${i}`, t, 1, null)]), few);
+  assert.deepEqual([mine(heard(c), 'b').length, lost(c, 'crowd'), mine(heard(c), 't').length], [5, ['contact:b3@90'], 6]);
+  assert.equal(density(c.voices.filter((v) => v.key === 'bell.contact'), 2).mostStarts, 3);
+});
+
+test('rules of a sound: its own cap on its starts in a window of time, and on its voices at once', () => {
+  const kinds = { contact: 'tick' };
+  const contact = (node: string, time: number, impulse = 1, key: string | null = 'marble'): SceneEvent => ev({ kind: 'contact', node, key, time, impulse });
+  // At most three of its starts in any second: the strongest keep theirs. The other contacts are not counted with them.
+  const capped = bankOf({ sounds: { tick: {}, 'marble.contact': { rules: { starts: 3, startsWindow: 1 } } }, kinds, curves: { impulse: SOUND_CURVES.impulse } });
+  const strength = [1, 0.3, 2, 0.5, 1.5, 0.4, 0.6, 1.2, 0.7, 0.35, 1.8, 0.45];
+  const p = plan(
+    strength.flatMap((impulse, i) => [contact(`m${i}`, 1 + i * 0.1, impulse), contact(`t${i}`, 1 + i * 0.1, impulse, null)]),
+    capped,
+  );
+  const marbles = p.voices.filter((v) => v.key === 'marble.contact');
+  assert.deepEqual(marbles.map((v) => v.event.id), ['contact:m0@60', 'contact:m2@72', 'contact:m4@84', 'contact:m10@120']);
+  assert.equal(density(marbles, 1).mostStarts, 3);
+  assert.equal(lost(p, 'sound-starts').length, 8);
+  assert.ok(lost(p, 'sound-starts').every((id) => id.includes(':m')));
+  assert.equal(p.voices.length - marbles.length, 12, 'every other contact');
+  assert.deepEqual(lost(p, 'starts'), [], 'the cap of the track is another rule');
+
+  // A cap without a window of its own uses the window of the bank.
+  const wide = bankOf({ sounds: { tick: {}, 'marble.contact': { rules: { starts: 2 } } }, kinds, rules: { starts: 1000, startsWindow: 10 } });
+  assert.deepEqual(heard(plan([0, 3, 6, 9, 12].map((t, i) => contact(`w${i}`, t)), wide)), ['contact:w0@0', 'contact:w1@180', 'contact:w4@720']);
+
+  // At most two of its voices at once; a long sound of another key is not counted with them.
+  const thin = bankOf({ sounds: { tick: {}, 'marble.contact': { rules: { voices: 2 } } }, kinds });
+  const v = plan([contact('a', 0), contact('b', 1), contact('c', 2), contact('d', 6), contact('other', 2, 1, null)], thin, () => 3);
+  assert.deepEqual([heard(v), lost(v, 'sound-voices'), lost(v, 'voices')], [['contact:a@0', 'contact:b@60', 'contact:other@120', 'contact:d@360'], ['contact:c@120'], []]);
+});
+
+test('rules of a sound: a sound apart is not held to the limits of the whole track, and does not count toward them', () => {
+  const kinds = { appear: 'pop', contact: 'tick' };
+  const limits = { gap: 0.5, starts: 2, startsWindow: 10 };
+  const accents = [ev({ node: 'a', time: 1 }), ev({ node: 'b', time: 5 }), ev({ node: 'c', time: 7 })];
+  const pour = Array.from({ length: 20 }, (_, i) => ev({ kind: 'contact', node: `m${i}`, key: 'marble', time: 0.9 + i * 0.1, impulse: 1 }));
+  const apart = bankOf({ sounds: { pop: {}, tick: {}, 'marble.contact': { rules: { apart: true } } }, kinds, rules: limits });
+  const p = plan([...accents, ...pour], apart);
+  // Every impact of the pour, and the accents exactly as without it.
+  assert.equal(p.voices.filter((v) => v.apart).length, 20);
+  assert.deepEqual(p.voices.filter((v) => !v.apart).map((v) => v.event.id), ['appear:a@60', 'appear:b@300']);
+  assert.deepEqual(heard(plan(accents, apart)), ['appear:a@60', 'appear:b@300']);
+  assert.deepEqual([lost(p, 'gap'), lost(p, 'starts'), lost(p, 'voices')], [[], ['appear:c@420'], []]);
+
+  // The same pour of a sound that is not apart takes the place of the accents: a contact goes before an appearance.
+  const counted = bankOf({ sounds: { pop: {}, tick: {}, 'marble.contact': { rules: {} } }, kinds, rules: limits });
+  const q = plan([...accents, ...pour], counted);
+  assert.deepEqual(heard(q), ['contact:m0@54', 'contact:m5@84']);
+  assert.ok(q.voices.every((v) => !v.apart));
+  assert.deepEqual([lost(q, 'gap').length, lost(q, 'starts').length], [17, 4]);
+
+  // Voices at once: a sound apart is neither counted nor cut by the cap of the track.
+  const long = [ev({ node: 'a', time: 1 }), ev({ kind: 'contact', node: 'm0', key: 'marble', time: 1.1, impulse: 1 }), ev({ kind: 'contact', node: 'm1', key: 'marble', time: 1.2, impulse: 1 }), ev({ node: 'b', time: 2 })];
+  const r = plan(long, bankOf({ sounds: { pop: {}, tick: {}, 'marble.contact': { rules: { apart: true } } }, kinds, rules: { voices: 1 } }), () => 2);
+  assert.deepEqual([heard(r), lost(r, 'voices')], [['appear:a@60', 'contact:m0@66', 'contact:m1@72'], ['appear:b@120']]);
+  const s = plan(long, bankOf({ sounds: { pop: {}, tick: {}, 'marble.contact': { rules: { apart: false } } }, kinds, rules: { voices: 1 } }), () => 2);
+  assert.deepEqual(heard(s), ['contact:m0@66']);
+
+  // A sound placed by hand is an accent whatever the rules of its sound: it always sounds, and it is counted.
+  const placed = plan([ev({ kind: 'sfx', sound: 'marble.contact', node: null, time: 1 }), ev({ node: 'a', time: 1.2 })], apart);
+  assert.deepEqual([heard(placed), placed.voices[0]!.apart, lost(placed, 'gap')], [['sfx:null@60'], false, ['appear:a@72']]);
+});
+
+test('rules of a sound: a pour is heard as a shower: every impact on its own frame, its gain from its impulse, about ten starts a second', () => {
+  // Three seconds of a pour: twenty impacts a second, of every strength, each on a frame of its own.
+  const pour = Array.from({ length: 60 }, (_, i) => ev({ kind: 'contact', node: `m${i}`, key: 'marble', other: 'jar', time: 2 + i * 0.05, impulse: 0.1 + ((i * 37) % 60) / 30, size: 30, x: 400 + (i % 7) * 60 }));
+  const accents = [ev({ node: 'title', time: 1 }), ev({ node: 'jar', time: 3 }), ev({ kind: 'sfx', sound: 'chime', node: null, time: 4 })];
+  const shower = { minSize: 0, minImpulse: 0.05, mergeWindow: 0, kindGap: 0, crowdWindow: 0, starts: 10, startsWindow: 1, voices: 8, apart: true };
+  // The rules and the curves of the bank are the engine's defaults: quiet.
+  const bank = bankOf({ sounds: { pop: {}, chime: {}, 'marble.contact': { takes: 3, pitchJitter: 2, gainJitter: 0.2, rules: shower } }, kinds: { appear: 'pop' }, defaults: true });
+  const p = plan([...accents, ...pour], bank);
+
+  const showers = showersOf(p.voices);
+  assert.equal(showers.length, 1);
+  const run = showers[0]!;
+  assert.deepEqual([run.sound, run.mostStartsInASecond], ['marble.contact', 10], 'ten starts a second while it pours');
+  assert.ok(run.time >= 2 && run.time < 2.2, `it starts with the pour: ${run.time} s`);
+  assert.ok(run.voices.length >= 24 && run.voices.length <= 30, `${run.voices.length} starts in three seconds`);
+  assert.ok(run.seconds > 2.5 && run.seconds < 3.2, `${run.seconds} s`);
+  // Each on the frame of its contact, no two on one frame.
+  assert.ok(run.voices.every((v) => v.frame === v.event.frame && v.event.kind === 'contact'));
+  assert.equal(new Set(run.voices.map((v) => v.frame)).size, run.voices.length);
+  // The gain of each is its impulse on the curve, within the jitter; each has a pitch of its own, and the takes vary.
+  const base = (v: (typeof run.voices)[number]): number => curveAt(SOUND_CURVES.size, 30) * curveAt(SOUND_CURVES.impulse, v.event.impulse!);
+  assert.ok(run.voices.every((v) => Math.abs(v.gain / base(v) - 1) <= 0.2 + 1e-9));
+  assert.ok(Math.max(...run.voices.map(base)) / Math.min(...run.voices.map(base)) > 1.5, 'a hard impact is louder than a light one');
+  assert.equal(new Set(run.voices.map((v) => v.pitch)).size, run.voices.length);
+  assert.ok(run.voices.every((v) => Math.abs(12 * Math.log2(v.pitch)) <= 2));
+  assert.ok(new Set(run.voices.map((v) => v.take)).size > 1);
+  // Where the cap has to choose, the harder impacts keep their sound.
+  const mean = (list: number[]): number => list.reduce((a, b) => a + b, 0) / list.length;
+  const cut = p.dropped.filter((d) => d.rule === 'sound-starts').map((d) => d.event.impulse!);
+  assert.equal(cut.length + run.voices.length, pour.length);
+  assert.ok(mean(run.voices.map((v) => v.event.impulse!)) > mean(cut) + 0.3);
+
+  // The accents are what they are without the pour.
+  assert.deepEqual(p.voices.filter((v) => !v.apart).map((v) => v.event.id), ['appear:title@60', 'appear:jar@180', 'sfx:null@240']);
+  assert.deepEqual(heard(plan(accents, bank)), ['appear:title@60', 'appear:jar@180', 'sfx:null@240']);
+  // The same pour of a sound without rules of its own, under the defaults: one sound or two.
+  const quiet = plan([...accents, ...pour], bankOf({ sounds: { pop: {}, chime: {}, 'marble.contact': { takes: 3 } }, kinds: { appear: 'pop' }, defaults: true }));
+  const ticks = quiet.voices.filter((v) => v.event.kind === 'contact').length;
+  assert.ok(ticks >= 1 && ticks <= 2, `${ticks} of sixty impacts`);
+
+  // A pause of a second ends a shower: what falls after it is another one.
+  const twice = showersOf(plan([...pour.slice(0, 10), ...pour.slice(40, 50)], bank).voices);
+  assert.deepEqual(twice.map((s) => [s.time, s.voices.length, s.mostStartsInASecond]), [[2, 10, 10], [4, 10, 10]]);
+  assert.ok(twice.every((s) => s.seconds > 0.5 && s.seconds < 0.6), 'from its first start to the end of its last sound');
 });
 
 test('sound track: 48 kHz stereo, exactly as long as the shot, each sound on the first sample of its frame', async () => {
@@ -727,6 +946,144 @@ test('sound: a scene with sound is the same picture: the same scene hash, the sa
   );
 });
 
+test('sound sheet: a tile for every sound and one for a shower, the node ringed where it is, and what it is written on it', async () => {
+  // A pour of marbles onto a ledge, an accent before it and a sound placed by hand after it.
+  const marbles = Array.from({ length: 12 }, (_, i) =>
+    circle({ id: `m${i}`, at: [-200 + (i % 6) * 80 + (i >= 6 ? 30 : 0), -300 - Math.floor(i / 6) * 80], r: 16, fill: 'accent.aqua', sound: 'marble', body: { kind: 'dynamic', release: 0.6 + i * 0.1 } }),
+  );
+  const spec = make(
+    [rect({ id: 'ledge', at: [0, 150], w: 900, h: 50, fill: 'dark.indigo', body: { kind: 'fixed' } }), circle({ id: 'bell', at: [-600, -100], r: 50, fill: 'accent.pink' }), ...marbles],
+    [popIn('bell', { at: 0.5 }), sfx('chime', { at: 3.5 })],
+    4,
+  );
+  const shower = { minSize: 0, minImpulse: 0.02, mergeWindow: 0, kindGap: 0, crowdWindow: 0, starts: 12, startsWindow: 1, voices: 8, apart: true };
+  const bank = bankOf({ sounds: { pop: {}, chime: { seconds: 0.3 }, 'marble.contact': { hz: 1200, seconds: 0.08, pitchJitter: 2, gainJitter: 0.2, rules: shower } }, kinds: { appear: 'pop' }, defaults: true });
+  const c = compileShot(spec);
+  const bake = await bakeShot(c);
+  const track = renderSound(c, bake, bank);
+  const r = track.report;
+
+  // The report: the accents are counted as before, the shower by itself, and every start names its node.
+  assert.deepEqual([r.starts, r.mostStarts, r.heard], [2, 2, 2 + r.showerStarts]);
+  assert.ok(r.showers.length >= 1 && r.showerStarts >= 12, `${r.showerStarts} impacts in ${r.showers.length} shower(s)`);
+  const first = r.showers[0]!;
+  assert.equal(first.sound, 'marble.contact');
+  assert.match(first.node ?? '', /^m\d+$/);
+  assert.ok(first.mostStartsInASecond >= 6 && first.mostStartsInASecond <= 12, `${first.mostStartsInASecond} starts in its busiest second`);
+  assert.ok(r.showers.reduce((n, s) => n + s.starts, 0) === r.showerStarts);
+  assert.deepEqual(r.voices.filter((v) => v.shower === undefined).map((v) => [v.id, v.node, v.sound]), [['appear:bell@30', 'bell', 'pop'], ['sfx:chime@210', null, 'chime']]);
+  const inShower = r.voices.filter((v) => v.shower !== undefined);
+  assert.equal(inShower.length, r.showerStarts);
+  assert.ok(inShower.every((v) => v.kind === 'contact' && /^m\d+$/.test(v.node ?? '') && v.sound === 'marble.contact'));
+  assert.deepEqual([inShower[0]!.id, inShower[0]!.time, inShower[0]!.shower], [first.id, first.time, 0]);
+  assert.deepEqual(r.soundRules, { 'marble.contact': shower });
+  assert.equal(r.dropped['sound-starts'].length + r.dropped['sound-voices'].length + r.dropped.weak.length + r.dropped.unseen.length + r.showerStarts, track.events.filter((e) => e.kind === 'contact').length);
+  // It is in the track: sound where the first impact starts, silence just before it.
+  const at = track.plan.voices.find((v) => v.apart)!.frame * SAMPLES_PER_FRAME;
+  assert.ok(energy(track.left, at, at + 400) + energy(track.right, at, at + 400) > 0);
+  const text = formatSoundReport(r);
+  assert.match(text, new RegExp(`starts: ${r.heard} of ${r.events} event\\(s\\) are heard: ${r.showerStarts} in ${r.showers.length} shower\\(s\\), and 2 accent\\(s\\): 30 per minute; at most 2 in any 10 s \\(limit 4\\)`));
+  assert.match(text, /^showers \(apart from those limits\):$/m);
+  assert.match(text, new RegExp(`marble\\.contact +${first.starts} start\\(s\\) over ${first.seconds.toFixed(2)} s; at most ${first.mostStartsInASecond} in a second, \\d at once; from ${first.id}$`, 'm'));
+  assert.deepEqual(
+    text
+      .slice(text.indexOf('\nheard:\n') + 8)
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/).slice(2, 5)),
+    [
+      ['appear', 'bell', 'pop'],
+      ['sfx', '-', 'chime'],
+    ],
+    'the list of accents names the node of each; the sounds of a shower are in its line',
+  );
+
+  // The tiles: every accent, and the shower once, at its first start.
+  const tiles = soundTiles(track.plan);
+  assert.equal(tiles.length, 2 + r.showers.length);
+  assert.deepEqual(tiles.map((t) => t.frame), [...tiles.map((t) => t.frame)].sort((a, b) => a - b), 'in order of time');
+  const [bell, rain, chime] = [tiles.find((t) => t.node === 'bell')!, tiles.find((t) => t.shower)!, tiles.find((t) => t.kind === 'sfx')!];
+  assert.deepEqual([rain.id, rain.frame, rain.node, rain.kind, rain.sound, rain.shower], [first.id, Math.round(first.time * 60), first.node, 'contact', 'marble.contact', { starts: first.starts, seconds: showersOf(track.plan.voices)[0]!.seconds }]);
+  assert.ok(Math.abs(rain.shower!.seconds - first.seconds) < 1e-3);
+  assert.deepEqual(tileCaption(bell), ['0.50 s  f30  pop', 'appear  bell']);
+  assert.deepEqual(tileCaption(chime), ['3.50 s  f210  chime', 'sfx  placed by hand']);
+  assert.match(rain.other ?? '', /^(ledge|m\d+)$/, 'a contact names the body it hits');
+  assert.deepEqual(tileCaption(rain), [`${first.time.toFixed(2)} s  f${rain.frame}  marble.contact`, `contact  ${first.node} on ${rain.other}`, `shower: ${first.starts} starts in ${rain.shower!.seconds.toFixed(1)} s`]);
+  assert.equal(tileCaption({ ...rain, shower: { starts: 1, seconds: 0.08 } })[2], 'shower: 1 start in 0.1 s');
+
+  // The rings: the bell where it stands, as large as it gets; the marble where it is when it lands; none for the placed sound.
+  const series = sampleMotion(c, bake, { particles: false });
+  const ring = (t: (typeof tiles)[number]): { x: number; y: number; radius: number } => tileRing(c, series, t)!;
+  assert.deepEqual([Math.round(ring(bell).x), Math.round(ring(bell).y)], [360, 440]);
+  assert.ok(ring(bell).radius >= 50 && ring(bell).radius < 70, `${ring(bell).radius}`);
+  const marble = series.placed[c.byId.get(rain.node!)!.index]!;
+  assert.ok(Math.hypot(ring(rain).x - 960 - marble.x[rain.frame]!, ring(rain).y - 540 - marble.y[rain.frame]!) < 1e-6 && Math.abs(ring(rain).radius - 16) < 1e-6, 'around the marble, where it is on that frame');
+  assert.ok(Math.hypot(ring(rain).x - rain.x, ring(rain).y - rain.y) < 16 + 12, `the contact is on the rim of the marble that is ringed: ${Math.hypot(ring(rain).x - rain.x, ring(rain).y - rain.y)} px from its middle`);
+  assert.equal(tileRing(c, series, chime), null);
+
+  // The picture: tiles of 320 by 180 in rows of two, each a frame of the shot with its ring and its writing.
+  const sheet = await renderSoundSheet(c, bake, track.plan, { cols: 2, tileWidth: 320, lang: 'en', gpu: false, series });
+  assert.deepEqual([sheet.tiles, sheet.more], [tiles, 0]);
+  const image = await loadImage(sheet.png);
+  assert.deepEqual([image.width, image.height], [640, 180 * Math.ceil(tiles.length / 2)]);
+  const canvas = new Canvas(image.width, image.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const px = ctx.getImageData(0, 0, image.width, image.height).data;
+  const ink = (x: number, y: number): boolean => {
+    const i = 4 * (Math.round(y) * image.width + Math.round(x));
+    return px[i]! > 200 && px[i + 1]! > 170 && px[i + 2]! < 150;
+  };
+  /** The share of the ring of a tile that is drawn in ink. */
+  const drawn = (t: (typeof tiles)[number]): number => {
+    const n = tiles.indexOf(t);
+    const [ox, oy, k] = [(n % 2) * 320, Math.floor(n / 2) * 180, 320 / 1920];
+    const { x, y, radius } = ring(t);
+    let hits = 0;
+    for (let a = 0; a < 120; a++) {
+      const [px0, py0] = [ox + x * k + (radius * k + 6) * Math.cos((a * Math.PI) / 60), oy + y * k + (radius * k + 6) * Math.sin((a * Math.PI) / 60)];
+      // The pixel under the line, or the one beside it: the line is thinner than three pixels.
+      if ([-1, 0, 1].some((dx) => [-1, 0, 1].some((dy) => ink(px0 + dx, py0 + dy)))) hits++;
+    }
+    return hits / 120;
+  };
+  /** Ink in the picture of a tile, above its writing. */
+  const inkAbove = (t: (typeof tiles)[number]): number => {
+    const n = tiles.indexOf(t);
+    let count = 0;
+    for (let y = 0; y < 140; y++) for (let x = 0; x < 320; x++) if (ink((n % 2) * 320 + x, Math.floor(n / 2) * 180 + y)) count++;
+    return count;
+  };
+  assert.equal(drawn(bell), 1, 'the ring of an accent is whole');
+  assert.ok(drawn(rain) > 0.3 && drawn(rain) < 0.9, `the ring of a shower is dashed: ${drawn(rain)}`);
+  assert.equal(inkAbove(chime), 0, 'a sound placed by hand without a node has no ring');
+  assert.ok(inkAbove(bell) > 50 && inkAbove(rain) > 20);
+  // The picture of a tile is the frame of its start: the marble is under its ring as it lands; the bell is not there yet when its pop starts, and is there later.
+  const colour = (t: (typeof tiles)[number], x: number, y: number): number[] => {
+    const n = tiles.indexOf(t);
+    const i = 4 * ((Math.floor(n / 2) * 180 + Math.round(y / 6)) * image.width + (n % 2) * 320 + Math.round(x / 6));
+    return [px[i]!, px[i + 1]!, px[i + 2]!];
+  };
+  const aqua = ([red, green, blue]: number[]): boolean => red! < 140 && green! > 130 && blue! > 130;
+  const pink = ([red, green, blue]: number[]): boolean => red! > 180 && green! < 130 && blue! > 110;
+  assert.ok(aqua(colour(rain, ring(rain).x, ring(rain).y)), `the marble under its ring: ${colour(rain, ring(rain).x, ring(rain).y)}`);
+  assert.ok(!pink(colour(bell, 360, 440)) && pink(colour(chime, 360, 440)), `the bell: ${colour(bell, 360, 440)} and then ${colour(chime, 360, 440)}`);
+  // The writing: ink in the bottom-left corner of every tile.
+  for (const t of tiles) {
+    const n = tiles.indexOf(t);
+    let count = 0;
+    for (let y = 150; y < 180; y++) for (let x = 0; x < 120; x++) if (ink((n % 2) * 320 + x, Math.floor(n / 2) * 180 + y)) count++;
+    assert.ok(count > 40, `tile ${n}: ${count}`);
+  }
+  // The same picture again; and the first tiles only when the sheet is told to hold fewer.
+  const again = await renderSoundSheet(c, bake, track.plan, { cols: 2, tileWidth: 320, lang: 'en', gpu: false });
+  assert.equal(Buffer.compare(again.png, sheet.png), 0);
+  const short = await renderSoundSheet(c, bake, track.plan, { most: 1, tileWidth: 160, lang: 'en', gpu: false, series });
+  assert.deepEqual([short.tiles, short.more], [[tiles[0]], tiles.length - 1]);
+  // A track without a sound has no sheet.
+  const silent = renderSound(c, bake, bank, { events: [] });
+  await assert.rejects(renderSoundSheet(c, bake, silent.plan, { lang: 'en', gpu: false }), /a sound sheet needs at least one sound/);
+});
+
 test('wav: PCM of 8, 16, 24 and 32 bits and float, mono and stereo, is read; anything else says what it is', () => {
   const left = tone(440, 0.01);
   const right = tone(660, 0.01, SAMPLE_RATE, 0.25);
@@ -800,7 +1157,7 @@ test('resample: a step of one is the signal itself; another step keeps the tone 
   assert.throws(() => resample(source, 0), /positive/);
 });
 
-test('cli: events and sfx write their files; check --bank holds the sound keys against the bank', () => {
+test('cli: events and sfx write their files, sfx --sheet the sound sheet; check --bank holds the sound keys against the bank', () => {
   const cwd = mkdtempSync(join(DIR, 'cli-'));
   const run = (...args: string[]): { status: number | null; out: string } => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8' });
@@ -828,11 +1185,25 @@ test('cli: events and sfx write their files; check --bank holds the sound keys a
   assert.match(first.out, /at most \d in any 10 s \(limit 4\)/);
   const wavFile = join(cwd, 'out', 'sound', 'sound_sfx.wav');
   assert.equal(statSync(wavFile).size, 44 + 180 * 800 * 2 * 3);
-  const report = JSON.parse(readFileSync(join(cwd, 'out', 'sound', 'sfx.json'), 'utf8')) as { starts: number; mostStarts: number; startsWindow: number; muted: number; dropped: Record<string, unknown[]>; voices: { sound: string }[] };
+  const report = JSON.parse(readFileSync(join(cwd, 'out', 'sound', 'sfx.json'), 'utf8')) as {
+    starts: number;
+    heard: number;
+    showerStarts: number;
+    showers: unknown[];
+    mostStarts: number;
+    startsWindow: number;
+    muted: number;
+    dropped: Record<string, unknown[]>;
+    voices: { sound: string; node: string | null }[];
+  };
   assert.ok(report.starts >= 2 && report.mostStarts <= 4 && report.startsWindow === 10);
   assert.equal(report.muted, 1);
   assert.deepEqual(Object.keys(report.dropped), [...DROP_RULES]);
   assert.ok(report.voices.some((v) => v.sound === 'whoosh') && report.voices.some((v) => v.sound === 'chime'));
+  // Every start names the node it comes from; a sound placed by hand without one has none.
+  assert.deepEqual([report.voices.find((v) => v.sound === 'whoosh')!.node, report.voices.find((v) => v.sound === 'chime')!.node], ['mover', null]);
+  assert.deepEqual([report.heard, report.showerStarts, report.showers], [report.starts, 0, []], 'no sound of this bank stands apart');
+  assert.ok(!existsSync(join(cwd, 'out', 'sound', 'sfx_sheet.png')), 'no sheet unless it is asked for');
   // Run again: the same bytes.
   const bytes = readFileSync(wavFile);
   assert.equal(run('sfx', FIXTURE, '--bank', bankFile).status, 0);
@@ -840,6 +1211,30 @@ test('cli: events and sfx write their files; check --bank holds the sound keys a
   // Somewhere else: the report lies next to the track.
   assert.equal(run('sfx', FIXTURE, '--bank', bankFile, '--out', 'mix/track.wav').status, 0);
   assert.ok(existsSync(join(cwd, 'mix', 'track.wav')) && existsSync(join(cwd, 'mix', 'track.wav.json')));
+
+  // The sound sheet: one picture next to the report, a tile for every sound.
+  const isPng = (file: string): boolean => readFileSync(file).subarray(1, 4).toString('ascii') === 'PNG';
+  const size = (file: string): number[] => {
+    const head = readFileSync(file);
+    return [head.readUInt32BE(16), head.readUInt32BE(20)];
+  };
+  const sheet = run('sfx', FIXTURE, '--bank', bankFile, '--sheet', '--cols', '2', '--tile', '240', '--cpu');
+  assert.equal(sheet.status, 0, sheet.out);
+  const sheetFile = join(cwd, 'out', 'sound', 'sfx_sheet.png');
+  assert.match(sheet.out, new RegExp(`^sheet: ${report.starts} tile\\(s\\), 0 of them shower\\(s\\): .*sfx_sheet\\.png$`, 'm'));
+  assert.ok(isPng(sheetFile));
+  assert.deepEqual(size(sheetFile), [480, 135 * Math.ceil(report.starts / 2)]);
+  assert.equal(Buffer.compare(bytes, readFileSync(wavFile)), 0, 'the track is the same with a sheet');
+  assert.equal(run('sfx', FIXTURE, '--bank', bankFile, '--out', 'mix/track.wav', '--sheet', '--cpu').status, 0);
+  assert.ok(isPng(join(cwd, 'mix', 'track.wav.sheet.png')), 'next to the track when the track is put somewhere else');
+  // A bank that sets the contacts of the bell apart: they are a shower, one tile, and no accent.
+  const apart = bankOf({ sounds: { pop: {}, 'bell.contact': { rules: { minImpulse: 0, mergeWindow: 0, kindGap: 0, crowdWindow: 0, apart: true } }, whoosh: { seconds: 0.3 }, chime: { seconds: 0.4 } }, kinds: { appear: 'pop' }, defaults: true });
+  const rain = run('sfx', FIXTURE, '--bank', join(apart.dir, 'bank.json'), '--sheet', '--cpu');
+  assert.equal(rain.status, 0, rain.out);
+  assert.match(rain.out, /^showers \(apart from those limits\):$/m);
+  assert.match(rain.out, /bell\.contact +\d+ start\(s\) over \d+\.\d\d s; at most \d+ in a second, \d+ at once; from contact:drop@\d+$/m);
+  assert.match(rain.out, /^sheet: \d+ tile\(s\), 1 of them shower\(s\): /m);
+  assert.equal(run('sfx', FIXTURE, '--bank', bankFile).status, 0);
 
   const needsBank = run('sfx', FIXTURE);
   assert.equal(needsBank.status, 1);
