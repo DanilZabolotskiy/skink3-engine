@@ -1,5 +1,7 @@
 # Physics review
 
+In short: [QUICK-REFERENCE.md](QUICK-REFERENCE.md#reading-the-reviews) has one line for every kind of finding, with what it usually means and the usual fix, and how to mark what is meant. This guide is the full text: open it at the section a question needs.
+
 How to judge whether the simulation of a shot is sound without watching the video. It is the sibling of the [motion review](MOTION-REVIEW.md): that one asks whether things move well, this one asks whether the rigid bodies behave like solid things. This guide is for whoever reviews a scene, a person or an agent.
 
 The review reads the bake: the pose of every rigid body at every frame, the springs and the particles. It draws nothing and takes a fraction of a second, so it runs with every `skink3 check`. It gives a reviewer:
@@ -211,7 +213,7 @@ export default shot({
 | a new source of speed (a force field, a motor, wind on bodies) | the energy check learns it, so that it is not reported as speed from nowhere |
 | a new way for a body to be drawn or not (as `appear: 'release'`: not drawn before its release) | what counts as seen follows it, and a sound scene and a planted defect with it join the tests |
 
-Each such change comes with a planted defect that the review catches and a sound scene that it leaves alone, in `test/physics-review.test.ts`, and with the rows of this guide that it changes. A kind of finding without a test that plants its defect is a blind spot; a finding on a sound shot is a false one. Both are bugs of the review.
+Each such change comes with a planted defect that the review catches and a sound scene that it leaves alone, in `test/physics-review.test.ts`, and with the rows of this guide that it changes; a new kind of finding also gets its line in [QUICK-REFERENCE.md](QUICK-REFERENCE.md#reading-the-reviews). A kind of finding without a test that plants its defect is a blind spot; a finding on a sound shot is a false one. Both are bugs of the review.
 
 ## Programmatic use
 

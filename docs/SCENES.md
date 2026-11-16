@@ -2,6 +2,8 @@
 
 This is the guide and the API reference for scene authors, people or agents. It describes what exists today (phase 0). If something is not here, the engine does not have it yet.
 
+For one shot, read [QUICK-REFERENCE.md](QUICK-REFERENCE.md) first: every feature with its defaults and an example, the command line and how to read the two reviews, on one page. Its index names the section of this guide to open for more.
+
 ## The model in one page
 
 - A **scene module** is a TypeScript file whose default export is a shot made with `shot({ ... })`. Node runs it directly; there is no build step.
@@ -243,7 +245,7 @@ All shape factories take these options:
 |---|---|---|
 | `circle` | `r` | |
 | `capsule` | `length`, `r`, `origin?`, `sway?` | a stick with round ends along its local x axis; `length` is tip to tip. `origin: 'start'` puts the first end at the node's position (a pivot); `sway` then lets the stick lean and swing around it on a spring |
-| `polygon` | `sides`, `r`, `radius?` or `points`, `radius?` | a rounded **convex** polygon: regular (3–12 sides on a circle of radius `r`, corner radius default `0.16 × r`; the first corner points up) or from explicit corners |
+| `polygon` | `sides`, `r`, `radius?` or `points`, `radius?` | a rounded **convex** polygon: regular (3–12 sides on a circle of radius `r`, corner radius default `0.16 × r`; the first corner points up) or from explicit corners (corner radius default 0: sharp) |
 | `rect` | `w`, `h`, `radius?` | rounded rectangle centred on its position; `radius` (default 22 % of the short side) must stay below half the short side (use a capsule for a pill) |
 | `blob` | `r`, `points?` (9), `wobble?` (0.14), `seed?` (1) | a soft irregular outline; the same seed gives the same blob |
 
@@ -382,7 +384,7 @@ Particles are small circles. By default each swells quickly and then shrinks to 
 | `onContact` | none | `{ count, minImpulse }`: a burst at every rigid-body contact at least that strong, at the contact point |
 | `prewarm` | `0` | seconds simulated before the shot starts, so that a field is already populated at frame 0 (for an emitter whose `rate` runs from the start) |
 | `direction`, `spread` | `-90`, `360` | mean direction and full spread angle, degrees |
-| `speed` | `[20, 60]` | units per second |
+| `speed` | `[20, 60]` | units per second, `[min, max]` or one number |
 | `gravity` | `[0, 0]` | constant acceleration, units per second squared (also works as wind) |
 | `drag` | `0.8` | share of velocity lost per second, as a rate |
 | `turbulence` | none | `{ strength, scale, speed }`: a slowly changing swirl field |
@@ -436,7 +438,7 @@ Rules:
 | Moment | With the defaults | In general |
 |---|---|---|
 | it stops backing away and goes | 0.24 | 0.24 with an `anticipation`, 0 without |
-| it first reaches the destination | 0.52 | 0.47 to 0.55 with an `anticipation` and an `overshoot`; 0.30 to 0.36 with an `overshoot` alone; exactly 1 without an `overshoot` (the move is then an ease-out) |
+| it first reaches the destination | 0.52 | 0.46 to 0.54 with an `anticipation` and an `overshoot` of 0.02 or more; 0.30 to 0.39 with such an `overshoot` alone; later with a smaller overshoot (up to 0.62 and 0.45); exactly 1 without an `overshoot` (the move is then an ease-out) |
 | it is farthest past the destination | 0.62 | 0.62 with an `anticipation`, 0.5 without; never without an `overshoot` |
 | the rest | it settles | |
 

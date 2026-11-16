@@ -1,2 +1,4 @@
 *.ttf binary
 *.bake binary
+# The quick reference has a cap in characters: one byte per character on every checkout.
+docs/QUICK-REFERENCE.md text eol=lf

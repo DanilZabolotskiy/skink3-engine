@@ -54,7 +54,7 @@ node bin/skink3.mjs graph examples/demo/scene.ts --node n2       # speed graph o
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
 
-How to write a scene: [docs/SCENES.md](docs/SCENES.md). The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift.
+How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift.
 
 ### Using the engine from another repository
 
@@ -142,7 +142,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `assets/fonts/` | the bundled font family with its licence |
 | `bench/` | drawing and physics benchmarks |
 | `tools/metrics/` | style and motion metrics for any video — see [docs/METRICS.md](docs/METRICS.md) |
-| `docs/` | principles, architecture, stack, scene authoring, motion review, physics review, metrics |
+| `docs/` | principles, architecture, stack, scene authoring (the guide and its quick reference), motion review, physics review, metrics |
 
 ## Roadmap
 

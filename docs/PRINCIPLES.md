@@ -63,3 +63,10 @@ Target norms (checked with `tools/metrics` on renders):
 - A check reports what a viewer would see as wrong, and nothing else. A finding on a sound shot is a bug of the check; so is a defect that it has no finding for.
 - Every kind of finding is proven by a test that plants its defect and by sound scenes next to it that must stay clean.
 - **The physics checks grow with the physics.** Any change to the physics of the engine (a new kind of body, a solver, a constraint, a setting) updates the physics review and its tests in the same piece of work: the geometry it works out, the detectors that apply, a planted defect and a sound scene for what is new. The list of what follows from which change is in [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md#when-the-physics-changes).
+
+## 8. A reference that follows the code
+
+- [QUICK-REFERENCE.md](QUICK-REFERENCE.md) is the page a scene author reads instead of the whole guide: every feature with its defaults and an example, the command line, how to read the two reviews, and an index of the guide by question.
+- **Whoever adds or changes a feature updates it in the same commit:** an export for scenes, an option or its default, a command or a flag of the CLI, a kind of finding, a section of the guide. The guide ([SCENES.md](SCENES.md)) gets the full text.
+- **A test holds it to the code.** `test/quick-reference.test.ts` fails and names what is missing, runs every example, and holds every default the page shows against the engine.
+- **It stays short.** The same test caps its length. What does not fit goes to the guide, and the page points to the section.

@@ -1,5 +1,7 @@
 # Motion review
 
+In short: [QUICK-REFERENCE.md](QUICK-REFERENCE.md#reading-the-reviews) has one line for every kind of finding, with what it usually means and the usual fix, and how to mark what is meant. This guide is the full text: open it at the section a question needs.
+
 How to judge the smoothness of motion without watching the video. This guide is for whoever reviews a scene, a person or an agent. An agent can read text and look at still images; it cannot watch a video play. The engine knows the exact state of every node at every frame, so it gives a reviewer two things instead:
 
 1. **Findings**: motion checks computed from the scene, as text.

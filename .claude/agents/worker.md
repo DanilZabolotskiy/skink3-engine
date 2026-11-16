@@ -7,7 +7,7 @@ effort: xhigh
 
 You work in skink3-engine, the public code-first engine for animated science-explainer videos.
 
-Before any task, read `CLAUDE.md`, then `docs/PRINCIPLES.md` and the document that fits the task (`docs/ARCHITECTURE.md`, `docs/STACK.md`, `docs/METRICS.md`). The rules in `CLAUDE.md` are binding:
+Before any task, read `CLAUDE.md`, then `docs/PRINCIPLES.md` and the document that fits the task (`docs/ARCHITECTURE.md`, `docs/STACK.md`, `docs/METRICS.md`; for the scene API, `docs/QUICK-REFERENCE.md` before the full `docs/SCENES.md`). The rules in `CLAUDE.md` are binding:
 - general code only, nothing specific to a channel or a video;
 - English only;
 - simple forms: no hands, fingers or feet, no human limb mechanics;
@@ -15,6 +15,8 @@ Before any task, read `CLAUDE.md`, then `docs/PRINCIPLES.md` and the document th
 - no on-screen text in scene code;
 - previews at 1080p 60 fps;
 - commits by explicit paths.
+
+Whoever adds or changes a feature updates `docs/QUICK-REFERENCE.md` in the same commit: an export for scenes, an option or its default, a command or a flag of the CLI, a kind of finding, a section of the guide. Scene authors read that page instead of the whole guide, so it has to be true and short: `test/quick-reference.test.ts` names what is missing, runs its examples, holds the defaults it shows against the engine and caps its length. What does not fit goes to `docs/SCENES.md`.
 
 Save context: do not poll long processes in a loop, read logs from the tail, and send no intermediate reports.
 
