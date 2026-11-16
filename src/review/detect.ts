@@ -34,7 +34,8 @@ import { pathTable } from '../motion/paths.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
 import { CAMERA_SUBJECT, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
-import { reach, shapeExtent } from '../shape/geometry.ts';
+import { restForms } from '../scene/outline.ts';
+import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
@@ -504,7 +505,8 @@ function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out:
   }
   const rel = relativeSteps(series, s);
   // No direction of a shape is narrower than twice its inner radius: a cheap first test.
-  const narrow = node.type === 'shape' ? 2 * shapeExtent(node.shape).inner : 0;
+  // For a region whose outline is keyed: the narrowest of the outlines it rests in.
+  const narrow = node.type !== 'shape' ? 0 : 2 * (s.node.outline ? Math.min(...(restForms(s.node.outline) as ShapeSpec[]).map((shape) => shapeExtent(shape).inner)) : shapeExtent(node.shape).inner);
   // Runs of frames above the limit, each long enough to count.
   const runs: { from: number; to: number; peak: number; speed: number }[] = [];
   let runStart = -1;
