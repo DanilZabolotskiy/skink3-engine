@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import { sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
+import { sampleAxis, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
@@ -88,6 +88,8 @@ export interface PlacedSeries {
   readonly open: Float32Array | null;
   /** Shapes with a level: the height of the surface in the layer's space, per frame; null for other nodes. */
   readonly level: Float32Array | null;
+  /** Nodes whose width and height are changed along their own axes (scaleTo with to: [sx, sy]): the two factors per frame; null for other nodes. */
+  readonly axis: { readonly sx: Float32Array; readonly sy: Float32Array } | null;
   /**
    * What else changes in the node by itself, as a length in the layer's units
    * per frame: for a stroke, how much of it is drawn and how far its gaps are
@@ -349,6 +351,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       // A content whose level changes or whose surface ripples; a node that is squashed or stretched.
       (n.level !== null && (n.level.segs.length > 0 || (node.type === 'shape' && (node.level?.wave?.amp ?? 0) > 0))) ||
       n.stretch !== null ||
+      n.axis !== null ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
@@ -379,6 +382,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       flags: new Uint8Array(frames),
       open: type === 'eye' ? f32() : null,
       level: n.level ? f32() : null,
+      axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
       life: type === 'stroke' ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
@@ -560,6 +564,11 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
       if (s.open && n.lid) s.open[f] = sampleLid(n.lid, t) * eyeOpen(n.blinks, t);
       if (s.level) s.level[f] = levelGeometry(n, xf, t).y;
+      if (s.axis && n.axis) {
+        const a = sampleAxis(n.axis, t);
+        s.axis.sx[f] = a ? a.sx : 1;
+        s.axis.sy[f] = a ? a.sy : 1;
+      }
       if (s.life && node.type === 'stroke') s.life[f] = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * pathTable(node.path).length * xf.scale;
 
       if (drawn[i]) {

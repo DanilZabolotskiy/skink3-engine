@@ -160,6 +160,17 @@ const NO_STRETCH: readonly StretchItem[] = [];
 
 /** Squashes or stretches what is drawn next: `height` times as high, 1 / `height` times as wide, about a point. */
 function applyStretch(ctx: CanvasRenderingContext2D, s: StretchItem): void {
+  if (s.axes) {
+    // Along the node's own axes: out of the layer into the node, the change, and back.
+    const a = s.axes;
+    ctx.translate(s.at[0], s.at[1]);
+    ctx.rotate(a.rot);
+    ctx.translate(a.cx * a.scale, a.cy * a.scale);
+    ctx.scale(a.sx, a.sy);
+    ctx.rotate(-a.rot);
+    ctx.translate(-s.at[0], -s.at[1]);
+    return;
+  }
   ctx.translate(s.at[0], s.at[1]);
   ctx.scale(1 / s.height, s.height);
   ctx.translate(-s.at[0], -s.at[1]);

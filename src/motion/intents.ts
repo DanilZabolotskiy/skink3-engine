@@ -153,11 +153,18 @@ export interface ScaleToKey extends Voiced {
   readonly kind: 'scaleTo';
   readonly target: string;
   readonly at: number;
-  /** New size as a multiple of the node's authored size (1 = as authored). */
+  /** New size as a multiple of the node's authored size (1 = as authored). 1 in a key that has `axes`. */
   readonly to: number;
   readonly dur: number;
   /** How far it shoots past the new size, as a fraction of the change. */
   readonly overshoot: number;
+  /**
+   * A change along the node's own axes instead: its width and its height as
+   * multiples of the authored ones. Left out in a key that changes the size evenly.
+   */
+  readonly axes?: Vec2;
+  /** With `axes`: the point that stays in place, in the node's own units. Left out: its origin. */
+  readonly pivot?: Vec2;
 }
 
 export interface FadeToKey extends Voiced {
@@ -529,16 +536,30 @@ export function turnTo(id: string, opts: { at: number; to: number; dur?: number;
  * Change a node's size for good: it grows (or shrinks) to `to` times its
  * authored size, overshoots and settles. Several keys chain: each starts from
  * the size the node has at that moment. Pops and bumps play on top of it.
+ *
+ * With `to: [sx, sy]` the change is along the node's own axes: it gets `sx`
+ * times as wide and `sy` times as high as authored, about `pivot` (a point
+ * in its own units; its origin when left out), and stays so. A bar grows from
+ * one end, a card turns edge-on, a round thing sags. Such keys chain among
+ * themselves, and play on top of the even size.
+ *
+ *   scaleTo('bar', { at: 2, to: [1, 2.5], pivot: [0, 40] })   // 2.5 times as high, its lower edge in place
  */
-export function scaleTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): ScaleToKey {
+export function scaleTo(id: string, opts: { at: number; to: number | Vec2; pivot?: Vec2; dur?: number; overshoot?: number; sound?: string | false }): ScaleToKey {
   const w = `scaleTo("${id}")`;
+  only(w, opts, ['at', 'to', 'pivot', 'dur', 'overshoot', 'sound']);
+  const axes = Array.isArray(opts.to);
+  if (!axes && opts.pivot !== undefined) throw new IntentError(`${w}: pivot goes with to: [sx, sy]; an even change of size is about the node's origin`);
+  if (axes && (opts.to as readonly unknown[]).length !== 2) throw new IntentError(`${w}: to must be a number, or [sx, sy]`);
   return {
     kind: 'scaleTo',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    to: num(w, 'to', opts.to, 0.01, 100),
+    to: axes ? 1 : num(w, 'to', opts.to, 0.01, 100),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+    ...(axes ? { axes: [num(w, 'to[0]', (opts.to as Vec2)[0], 0.01, 100), num(w, 'to[1]', (opts.to as Vec2)[1], 0.01, 100)] as Vec2 } : {}),
+    ...(opts.pivot === undefined ? {} : { pivot: point(w, 'pivot', opts.pivot) }),
     ...voiced(w, opts),
   };
 }

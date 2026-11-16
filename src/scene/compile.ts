@@ -32,6 +32,7 @@ import type {
   TurnToKey,
 } from '../motion/intents.ts';
 import {
+  buildAxisTrack,
   buildLevelTrack,
   buildLidTrack,
   buildLinkTrack,
@@ -41,6 +42,7 @@ import {
   buildScaleTrack,
   buildStretchTrack,
   buildStrokeTrack,
+  type AxisTrack,
   type LevelTrack,
   type LidTrack,
   type LinkTrack,
@@ -77,6 +79,8 @@ export interface CNode {
   readonly level: LevelTrack | null;
   /** Squashes and stretches, or null when the node has none. */
   readonly stretch: StretchTrack | null;
+  /** Lasting changes of size along its own axes, or null when the node has none. */
+  readonly axis: AxisTrack | null;
   /** Strokes: how much of the line is drawn and how far its dashes are closed, over time. */
   readonly stroke: StrokeTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
@@ -237,6 +241,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const popOuts = new Map<number, PopOutKey[]>();
   const bumps = new Map<number, { at: number; amount: number }[]>();
   const scales = new Map<number, ScaleToKey[]>();
+  const axisScales = new Map<number, ScaleToKey[]>();
   const fades = new Map<number, FadeToKey[]>();
   const draws = new Map<number, DrawOnKey[]>();
   const solids = new Map<number, SolidToKey[]>();
@@ -317,7 +322,11 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'scaleTo':
         need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
         if (node.type === 'shape' && node.body) fail(`${where}: scaleTo cannot target "${node.id}": the size of a rigid body is fixed by the physics bake`);
-        push(scales, index, key);
+        if (key.axes) {
+          // Along its own axes: for what has a place and a turn of its own.
+          if (!isPlaced(node)) fail(`${where}: scaleTo("${node.id}") with to: [sx, sy] cannot target a label; it applies to shapes, groups, eyes, strokes and texts`);
+          push(axisScales, index, key);
+        } else push(scales, index, key);
         break;
       case 'fadeTo':
         need(node.type !== 'emitter', 'shapes, groups, eyes, strokes, texts, labels and links');
@@ -548,6 +557,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       lid: node.type === 'eye' ? buildLidTrack(node.open, opens.get(d.index) ?? []) : null,
       level: node.type === 'shape' && node.level ? buildLevelTrack(node.level.at, levels.get(d.index) ?? []) : null,
       stretch: squashes.has(d.index) ? buildStretchTrack(squashes.get(d.index)!) : null,
+      axis: axisScales.has(d.index) ? buildAxisTrack(axisScales.get(d.index)!) : null,
       stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? []) : null,
       clipIndex,
       bodySlot,

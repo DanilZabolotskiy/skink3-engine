@@ -515,6 +515,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `popIn(id, { at, ... })` | shape, group, eye, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
 | `turnTo(id, { at, to, ... })` | shape, group | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
+| `scaleTo(id, { at, to: [sx, sy], ... })` | shape, group, eye, stroke, text | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | shape, group, eye, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
 | `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
@@ -614,6 +615,27 @@ const path: Vec2[] = [[-1180, -260], [-860, -300], [-600, -60], [-300, 150]];
 - A flow reads as a flow when it enters and leaves: start the path outside the frame or behind a `cover`, and end it there. `only: true` spares the fades; a flow that should already run at frame 0 starts its first keys before 0.
 - A node is turned by `roll` or `orient`, or by `turnTo`, not by both.
 - `pathLength`, `pathTable` and `pathAt` are exported for scene code that needs the length of a path or a point on it.
+
+### Size along one axis
+
+`scaleTo` with a number changes the size evenly. With `to: [sx, sy]` it changes the node along its own axes, for good: `sx` times as wide and `sy` times as high as authored, about `pivot`.
+
+```ts
+rect({ id: 'bar', at: [0, 420], w: 46, h: 60, fill: 'mid.ocean' }),
+// timeline
+scaleTo('bar', { at: 2, to: [1, 2.8], pivot: [0, 30] }),            // 2.8 times as high, its lower edge in place: it grows, shoots past and settles
+scaleTo('bar', { at: 4.4, to: [1, 2], pivot: [0, 30], dur: 0.5 }),  // down a step: keys chain from what is reached
+scaleTo('card', { at: 6, to: [0.04, 1], dur: 0.3, overshoot: 0 }),  // a card turned edge-on
+scaleTo('drop', { at: 7, to: [1.25, 0.8], pivot: [0, 40] }),        // it sags: lower and wider, and stays so
+```
+
+- `pivot` is the point that stays in place, in the node's own units from its origin: `[0, h / 2]` is the lower edge of a rect, `[-w / 2, 0]` its left end. Left out, it is the origin. `pivot` goes with `to: [sx, sy]` only.
+- **The axes are the node's own:** a bar that is turned grows along its own length. Everything in the node (its children, its light, its glow) takes the change with it. Its corners stretch with it too: give a bar that grows far a small corner radius.
+- **Keys chain** among themselves, each from the width and height reached at its moment, with the `overshoot` (0.15) and the `dur` (0.6) of `scaleTo`. A key may name another pivot: the picture does not jump, and from then on the new point stays in place.
+- It plays on top of the even size, the pops and the bumps of the node, and of its moves and turns. Each factor is 0.01 to 100: a side never passes through nothing.
+- A label points at the edge the shape has now, and a link ends there. What else reads the outline of the node keeps its authored proportions: a shape that others are clipped to, a cover, the frame checks.
+- For shapes, groups, eyes, strokes and texts; not for a label, and not for a rigid body.
+- The motion review judges the change as a change of size: with `overshoot: 0` it starts at full speed and is reported as an `abrupt-start`.
 
 ### Opacity
 

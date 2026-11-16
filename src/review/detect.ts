@@ -174,6 +174,14 @@ function ownSteps(series: MotionSeries, s: PlacedSeries, st: Steps): void {
     const g = (s.ownScale[f]! - s.ownScale[f - 1]!) * s.radius * u;
     scl.a[f] = g;
     scl.d[f] = Math.abs(g);
+    if (s.axis) {
+      // Its width and its height change apart: the travel of its edge along each axis, and the larger of the two.
+      const gx = (s.ownScale[f]! * s.axis.sx[f]! - s.ownScale[f - 1]! * s.axis.sx[f - 1]!) * s.radius * u;
+      const gy = (s.ownScale[f]! * s.axis.sy[f]! - s.ownScale[f - 1]! * s.axis.sy[f - 1]!) * s.radius * u;
+      scl.a[f] = gx;
+      scl.b[f] = gy;
+      scl.d[f] = Math.max(Math.abs(gx), Math.abs(gy));
+    }
     if (scl.d[f]! > maxScl) maxScl = scl.d[f]!;
   }
   st.largest[0] = maxPos;

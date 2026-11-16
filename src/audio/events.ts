@@ -312,6 +312,12 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
         break;
       case 'scaleTo': {
         // A scaleTo starts from the size the node has at that moment.
+        if (key.axes) {
+          // Along its axes: it grows when it covers more than before.
+          const seg = n.axis?.segs.find((g) => g.at === key.at && g.to === key.axes);
+          placed(key.axes[0] * key.axes[1] >= (seg ? seg.from[0] * seg.from[1] : 1) ? 'grow' : 'shrink', n, key.at, key.dur, key.sound);
+          break;
+        }
         const before = n.scale?.grows.find((g) => g.at === key.at && g.to === key.to)?.from ?? 1;
         placed(key.to >= before ? 'grow' : 'shrink', n, key.at, key.dur, key.sound);
         break;

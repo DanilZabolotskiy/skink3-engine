@@ -39,7 +39,7 @@ layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
 - `drift.speed`: units per frame along `heading`; the norm is 0.3 to 0.7 px per frame. `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
-- A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera goes round a closed path all shot long: `loopPoints(center, r | [rx, ry])` holds a subject. Without, it covers the path once.
+- A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers the path once.
 - `cameraTo`: `zoom` is a factor of the authored view, at one apparent speed across orders of magnitude; `to` is where the camera looks at the end. Drift, wander and push-in stay on top.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
 
@@ -61,7 +61,7 @@ eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'he
 
 - Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. They are convex; a `group` composes them. `children` are drawn over their parent.
 - `stroke`: `smooth` 0 joins the points with straight lines; `arcPoints(center, r, from, to)` gives an arc or a ring (degrees).
-- `label`: the tail points at the edge of `target` on `side`; the text wraps, then shrinks, and is never cut. `text`: free-standing; as the child of a shape it lies on it; in a `layer` with `parallax: 0` it belongs to the frame (a title, a note). List a `link` before its nodes.
+- `label`: its tail points at the edge of `target` on `side`; the text wraps, then shrinks, never cut. `text`: free-standing; as a child of a shape it lies on it; in a `layer` with `parallax: 0` it belongs to the frame.
 
 ## Springs and rigid bodies (opt-in)
 
@@ -73,7 +73,7 @@ circle({ id: 'ball', fill: 'accent.amber', r: 30, body: { kind: 'dynamic', relea
 shot({ ...scene, /* = */ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
-A dynamic body waits, touching nothing, until `release` (seconds; negative down to minus `prewarm`, seconds simulated before frame 0); then only the simulation moves it. `velocity`: units per second; `spin`: degrees per second. `appear: 'release'`: undrawn until then. The collider is the shape.
+A dynamic body waits, touching nothing, until `release` (seconds; down to minus `prewarm`, the seconds simulated before frame 0); then only the simulation moves it. `velocity`: units per second; `spin`: degrees per second; `appear: 'release'`: undrawn until then. The shape is the collider.
 
 ## Motion and timing
 
@@ -83,7 +83,7 @@ moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive: instead of at:, the momen
 hop('buddy', { at: 4.3, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur:); + roll: r, a wheel of that radius
 turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees
-scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts
+scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy] + pivot: [x, y]: along its own axes (a bar from one end)
 fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 }); // an opacity
 popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /* = */ dur: 0.35 });
@@ -99,7 +99,7 @@ stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); /
 ```
 
 - A negative `at` (down to -600): the key is under way at frame 0.
-- `profile`: `'settle'` (`moveTo` only) backs away, shoots past and settles: it first arrives at 0.52 of `dur` and peaks at 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed, for a flow that enters and leaves the frame. `'in'`, `'out'`: one eased end, `ramp` its share of `dur`. These arrive exactly at `at + dur`.
+- `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles: it first arrives at 0.52 of `dur`, peaking at 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). These arrive at `at + dur` exactly.
 
 ## Effects (opt-in)
 
@@ -109,8 +109,8 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 rect({ id: 'wall', fill: 'dark.indigo', w: 240, h: 300, cover: true, backdrop: true });
 ```
 
-- An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `'steady'` keeps the size, `'spark'` shrinks away. Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
-- `cover`: glow drawn before it does not shine through, and the motion review does not judge what is wholly behind it. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape. `level` (or a number, 0 to 1): the shape fills from the bottom, `wave` ripples it, its children ride on the surface.
+- An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
+- `cover`: glow drawn before it does not shine through; the motion review does not judge what is wholly behind it. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape. `level` (or a number, 0 to 1): it fills from the bottom, `wave` ripples it, its children ride on the surface.
 
 ## Sound (opt-in)
 
@@ -120,7 +120,7 @@ popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names 
 sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a word; + node: it is panned to that node
 ```
 
-- `skink3 sfx` makes the track from the events of the shot (every intent, contact and burst) and a bank of sounds the production brings. One event, one sound; only what is seen sounds, and the bank's rules drop most of the rest. No pixel or bake changes.
+- `skink3 sfx` makes the track from the events of the shot (every intent, contact and burst) and a bank the production brings: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes.
 - In the bank a sound can have `rules` of its own, stand `apart` (a pour as a shower) and be fitted to a move (`anchor: "peak"`, `pan: "follow"`, `pick: "duration"`).
 - You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`), a tile per sound with its frame, its node ringed and an arrow along a move.
 
@@ -152,27 +152,27 @@ sfx      the sound track, a WAV   --bank bank.json   [--sheet [--cols 4] [--tile
 common   --lang tag (the first table)   --width px (1920)   --cpu   --out file   --cache dir
 ```
 
-Output goes to `./out/<shot id>/`, the cache to `./cache/`; every command bakes when it must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
+Output: `./out/<shot id>/`; cache: `./cache/`; every command bakes when it must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
 
 ## Reading the reviews
 
 What each kind of finding (a warning) usually means, and the usual fix:
 
-- `jump`: a teleport or a pop. Check the keys there; change place while hidden.
-- `abrupt-start`: no ease-in. Keep `anticipation` or `overshoot`, or use `'ease'` or `'in'`.
-- `abrupt-stop`: no ease-out. Use `'ease'` or `'out'`, or an overshoot.
-- `mechanical`: one speed between two rests in view. Use `'ease'`, or let it enter and leave the frame.
-- `too-fast`: over half its size per frame: it strobes. Slower, or larger.
-- `spring-ringing`: still swinging 2.5 s after its target stopped. Raise `z` or `f`.
-- `spring-no-overshoot`: a bouncy spring that only lags. Lower `f` or `z`, or drop it.
-- `dead-area`: nothing moves by itself for 4 s (the camera does not count). Add an `idle`, a pulse, particles.
+- `jump`: a teleport or pop: check the keys there; change place while hidden.
+- `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or use `'ease'` or `'in'`.
+- `abrupt-stop`: no ease-out: `'ease'` or `'out'`, or an overshoot.
+- `mechanical`: one speed between two rests in view: `'ease'`, or let it enter and leave the frame.
+- `too-fast`: over half its size per frame, it strobes: slower, or larger.
+- `spring-ringing`: still swinging 2.5 s after its target stopped: raise `z` or `f`.
+- `spring-no-overshoot`: a bouncy spring that only lags: lower `f` or `z`, or drop it.
+- `dead-area`: nothing moves by itself for 4 s (the camera does not count): add an `idle`, a pulse, particles.
 - `overlap`: bodies in each other: released inside another, or poured too fast.
-- `tunnelling`: through a wall or a gap. Thicker walls that overlap, less load.
-- `escape`: it falls below every fixed body. Widen the ground, or mark it.
-- `jitter`: it trembles at rest. More `friction` or `angularDamping`, larger bodies.
-- `unsettled`: a pile still travels at the end. Pour earlier, more damping.
+- `tunnelling`: through a wall or gap: thicker walls that overlap, less load.
+- `escape`: below every fixed body: widen the ground, or mark it.
+- `jitter`: trembling at rest: more `friction` or `angularDamping`, larger bodies.
+- `unsettled`: a pile still travels at the end: pour earlier, more damping.
 - `energy-spike`: speed from nowhere: bodies released inside each other or pressed into a wall.
-- `unseen-hit`: a bounce off a body that is not drawn. Bodies collide from their release on.
+- `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
 
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. What is meant is marked, with its reason:
@@ -183,7 +183,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page** (the rules the API enforces); **Minimal example**; **Space, time, units**; **Colours: the palette** (its laws); **Text: string tables**; **`shot`** (every option; the camera, its path and its keys, the physics); **`layer`**; **Nodes** (every node in full; glow, covers, clipping, levels); **Timeline: intents** (every intent and rule; profiles, travel, opacity, stagger); **Springs: secondary motion**; **Rigid bodies** (what a body can and cannot do); **Generating content in a scene**; **Checks** (what fails, what warns); **Motion review**, **Physics review** (what to know when writing); **Sound** (events, the bank, the rules of a sound, a sound fitted to a move, the sound sheet, the track); **Command line**; **From another repository**; **Programmatic use** (a bake, a node or a frame in a test); **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path and its keys, the physics); **`layer`**; **Nodes** (each in full; glow, covers, clipping, levels); **Timeline: intents** (each in full; profiles, travel, size along one axis, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, the rules of a sound, a sound fitted to a move, the sound sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

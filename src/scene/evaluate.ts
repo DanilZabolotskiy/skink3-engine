@@ -7,6 +7,7 @@ import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type 
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import {
+  sampleAxis,
   sampleDrawn,
   sampleLevel,
   sampleLid,
@@ -71,10 +72,18 @@ const SIDE_DIR: Readonly<Record<LabelSide, Vec2>> = {
   right: [1, 0],
 };
 
-/** How far a node reaches from its origin in a world direction, in units of its layer. */
-function reachOf(n: CNode, xf: Xf, dir: Vec2): number {
+/** How far a node reaches from its origin in a world direction at time t, in units of its layer. */
+function reachOf(n: CNode, xf: Xf, dir: Vec2, t: number): number {
   const node = n.node;
-  if (node.type === 'shape') return reach(node.shape, vrot(dir, -xf.rot)) * xf.scale;
+  if (node.type === 'shape') {
+    const local = vrot(dir, -xf.rot);
+    const axis = n.axis ? sampleAxis(n.axis, t) : null;
+    if (!axis) return reach(node.shape, local) * xf.scale;
+    // A shape whose width and height were changed: its outline as it is drawn.
+    let best = -Infinity;
+    for (const p of outlineOf(node.shape)) best = Math.max(best, (p[0] * axis.sx + axis.cx) * local[0] + (p[1] * axis.sy + axis.cy) * local[1]);
+    return best * xf.scale;
+  }
   if (node.type === 'eye') return node.r * xf.scale;
   return 0;
 }
@@ -208,7 +217,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
     const target = c.nodes[n.targetIndex]!;
     const txf = out[n.targetIndex]!;
     const dir = SIDE_DIR[node.side];
-    const d = reachOf(target, txf, dir) + node.gap;
+    const d = reachOf(target, txf, dir, t) + node.gap;
     let tip: Vec2 = [txf.x + dir[0] * d, txf.y + dir[1] * d];
     if (n.springKind === 'follow') tip = poses.spring(n.springSlot, frame, tip);
     out[n.index] = { x: tip[0], y: tip[1], rot: 0, scale: n.scale ? sampleScale(n.scale, t) : 1 };
@@ -327,12 +336,18 @@ export interface ClipItem {
  * A node that is being squashed or stretched, together with everything inside
  * it: the picture is `height` times as high and 1 / `height` times as wide,
  * about the point `at` of the layer.
+ *
+ * With `axes` it is a node whose width and height were changed for good
+ * (scaleTo with to: [sx, sy]): `at` is its origin in the layer, and a point p
+ * of the node, in its own units, is drawn where (sx * p.x + cx, sy * p.y + cy)
+ * would be; `rot` and `scale` are the node's own.
  */
 export interface StretchItem {
   readonly kind: 'stretch';
   readonly node: CNode;
   readonly at: Vec2;
   readonly height: number;
+  readonly axes?: { readonly rot: number; readonly scale: number; readonly sx: number; readonly sy: number; readonly cx: number; readonly cy: number };
   readonly items: readonly Item[];
 }
 
@@ -524,6 +539,16 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         open.push({ end: n.subtreeEnd, items: inner });
         items = inner;
       }
+      if (n.axis && xf.scale > HIDDEN) {
+        // Its width and its height were changed: everything in it is drawn through that change.
+        const s = sampleAxis(n.axis, t);
+        if (s) {
+          const inner: Item[] = [];
+          items.push({ kind: 'stretch', node: n, at: [xf.x, xf.y], height: 1, axes: { rot: xf.rot, scale: xf.scale, ...s }, items: inner });
+          open.push({ end: n.subtreeEnd, items: inner });
+          items = inner;
+        }
+      }
       if (n.stretch) {
         const s = sampleStretch(n.stretch, t);
         if (s) {
@@ -598,8 +623,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const len = Math.hypot(dx, dy);
           if (len < 1e-6) break;
           const dir: Vec2 = [dx / len, dy / len];
-          const r0 = reachOf(c.nodes[n.fromIndex]!, from, dir) + node.gap;
-          const r1 = reachOf(c.nodes[n.toIndex]!, to, [-dir[0], -dir[1]]) + node.gap;
+          const r0 = reachOf(c.nodes[n.fromIndex]!, from, dir, t) + node.gap;
+          const r1 = reachOf(c.nodes[n.toIndex]!, to, [-dir[0], -dir[1]], t) + node.gap;
           if (len <= r0 + r1 + 1) break;
           const mid: Vec2 = [(from.x + to.x) / 2 - dir[1] * node.bend * len, (from.y + to.y) / 2 + dir[0] * node.bend * len];
           const curve = quadSub([[from.x, from.y], mid, [to.x, to.y]], r0 / len, 1 - r1 / len);

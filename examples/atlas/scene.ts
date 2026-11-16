@@ -6,13 +6,14 @@
 // part of the way round. The camera pushes in on what lies ahead while it is
 // made certain, and pulls back to the whole picture. A title and a note belong
 // to the frame and stay where they are; a word lies on the block and goes
-// where the block goes.
+// where the block goes. Three bars grow from their feet, and one comes down
+// again in two steps.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
-// profile, solidTo(), arcPoints(), cameraTo(), and text() in the frame's own
-// layer and on a shape.
+// profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
+// and on a shape, and scaleTo() along one axis with a pivot.
 
-import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, shot, solidTo, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -42,6 +43,10 @@ const timeline: Key[] = [
   drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),
   drawOn('chart', { at: 0.6, dur: 2.2, profile: 'steady' }),
   fadeTo('fence', { at: 5.5, to: 1, dur: 0.8 }),
+  // Bars: each grows to its height from its lower edge, with an overshoot; the middle one comes down in two steps.
+  ...stagger(['bar0', 'bar1', 'bar2'], { at: 2.4, each: 0.25 }, (id, at, i) => scaleTo(id, { at, to: [1, [1.7, 2.8, 2.2][i]!], pivot: [0, 30], dur: 0.7 })),
+  scaleTo('bar1', { at: 4.4, to: [1, 2], pivot: [0, 30], dur: 0.5 }),
+  scaleTo('bar1', { at: 5, to: [1, 1.2], pivot: [0, 30], dur: 0.5 }),
   // The camera: in on the stretch ahead while it closes, and back out to everything.
   cameraTo({ at: 5.6, zoom: 1.7, to: [470, 90], dur: 1.4 }),
   cameraTo({ at: 8.3, zoom: 1, to: [0, 0], dur: 1.3 }),
@@ -71,6 +76,7 @@ export default shot({
         stroke({ id: 'chart', points: CHART, color: 'accent.coral', width: 7, smooth: 0 }),
         rect({ id: 'block', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children: [text({ id: 'tag', text: 'block.tag', ink: 'light.cream', size: 34, maxWidth: 200 })] }),
         stroke({ id: 'fence', at: [560, 300], points: [[-150, -105], [150, -105], [150, 105], [-150, 105]], closed: true, smooth: 0.25, color: 'mid.mist', width: 5, dash: [18, 14], opacity: 0 }),
+        ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [-420 + i * 70, 420], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
         stroke({ id: 'ring', at: [-560, -40], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
         stroke({ id: 'share', at: [-560, -40], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
       ],

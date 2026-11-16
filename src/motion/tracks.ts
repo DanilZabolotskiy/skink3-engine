@@ -354,6 +354,59 @@ export function sampleScale(track: ScaleTrack, t: number): number {
   return s * sampleGrow(track.grows, t) * (1 + extra);
 }
 
+/** One lasting change of size along the node's own axes. */
+export interface AxisSeg {
+  readonly at: number;
+  readonly dur: number;
+  readonly from: Vec2;
+  readonly to: Vec2;
+  readonly overshoot: number;
+  /** The point that stays in place during this change, in the node's own units. */
+  readonly pivot: Vec2;
+  /** What the changes before this one, about other points, have moved the picture by: it does not jump when the pivot changes. */
+  readonly shift: Vec2;
+}
+
+/** The width and the height of a node as multiples of the authored ones, over time (scaleTo with to: [sx, sy]). */
+export interface AxisTrack {
+  readonly segs: readonly AxisSeg[];
+}
+
+/**
+ * The size of a node along its own axes at time t: a point p of the node, in
+ * its own units, is drawn at (sx * p.x + cx, sy * p.y + cy). null before the
+ * first key, and while the node is as authored.
+ */
+export function sampleAxis(track: AxisTrack, t: number): { readonly sx: number; readonly sy: number; readonly cx: number; readonly cy: number } | null {
+  let seg: AxisSeg | null = null;
+  for (const s of track.segs) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return null;
+  const u = (t - seg.at) / seg.dur;
+  // As for an even size: ratios, so that growing and shrinking overshoot alike and no side passes through nothing.
+  const p = u >= 1 ? 1 : overshootStep(u, seg.overshoot, 0.5);
+  const sx = seg.from[0] * (seg.to[0] / seg.from[0]) ** p;
+  const sy = seg.from[1] * (seg.to[1] / seg.from[1]) ** p;
+  const cx = (1 - sx) * seg.pivot[0] + seg.shift[0];
+  const cy = (1 - sy) * seg.pivot[1] + seg.shift[1];
+  if (Math.abs(sx - 1) < 1e-9 && Math.abs(sy - 1) < 1e-9 && Math.abs(cx) < 1e-9 && Math.abs(cy) < 1e-9) return null;
+  return { sx, sy, cx, cy };
+}
+
+/** The track of the keys of a node that change its size along its axes. Keys chain: each starts from what is reached at its moment. */
+export function buildAxisTrack(keys: readonly ScaleToKey[]): AxisTrack {
+  const segs: AxisSeg[] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    const now = sampleAxis({ segs }, k.at) ?? { sx: 1, sy: 1, cx: 0, cy: 0 };
+    const pivot = k.pivot ?? [0, 0];
+    // The picture at this moment is (s * p + c). With the new pivot it must be the same picture.
+    segs.push({ at: k.at, dur: k.dur, from: [now.sx, now.sy], to: k.axes!, overshoot: k.overshoot, pivot, shift: [now.cx - (1 - now.sx) * pivot[0], now.cy - (1 - now.sy) * pivot[1]] });
+  }
+  return { segs };
+}
+
 export interface FadeSeg {
   readonly at: number;
   readonly dur: number;
