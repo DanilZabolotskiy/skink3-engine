@@ -77,11 +77,11 @@ export { cameraAt, layerView, type CameraState, type LayerView } from './camera/
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';
 export { FONT_FAMILY } from './text/fonts.ts';
 export { cuesFromWords, formatSrt, formatVtt, formatYtt, shiftWords, wrapCue, type Cue, type CueOptions, type SpokenWord, type YttStyle } from './text/subtitles.ts';
-export { sceneEvents, EVENT_KINDS, type EventKind, type EventsOptions, type SceneEvent } from './audio/events.ts';
-export { loadBank, parseBank, curveAt, BankError, SOUND_RULES, SOUND_CURVES, type BankSound, type Curve, type SoundBank, type SoundCurves, type SoundOwnRules, type SoundRules } from './audio/bank.ts';
+export { sceneEvents, EVENT_KINDS, PEAK_BAND, type EventKind, type EventsOptions, type SceneEvent } from './audio/events.ts';
+export { loadBank, parseBank, curveAt, BankError, SOUND_RULES, SOUND_CURVES, SOUND_ANCHORS, type BankSound, type Curve, type SoundAnchor, type SoundBank, type SoundCurves, type SoundOwnRules, type SoundRules } from './audio/bank.ts';
 export { planSound, soundOf, density, showersOf, DROP_RULES, SHOWER_GAP, type DropRule, type Dropped, type PlanOptions, type Shower, type SoundPlan, type SoundSource, type Voice } from './audio/plan.ts';
-export { renderSoundSheet, soundTiles, tileCaption, tileRing, SHEET_INK, type SoundSheetOptions, type SoundTile } from './audio/sheet.ts';
-export { loadTakes, mixVoices, resample, SAMPLE_RATE, SAMPLES_PER_FRAME, type Take, type Takes } from './audio/mix.ts';
+export { renderSoundSheet, soundTiles, tileArrow, tileCaption, tileRing, SHEET_INK, type SoundSheetOptions, type SoundTile } from './audio/sheet.ts';
+export { loadTakes, mixVoices, panAt, resample, takePeak, SAMPLE_RATE, SAMPLES_PER_FRAME, type Take, type Takes } from './audio/mix.ts';
 export { renderSound, checkSound, soundReport, formatSoundReport, soundReportJson, TRACK_BITS, type SoundReport, type SoundTrack } from './audio/track.ts';
 export { readWav, writeWav, WavError, type Wav } from './audio/wav.ts';
 export { engineVersion, physicsVersion } from './version.ts';

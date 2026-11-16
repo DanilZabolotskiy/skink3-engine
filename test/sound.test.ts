@@ -32,8 +32,10 @@ import {
   levelTo,
   link,
   loadBank,
+  moveTimes,
   moveTo,
   openTo,
+  panAt,
   parseBank,
   planSound,
   popIn,
@@ -58,6 +60,8 @@ import {
   soundOf,
   soundTiles,
   squash,
+  takePeak,
+  tileArrow,
   tileCaption,
   tileRing,
   travel,
@@ -76,7 +80,9 @@ import {
 
 // The sound of a shot: its events, the bank of sounds, the rules that keep a
 // track from being crowded, the rules a sound sets for its own events, the
-// track itself, and the sheet that shows which event each sound belongs to.
+// track itself, a sound fitted to a move (its loudest point on the fastest
+// moment, its pan with the node, its take by the length of the move), and the
+// sheet that shows which event each sound belongs to.
 // The engine holds no sound files, so every sound here is a tone the test
 // makes.
 
@@ -109,6 +115,15 @@ interface ToneSpec {
   priority?: number;
   /** Rules of its own for its events, as the bank writes them. */
   rules?: Record<string, unknown>;
+  /** How it is fitted to its event, as the bank writes it. */
+  anchor?: string;
+  peakAt?: number | number[];
+  pan?: string;
+  pick?: string;
+  /** Takes of these lengths in seconds, in place of `takes` and `seconds`. */
+  lengths?: number[];
+  /** The takes themselves, sample by sample at 48 kHz, in place of tones. */
+  samples?: Float32Array[];
 }
 
 let banks = 0;
@@ -124,12 +139,14 @@ function bankOf(spec: { sounds: Record<string, ToneSpec>; kinds?: Record<string,
   const sounds: Record<string, unknown> = {};
   for (const [key, s] of Object.entries(spec.sounds)) {
     const files: string[] = [];
-    for (let i = 0; i < (s.takes ?? 1); i++) {
+    for (let i = 0; i < (s.samples?.length ?? s.lengths?.length ?? s.takes ?? 1); i++) {
       const file = `${key}-${i}.wav`;
-      writeFileSync(join(dir, file), writeWav([tone((s.hz ?? 440) * (i + 1), s.seconds ?? 0.1, s.rate ?? SAMPLE_RATE)], s.rate ?? SAMPLE_RATE, 16));
+      const take = s.samples?.[i] ?? tone((s.hz ?? 440) * (i + 1), s.lengths?.[i] ?? s.seconds ?? 0.1, s.rate ?? SAMPLE_RATE);
+      writeFileSync(join(dir, file), writeWav([take], s.rate ?? SAMPLE_RATE, 16));
       files.push(file);
     }
-    sounds[key] = { file: files.length === 1 ? files[0] : files, gain: s.gain ?? 1, pitchJitter: s.pitchJitter ?? 0, gainJitter: s.gainJitter ?? 0, ...(s.priority === undefined ? {} : { priority: s.priority }), ...(s.rules === undefined ? {} : { rules: s.rules }) };
+    const fitted = Object.fromEntries((['anchor', 'peakAt', 'pan', 'pick'] as const).flatMap((name) => (s[name] === undefined ? [] : [[name, s[name]]])));
+    sounds[key] = { file: files.length === 1 ? files[0] : files, gain: s.gain ?? 1, pitchJitter: s.pitchJitter ?? 0, gainJitter: s.gainJitter ?? 0, ...(s.priority === undefined ? {} : { priority: s.priority }), ...(s.rules === undefined ? {} : { rules: s.rules }), ...fitted };
   }
   const json = {
     sounds,
@@ -363,6 +380,70 @@ test('sound events: what is hidden, off the frame, behind a cover or outside its
   assert.equal(blind.report.dropped.unseen.length, 2);
 });
 
+test('sound events: a move carries its motion: its fastest moment, its two ends, the length of its way and the way itself', async () => {
+  const dot = (id: string, at: [number, number]): ReturnType<typeof circle> => circle({ id, at, r: 40, fill: 'accent.aqua' });
+  const events = await eventsOf(
+    make(
+      [dot('ease', [-300, 0]), dot('steady', [-1200, -200]), dot('out', [-900, 300]), dot('in', [0, -300]), dot('settle', [-400, 150]), dot('hopper', [300, 200]), dot('still', [500, -100]), dot('rush', [-1100, 400]), dot('late', [0, 400])],
+      [
+        moveTo('ease', { at: 1, to: [300, 0], dur: 1, profile: 'ease', arc: 0 }),
+        moveTo('steady', { at: 0.5, to: [600, -200], dur: 1.5, profile: 'steady', arc: 0 }),
+        moveTo('out', { at: 2, to: [0, 300], dur: 1, profile: 'out', arc: 0 }),
+        moveTo('in', { at: 3, to: [1200, -300], dur: 1, profile: 'in', arc: 0 }),
+        moveTo('settle', { at: 4, to: [200, 150], dur: 1.2 }),
+        hop('hopper', { at: 1, to: [500, 200], dur: 0.5, height: 100 }),
+        moveTo('still', { at: 2, to: [500, -100], dur: 0.5, profile: 'ease' }),
+        travel('rush', { at: 4, path: [[-1100, 400], [0, 100], [1100, 400]], dur: 1.5, only: true }),
+        moveTo('late', { at: 5.5, to: [300, 400], dur: 1, profile: 'steady', arc: 0 }),
+        popIn('ease', { at: 0.2 }),
+      ],
+      6,
+    ),
+  );
+  const move = (node: string): SceneEvent => one(events, 'move', node);
+  const where = (e: SceneEvent): readonly [number, number] => e.track![e.peakFrame! - e.frame]!;
+
+  // From rest to rest across the middle of the frame: its ends, its length, and a place for every frame.
+  const ease = move('ease');
+  assert.deepEqual([ease.frame, ease.dur, ease.from, ease.to, ease.distance, ease.track!.length], [60, 1, [660, 540], [1260, 540], 600, 61]);
+  assert.deepEqual([ease.track![0], ease.track![60], [ease.x, ease.y]], [ease.from, ease.to, ease.from]);
+  // It holds its top speed over the middle two fifths; of those frames the moment is the one in the middle of the frame.
+  assert.deepEqual([ease.peakFrame, ease.peakTime, where(ease)], [90, 1.5, [960, 540]]);
+
+  // One speed from end to end, across the frame: its moment is where it passes the middle, not the middle of its time.
+  const steady = move('steady');
+  assert.deepEqual([steady.frame, steady.from, steady.to, steady.distance], [30, [-240, 340], [1560, 340], 1800]);
+  assert.deepEqual([steady.peakFrame, where(steady)], [90, [960, 340]]);
+  assert.notEqual(steady.peakFrame, steady.frame + 45);
+
+  // In at speed and down to rest in the middle: the last of its fast frames. Away from rest at speed: the first of them.
+  const out = move('out');
+  assert.ok(out.peakFrame! >= 163 && out.peakFrame! <= 166, `it brakes over the last 18 frames: ${out.peakFrame}`);
+  const away = move('in');
+  assert.ok(away.peakFrame! >= 194 && away.peakFrame! <= 197, `it is at speed after 18 frames: ${away.peakFrame}`);
+
+  // A move that backs away, goes and settles has one top of speed, on its way there.
+  const settle = move('settle');
+  const moments = moveTimes({ dur: 1.2, distance: 600 });
+  assert.ok(settle.peakTime! > 4 + moments.leaves && settle.peakTime! < 4 + moments.arrives, `${settle.peakTime}`);
+  assert.ok(settle.distance! > 600, 'its way is longer than the straight line: it backs away, arcs and overshoots');
+
+  // A travel along a path, across the frame: where the path is nearest the middle.
+  const rush = move('rush');
+  assert.ok(Math.hypot(where(rush)[0] - 960, where(rush)[1] - 640) < 15, `${where(rush)}`);
+  assert.ok(rush.from![0] < 0 && rush.to![0] > 1920 && rush.seen, 'from outside the frame to outside the frame, seen on its way');
+
+  // A move that goes nowhere has its moment at its start; one that the end of the shot cuts ends there.
+  const still = move('still');
+  assert.deepEqual([still.peakFrame, still.distance, still.from, still.to], [120, 0, [1460, 440], [1460, 440]]);
+  const late = move('late');
+  assert.deepEqual([late.frame, late.track!.length, late.dur], [330, 30, 1]);
+  // The take-off of a hop is a move; its landing, and every other kind of event, has no motion to carry.
+  assert.ok(move('hopper').track!.length === 31 && move('hopper').peakFrame! > 60);
+  for (const e of events.filter((x) => x.kind !== 'move')) assert.deepEqual([e.peakFrame, e.peakTime, e.from, e.to, e.distance, e.track], [undefined, undefined, undefined, undefined, undefined, undefined], e.id);
+  assert.ok(events.some((e) => e.kind === 'land') && events.some((e) => e.kind === 'appear'));
+});
+
 /** An event made by hand, for the tests of what is done with events. */
 let made = 0;
 function ev(over: Partial<SceneEvent> = {}): SceneEvent {
@@ -372,8 +453,8 @@ function ev(over: Partial<SceneEvent> = {}): SceneEvent {
   return { id: `${kind}:${node}@${frame}`, kind, dur: 0, node, key: null, size: 100, speed: 20, x: 960, y: 540, seen: true, ...over, frame, time: frame / 60 };
 }
 
-function plan(events: SceneEvent[], bank: SoundBank, lengthOf: (key: string, take: number) => number = () => 0.1): SoundPlan {
-  return planSound([...events].sort((a, b) => a.frame - b.frame), bank, { seed: 1, frames: 6000, lengthOf });
+function plan(events: SceneEvent[], bank: SoundBank, lengthOf: (key: string, take: number) => number = () => 0.1, peakOf?: (key: string, take: number) => number): SoundPlan {
+  return planSound([...events].sort((a, b) => a.frame - b.frame), bank, { seed: 1, frames: 6000, lengthOf, ...(peakOf ? { peakOf } : {}) });
 }
 
 const heard = (p: SoundPlan): string[] => p.voices.map((v) => v.event.id);
@@ -527,7 +608,7 @@ test('sound rules: the defaults are quiet, and a bank changes only what it names
   const bank = parseBank({ sounds: { pop: { file: 'pop.wav' } }, rules: { gap: 1, priority: ['move', 'appear'] }, curves: { speed: [[0, 0.2], [10, 1]] } }, DIR);
   assert.deepEqual(bank.rules, { ...SOUND_RULES, gap: 1, priority: ['move', 'appear', ...SOUND_RULES.priority.filter((k) => k !== 'move' && k !== 'appear')] });
   assert.deepEqual(bank.curves, { ...SOUND_CURVES, speed: [[0, 0.2], [10, 1]] });
-  assert.deepEqual(bank.sounds['pop'], { files: [join(DIR, 'pop.wav')], gain: 1, pitchJitter: 0.5, gainJitter: 0.1, priority: 0, rules: null });
+  assert.deepEqual(bank.sounds['pop'], { files: [join(DIR, 'pop.wav')], gain: 1, pitchJitter: 0.5, gainJitter: 0.1, priority: 0, rules: null, anchor: 'start', peakAt: null, pan: 'fixed', pick: 'seed' });
   assert.equal(curveAt(bank.curves.speed, -5), 0.2);
   assert.ok(Math.abs(curveAt(bank.curves.speed, 5) - 0.6) < 1e-12, 'half-way between two points');
   assert.equal(curveAt(bank.curves.speed, 50), 1);
@@ -1082,6 +1163,301 @@ test('sound sheet: a tile for every sound and one for a shower, the node ringed 
   // A track without a sound has no sheet.
   const silent = renderSound(c, bake, bank, { events: [] });
   await assert.rejects(renderSoundSheet(c, bake, silent.plan, { lang: 'en', gpu: false }), /a sound sheet needs at least one sound/);
+});
+
+/** A move made by hand: from x = `x0` to x = `x1` on screen at one speed, with its fastest moment `peak` seconds in. */
+function moveEvent(over: { node: string; time: number; dur: number; peak: number; x0?: number; x1?: number } & Partial<SceneEvent>): SceneEvent {
+  const { peak, x0: from = 360, x1: to = 1560, ...rest } = over;
+  const frames = Math.round(over.dur * 60);
+  const first = Math.round(over.time * 60);
+  const track = Array.from({ length: frames + 1 }, (_, i): [number, number] => [from + ((to - from) * i) / frames, 540]);
+  return ev({ kind: 'move', x: from, y: 540, peakFrame: first + Math.round(peak * 60), peakTime: (first + Math.round(peak * 60)) / 60, from: [from, 540], to: [to, 540], distance: Math.abs(to - from), track, ...rest });
+}
+
+/** A take that is silent but for a level of 0.5 from `at` seconds on, for `seconds`: where it lands in a track can be read to the sample. */
+function marker(at: number, seconds: number, total: number): Float32Array {
+  const out = new Float32Array(Math.round(total * SAMPLE_RATE));
+  out.fill(0.5, Math.round(at * SAMPLE_RATE), Math.round((at + seconds) * SAMPLE_RATE));
+  return out;
+}
+
+/** A tone that swells to its loudest at `top` seconds and dies away: a raised cosine `width` seconds wide. */
+function swell(top: number, width: number, total: number, hz = 600): Float32Array {
+  const out = new Float32Array(Math.round(total * SAMPLE_RATE));
+  for (let i = 0; i < out.length; i++) {
+    const u = (i / SAMPLE_RATE - top) / width;
+    out[i] = Math.abs(u) >= 0.5 ? 0 : 0.5 * (0.5 + 0.5 * Math.cos(2 * Math.PI * u)) * Math.cos((2 * Math.PI * hz * i) / SAMPLE_RATE);
+  }
+  return out;
+}
+
+test('a sound fitted to a move: the bank reads its anchor, its loudest point, its pan and its pick, and old banks are what they were', () => {
+  const bank = parseBank({ sounds: { pop: { file: 'pop.wav' }, whoosh: { file: ['a.wav', 'b.wav', 'c.wav'], anchor: 'peak', peakAt: [0.1, 0.25, 0.6], pan: 'follow', pick: 'duration' }, swish: { file: ['a.wav', 'b.wav'], anchor: 'end', peakAt: 0.2 } } }, DIR);
+  const { anchor, peakAt, pan, pick } = bank.sounds['pop']!;
+  assert.deepEqual([anchor, peakAt, pan, pick], ['start', null, 'fixed', 'seed'], 'a sound that says nothing starts where its event starts, stays where it is, and picks by the seed');
+  const w = bank.sounds['whoosh']!;
+  assert.deepEqual([w.anchor, w.peakAt, w.pan, w.pick], ['peak', [0.1, 0.25, 0.6], 'follow', 'duration']);
+  assert.deepEqual([bank.sounds['swish']!.anchor, bank.sounds['swish']!.peakAt], ['end', [0.2, 0.2]], 'one number is for every take');
+  const bad = (sound: Record<string, unknown>, message: RegExp): void => {
+    assert.throws(() => parseBank({ sounds: { pop: { file: ['a.wav', 'b.wav'], ...sound } } }, DIR), (e: unknown) => e instanceof BankError && message.test(e.message));
+  };
+  bad({ anchor: 'middle' }, /sound "pop": anchor must be one of "start", "peak", "end", got "middle"/);
+  bad({ pan: 0.5 }, /sound "pop": pan must be one of "fixed", "follow", got 0\.5/);
+  bad({ pick: 'length' }, /sound "pop": pick must be one of "seed", "duration", got "length"/);
+  bad({ peakAt: [0.1] }, /peakAt lists 1 moment\(s\) for 2 take\(s\): give one number, or one for each take/);
+  bad({ peakAt: -1 }, /peakAt must be a number in 0\.\.600/);
+  bad({ peak: 0.2 }, /unknown field "peak"/);
+});
+
+test('a sound fitted to a move: with its anchor on the peak, its loudest point lands on the fastest frame of the move; on the end, where the move ends', async () => {
+  const panel = moveEvent({ node: 'panel', time: 2, dur: 1, peak: 0.5 });
+  const sounds = (anchor: string | undefined, more: Record<string, unknown> = {}): Record<string, ToneSpec> => ({ whoosh: { seconds: 1, ...(anchor === undefined ? {} : { anchor }), peakAt: 0.4, ...more }, tick: {} });
+  const kinds = { move: 'whoosh', contact: 'tick' };
+  const placed = (anchor: string | undefined, e: SceneEvent = panel, more: Record<string, unknown> = {}): SoundPlan['voices'][number] => plan([e], bankOf({ sounds: sounds(anchor, more), kinds }), () => 1).voices[0]!;
+
+  // Where it is placed, when it starts to be heard, and how much of it is heard.
+  const onStart = placed(undefined);
+  assert.deepEqual([onStart.anchor, onStart.frame, onStart.time, onStart.skip, onStart.seconds], ['start', 120, 2, 0, 1], 'without an anchor: where the event starts, as ever');
+  assert.deepEqual(placed('start'), onStart);
+  const onPeak = placed('peak');
+  assert.deepEqual([onPeak.anchor, onPeak.frame, onPeak.time, onPeak.skip, onPeak.seconds], ['peak', 150, 2.1, 0, 1], 'it starts 0.4 s before the fastest frame');
+  const onEnd = placed('end');
+  assert.deepEqual([onEnd.anchor, onEnd.frame, onEnd.time], ['end', 180, 2.6]);
+  // A sound that is tuned up is shorter, and its loudest point comes sooner.
+  const tuned = placed('peak', panel, { pitchJitter: 6 });
+  assert.ok(tuned.pitch !== 1 && Math.abs((150 / 60 - tuned.time) * tuned.pitch - 0.4) < 1e-4, `pitch ${tuned.pitch}, starts ${tuned.time}`);
+  // A sound that would start before the shot is heard from inside its take.
+  const early = placed('peak', moveEvent({ node: 'panel', time: 0, dur: 1, peak: 0.1 }));
+  assert.deepEqual([early.frame, early.time, early.skip.toFixed(6), early.seconds.toFixed(6)], [6, 0, '0.300000', '0.700000']);
+  // An event that is not a move has no fastest moment: its own frame is the moment. So has a sound placed by hand.
+  const hit = plan([ev({ kind: 'contact', node: 'ball', time: 3, impulse: 1 })], bankOf({ sounds: { tick: { anchor: 'peak', peakAt: 0.05 } }, kinds: { contact: 'tick' } }), () => 0.3).voices[0]!;
+  assert.deepEqual([hit.frame, hit.time], [180, 2.95]);
+  const byHand = plan([ev({ kind: 'sfx', sound: 'whoosh', node: null, time: 5 })], bankOf({ sounds: sounds('peak'), kinds }), () => 1).voices[0]!;
+  assert.deepEqual([byHand.frame, byHand.time], [300, 4.6]);
+  // A loudest point for each take: the take that is picked is placed by its own.
+  const each = bankOf({ sounds: { whoosh: { lengths: [0.2, 1], pick: 'duration', anchor: 'peak', peakAt: [0.05, 0.4] }, tick: {} }, kinds });
+  const long = plan([panel], each, (_key, take) => [0.2, 1][take]!).voices[0]!;
+  const short = plan([moveEvent({ node: 'panel', time: 2, dur: 0.2, peak: 0.1 })], each, (_key, take) => [0.2, 1][take]!).voices[0]!;
+  assert.deepEqual([long.take, long.frame, long.time, short.take, short.frame, short.time], [1, 150, 2.1, 0, 126, 2.05]);
+  // The rules count a sound at the moment of its event, whatever its anchor: two moves half a second apart keep their gap.
+  const pair = plan([panel, moveEvent({ node: 'other', time: 2.3, dur: 1, peak: 0.1 })], bankOf({ sounds: sounds('peak'), kinds, rules: { gap: 0.5 } }), () => 1);
+  assert.deepEqual([heard(pair), lost(pair, 'gap')], [['move:panel@120'], ['move:other@138']]);
+
+  // In the track, to the sample. A take that is silent until 0.25 s, on a move whose fastest frame is frame 90.
+  const spec = make([circle({ id: 'panel', at: [-300, 0], r: 40, fill: 'accent.aqua' })], [moveTo('panel', { at: 1, to: [300, 0], dur: 1, profile: 'ease', arc: 0 })], 3);
+  const take = { samples: [marker(0.25, 0.01, 0.5)], peakAt: 0.25 };
+  const moves = { move: 'whoosh' };
+  const first = (track: SoundTrack): number => track.left.findIndex((v) => v !== 0);
+  const peak = await trackOf(spec, bankOf({ sounds: { whoosh: { ...take, anchor: 'peak' } }, kinds: moves }));
+  assert.equal(first(peak), 90 * SAMPLES_PER_FRAME, 'the loudest point is on the first sample of the fastest frame');
+  assert.ok(Math.abs(peak.left[90 * SAMPLES_PER_FRAME]! - 0.5) < 1e-4 && peak.left[90 * SAMPLES_PER_FRAME] === peak.right[90 * SAMPLES_PER_FRAME], 'in the middle of the frame, where the panel is on that frame');
+  assert.deepEqual([peak.plan.voices[0]!.frame, peak.plan.voices[0]!.time], [90, 1.25]);
+  assert.equal(first(await trackOf(spec, bankOf({ sounds: { whoosh: { ...take, anchor: 'end' } }, kinds: moves }))), 120 * SAMPLES_PER_FRAME);
+  assert.equal(first(await trackOf(spec, bankOf({ sounds: { whoosh: { ...take } }, kinds: moves }))), 60 * SAMPLES_PER_FRAME + 12000, 'anchored on its start, the take starts with the move');
+  // The report says how it is placed: when it starts to be heard, and what its loudest point is on.
+  const said = peak.report.voices[0]!;
+  assert.deepEqual([said.id, said.time, said.anchor, said.at, said.node], ['move:panel@60', 1.25, 'peak', 1.5, 'panel']);
+  assert.match(formatSoundReport(peak.report), /^ +1\.25 s +move +panel +whoosh .* its loudest point on the peak, 1\.50 s; take 0, 0\.50 s$/m);
+  // A move that starts with the shot: the sound comes in from inside its take, faded in, and its loudest point still lands.
+  const sudden = make([circle({ id: 'panel', at: [-300, 0], r: 40, fill: 'accent.aqua' })], [moveTo('panel', { at: 0, to: [300, 0], dur: 0.2, profile: 'ease', arc: 0 })], 1);
+  const atOnce = await trackOf(sudden, bankOf({ sounds: { whoosh: { samples: [marker(0, 0.5, 0.5)], peakAt: 0.25, anchor: 'peak' } }, kinds: moves }));
+  const cutIn = atOnce.plan.voices[0]!;
+  assert.deepEqual([cutIn.time, cutIn.frame], [0, 6]);
+  assert.ok(Math.abs(cutIn.skip - 0.15) < 1e-9 && Math.abs(cutIn.seconds - 0.35) < 1e-9);
+  assert.ok(atOnce.left[0]! > 0 && atOnce.left[0]! < 0.01 && Math.abs(atOnce.left[600]! - 0.5) < 1e-4, 'faded in over a hundredth of a second');
+  assert.equal(atOnce.left.findLastIndex((v) => v !== 0), 16799, 'and it ends where the take ends: 0.35 s in');
+  // What is left out is the beginning of the take: one that is silent for its first 0.2 s is silent for 0.05 s of the track.
+  const inside = await trackOf(sudden, bankOf({ sounds: { whoosh: { samples: [marker(0.2, 0.3, 0.5)], peakAt: 0.25, anchor: 'peak' } }, kinds: moves }));
+  assert.deepEqual([first(inside), inside.left.findLastIndex((v) => v !== 0)], [2400, 16799]);
+});
+
+test('a sound fitted to a move: without peakAt the loudest point of a take is measured from its envelope', async () => {
+  const takeOf = (left: Float32Array, right: Float32Array = left, rate = SAMPLE_RATE): Parameters<typeof takePeak>[0] => ({ rate, left, right });
+  // A swell has it at its top; a burst in its middle; a hit near its start; silence at 0.
+  assert.ok(Math.abs(takePeak(takeOf(swell(0.25, 0.4, 0.6))) - 0.25) < 0.002, `${takePeak(takeOf(swell(0.25, 0.4, 0.6)))}`);
+  assert.ok(Math.abs(takePeak(takeOf(swell(0.7, 0.5, 1))) - 0.7) < 0.002);
+  assert.ok(Math.abs(takePeak(takeOf(marker(0.1, 0.2, 0.5))) - 0.2) < 0.002, `${takePeak(takeOf(marker(0.1, 0.2, 0.5)))}`);
+  const hit = new Float32Array(24000).map((_, i) => 0.8 * Math.exp(-i / 2000) * Math.cos(i / 5));
+  assert.ok(takePeak(takeOf(hit)) < 0.03, `${takePeak(takeOf(hit))}`);
+  assert.equal(takePeak(takeOf(new Float32Array(4800))), 0);
+  assert.equal(takePeak(takeOf(new Float32Array(0))), 0);
+  // Both channels count, and the answer is in seconds whatever the rate of the take.
+  assert.ok(Math.abs(takePeak(takeOf(new Float32Array(28800), swell(0.25, 0.4, 0.6))) - 0.25) < 0.002);
+  assert.ok(Math.abs(takePeak(takeOf(swell(0.25, 0.4, 0.6), undefined, 24000)) - 0.5) < 0.004, 'the same samples at half the rate last twice as long');
+
+  // In a track: the top of the swell lands on the fastest frame of the move, and the entry of the bank does not say where it is.
+  const spec = make([circle({ id: 'panel', at: [-300, 0], r: 40, fill: 'accent.aqua' })], [moveTo('panel', { at: 1, to: [300, 0], dur: 1, profile: 'ease', arc: 0 })], 3);
+  const kinds = { move: 'whoosh' };
+  const measured = await trackOf(spec, bankOf({ sounds: { whoosh: { samples: [swell(0.25, 0.4, 0.6)], anchor: 'peak' } }, kinds }));
+  const voice = measured.plan.voices[0]!;
+  assert.ok(voice.frame === 90 && Math.abs(voice.time - 1.25) < 0.002, `it starts at ${voice.time} s`);
+  let loudest = 0;
+  for (let i = 0; i < measured.left.length; i++) if (Math.abs(measured.left[i]!) > Math.abs(measured.left[loudest]!)) loudest = i;
+  assert.ok(Math.abs(loudest - 90 * SAMPLES_PER_FRAME) < 150, `the loudest sample of the track is ${loudest - 90 * SAMPLES_PER_FRAME} samples from the fastest frame`);
+  // A measure is taken per take: a sound of two swells with their tops apart places each by its own.
+  const two = bankOf({ sounds: { whoosh: { samples: [swell(0.1, 0.2, 0.6), swell(0.45, 0.2, 0.6)], anchor: 'peak' } }, kinds });
+  const used = new Set<number>();
+  for (let seed = 1; seed <= 8; seed++) {
+    const v = (await trackOf({ ...spec, seed }, two)).plan.voices[0]!;
+    used.add(v.take);
+    assert.ok(Math.abs(1.5 - v.time - [0.1, 0.45][v.take]!) < 0.002, `take ${v.take} starts at ${v.time} s`);
+  }
+  assert.equal(used.size, 2);
+  // A plan that is given no measure and no peakAt places the sound by its first sample.
+  const blind = plan([moveEvent({ node: 'panel', time: 2, dur: 1, peak: 0.5 })], bankOf({ sounds: { whoosh: { anchor: 'peak' } }, kinds }), () => 1).voices[0]!;
+  assert.deepEqual([blind.frame, blind.time], [150, 2.5]);
+  const told = plan([moveEvent({ node: 'panel', time: 2, dur: 1, peak: 0.5 })], bankOf({ sounds: { whoosh: { anchor: 'peak' } }, kinds }), () => 1, () => 0.3).voices[0]!;
+  assert.deepEqual([told.frame, told.time], [150, 2.2]);
+});
+
+test('a sound fitted to a move: with pan follow the sound goes across with the node, at one power all the way', async () => {
+  // By hand: the pan of every frame of the move, and the pan at the start of the sound.
+  const across = moveEvent({ node: 'panel', time: 2, dur: 1, peak: 0.5, x0: 0, x1: 1920 });
+  const kinds = { move: 'whoosh' };
+  const follow = plan([across], bankOf({ sounds: { whoosh: { pan: 'follow' } }, kinds, rules: { pan: 0.8 } }), () => 1).voices[0]!;
+  assert.equal(follow.follow!.frame, 120);
+  assert.deepEqual([follow.follow!.pans.length, follow.follow!.pans[0], follow.follow!.pans[30], follow.follow!.pans[60]], [61, -0.8, 0, 0.8]);
+  assert.equal(follow.pan, -0.8, 'where it is when the sound starts');
+  assert.ok(Math.abs(panAt(follow.follow!, 135.5) - -0.8 * (1 - 15.5 / 30)) < 1e-12, 'between two frames it goes in a straight line');
+  assert.deepEqual([panAt(follow.follow!, 0), panAt(follow.follow!, 999)], [-0.8, 0.8], 'before the move it is where the move starts, after it where the move ends');
+  const fixed = plan([across], bankOf({ sounds: { whoosh: {} }, kinds, rules: { pan: 0.8 } }), () => 1).voices[0]!;
+  assert.deepEqual([fixed.follow, fixed.pan], [undefined, -0.8], 'without it the sound stays where its event starts');
+  // A sound placed on the peak that does not follow is panned where the node is on that frame.
+  assert.equal(plan([across], bankOf({ sounds: { whoosh: { anchor: 'peak', peakAt: 0.2 } }, kinds, rules: { pan: 0.8 } }), () => 1).voices[0]!.pan, 0);
+  // A sound that starts while the move is under way starts where the node is by then.
+  const under = plan([across], bankOf({ sounds: { whoosh: { pan: 'follow', anchor: 'end', peakAt: 0.2 } }, kinds, rules: { pan: 0.8 } }), () => 1).voices[0]!;
+  assert.ok(under.time === 2.8 && Math.abs(under.pan - 0.48) < 1e-12, `it starts at ${under.time} s, panned ${under.pan}`);
+  // An event without a way cannot be followed: it is panned where it is.
+  const fixedHit = plan([ev({ kind: 'contact', node: 'ball', time: 1, impulse: 1, x: 480 })], bankOf({ sounds: { tick: { pan: 'follow' } }, kinds: { contact: 'tick' }, rules: { pan: 0.8 } })).voices[0]!;
+  assert.deepEqual([fixedHit.follow, fixedHit.pan], [undefined, -0.4]);
+
+  // In a track: a steady tone on a move from the left edge of the frame to the right.
+  const spec = make([circle({ id: 'panel', at: [-900, 0], r: 40, fill: 'accent.aqua' })], [moveTo('panel', { at: 1, to: [900, 0], dur: 1, profile: 'steady', arc: 0 })], 3);
+  const track = await trackOf(spec, bankOf({ sounds: { whoosh: { hz: 480, seconds: 1, pan: 'follow' } }, kinds }));
+  const still = await trackOf(spec, bankOf({ sounds: { whoosh: { hz: 480, seconds: 1 } }, kinds }));
+  const at = (frame: number): number => frame * SAMPLES_PER_FRAME;
+  const share = (t: SoundTrack, frame: number): number => energy(t.right, at(frame), at(frame + 2)) / (energy(t.left, at(frame), at(frame + 2)) + energy(t.right, at(frame), at(frame + 2)));
+  assert.ok(share(track, 61) < 0.16 && share(track, 117) > 0.84, `from the left to the right: ${share(track, 61)}, ${share(track, 117)}`);
+  assert.ok(Math.abs(share(track, 89) - 0.5) < 0.03, 'in the middle of the frame when the node is there');
+  for (let f = 62; f < 118; f += 4) assert.ok(share(track, f + 4) > share(track, f), `it keeps going to the right at frame ${f}`);
+  assert.ok(Math.abs(share(still, 61) - share(still, 117)) < 1e-9 && share(still, 61) < 0.12, 'without follow it stays on the left, where the move starts');
+  // Constant power: at every sample the two channels together carry the power of the tone, wherever the pan is.
+  const whole = (t: SoundTrack, frame: number): number => energy(t.left, at(frame), at(frame + 2)) + energy(t.right, at(frame), at(frame + 2));
+  for (const f of [61, 75, 89, 103, 117]) assert.ok(Math.abs(whole(track, f) / whole(still, f) - 1) < 1e-6, `frame ${f}: ${whole(track, f) / whole(still, f)}`);
+  for (const i of [at(60) + 7, at(75) + 123, at(90) + 400, at(110) + 31]) {
+    const tone = 0.5 * Math.cos((2 * Math.PI * 480 * (i - at(60))) / SAMPLE_RATE);
+    assert.ok(Math.abs(track.left[i]! ** 2 + track.right[i]! ** 2 - 2 * tone * tone) < 1e-4, `sample ${i}`);
+  }
+  // The report gives the pan at both ends of the sound.
+  const said = track.report.voices[0]!;
+  assert.ok(Math.abs(said.pan + 0.5625) < 0.001 && Math.abs(said.panTo! - 0.5625) < 0.001, `${said.pan} to ${said.panTo}`);
+  assert.equal(still.report.voices[0]!.panTo, undefined);
+  assert.match(formatSoundReport(track.report), /pan -0\.56 to \+0\.56/);
+});
+
+test('a sound fitted to a move: with pick duration the take is the one that lasts most nearly as long as the move, and the gain is still the speed of the move', () => {
+  const lengths = [0.2, 0.5, 1];
+  const kinds = { move: 'whoosh', appear: 'whoosh' };
+  const bank = bankOf({ sounds: { whoosh: { lengths, pick: 'duration' } }, kinds, curves: { speed: SOUND_CURVES.speed } });
+  const takeFor = (dur: number): number => plan([moveEvent({ node: 'panel', time: 1, dur, peak: 0 })], bank, (_key, take) => lengths[take]!).voices[0]!.take;
+  assert.deepEqual([0.1, 0.3, 0.36, 0.7, 0.8, 2].map((dur) => takeFor(dur)), [0, 0, 1, 1, 2, 2]);
+  assert.equal(takeFor(0.35), 0, 'the earlier of two takes that are as near');
+  // An instant has the shortest take.
+  assert.equal(plan([ev({ node: 'a', time: 1 })], bank, (_key, take) => lengths[take]!).voices[0]!.take, 0);
+  // The length of the move picks the take; its speed sets the gain, whatever the take.
+  const gainFor = (dur: number, speed: number): number => plan([moveEvent({ node: 'panel', time: 1, dur, peak: 0, speed })], bank, (_key, take) => lengths[take]!).voices[0]!.gain;
+  assert.deepEqual([gainFor(0.2, 40), gainFor(1, 40), gainFor(1, 4)], [1, 1, 0.6]);
+  // Without it the seed picks, and three takes all come up over a row of moves.
+  const seeded = bankOf({ sounds: { whoosh: { lengths } }, kinds });
+  const picked = plan(Array.from({ length: 24 }, (_, i) => moveEvent({ node: `p${i}`, time: 1 + i, dur: 1, peak: 0 })), seeded, (_key, take) => lengths[take]!).voices.map((v) => v.take);
+  assert.deepEqual([...new Set(picked)].sort(), [0, 1, 2]);
+});
+
+test('a sound fitted to a move: a bank that says none of it gives the track it gave, byte for byte', async () => {
+  const spec = make(
+    [circle({ id: 'panel', at: [-900, 200], r: 40, fill: 'accent.aqua' }), circle({ id: 'ball', at: [300, -200], r: 30, fill: 'accent.pink' })],
+    [moveTo('panel', { at: 0.5, to: [700, 200], dur: 1.2 }), popIn('ball', { at: 1 }), travel('ball', { at: 2, path: [[300, -200], [0, 0], [-800, -300]], dur: 1 }), sfx('chime', { at: 3.2 })],
+    4,
+  );
+  const sounds = (more: Record<string, unknown>): Record<string, ToneSpec> => ({ pop: { ...more }, whoosh: { hz: 300, seconds: 0.7, takes: 3, pitchJitter: 1, gainJitter: 0.2, ...more }, chime: { seconds: 0.5, ...more } });
+  const kinds = { appear: 'pop', move: 'whoosh' };
+  const old = await trackOf(spec, bankOf({ sounds: sounds({}), kinds }));
+  const spelt = await trackOf(spec, bankOf({ sounds: sounds({ anchor: 'start', pan: 'fixed', pick: 'seed' }), kinds }));
+  assert.equal(Buffer.compare(old.wav, spelt.wav), 0, 'the defaults written out change nothing');
+  assert.equal(old.plan.voices.length, 4);
+  // Every sound starts on the first sample of the frame of its event, whole, and stays where its event is.
+  for (const v of old.plan.voices) {
+    assert.deepEqual([v.anchor, v.frame, v.time, v.skip, v.follow], ['start', v.event.frame, v.event.time, 0, undefined], v.event.id);
+    assert.equal(v.pan, Math.max(-1, Math.min(1, (v.event.x - 960) / 960)) * 0.6);
+    const start = v.frame * SAMPLES_PER_FRAME;
+    assert.ok(old.left[start] !== 0 || old.right[start] !== 0, `${v.event.id} sounds from the first sample of its frame`);
+  }
+  assert.deepEqual(old.report.voices.map((v) => [v.anchor, v.at, v.panTo]), Array.from({ length: 4 }, () => [undefined, undefined, undefined]));
+  // And a bank that does fit its sounds changes the track.
+  const fitted = await trackOf(spec, bankOf({ sounds: { ...sounds({}), whoosh: { hz: 300, seconds: 0.7, takes: 3, pitchJitter: 1, gainJitter: 0.2, anchor: 'peak', pan: 'follow' } }, kinds }));
+  assert.notEqual(Buffer.compare(old.wav, fitted.wav), 0);
+});
+
+test('sound sheet: a sound placed on the peak of a move is shown on that frame, with an arrow along the way of the move', async () => {
+  const spec = make(
+    [circle({ id: 'panel', at: [-300, 0], r: 40, fill: 'accent.aqua' }), circle({ id: 'nudge', at: [500, 300], r: 30, fill: 'accent.pink' }), circle({ id: 'ball', at: [-600, -300], r: 30, fill: 'accent.pink' }), circle({ id: 'low', at: [-760, 420], r: 30, fill: 'accent.pink' })],
+    [moveTo('panel', { at: 1, to: [300, 0], dur: 1, profile: 'ease', arc: 0 }), moveTo('nudge', { at: 2.2, to: [520, 300], dur: 0.3, profile: 'ease', arc: 0, sound: 'whoosh' }), popIn('ball', { at: 2.6 }), popIn('low', { at: 2.8 })],
+    3,
+  );
+  const c = compileShot(spec);
+  const bake = await bakeShot(c);
+  const kinds = { move: 'whoosh', appear: 'pop' };
+  const fitted = renderSound(c, bake, bankOf({ sounds: { whoosh: { seconds: 0.4, anchor: 'peak', peakAt: 0.2 }, pop: {} }, kinds }));
+  const plain = renderSound(c, bake, bankOf({ sounds: { whoosh: { seconds: 0.4 }, pop: {} }, kinds }));
+
+  // The tiles: the sound of the move on its fastest frame; without an anchor, on its first.
+  const tiles = soundTiles(fitted.plan);
+  const [panel, nudge, ball, low] = [tiles.find((t) => t.node === 'panel')!, tiles.find((t) => t.node === 'nudge')!, tiles.find((t) => t.node === 'ball')!, tiles.find((t) => t.node === 'low')!];
+  assert.deepEqual([panel.frame, panel.time, panel.anchor, panel.move!.from, panel.move!.to, panel.move!.track.length], [90, 1.5, 'peak', 1, 2, 61]);
+  assert.deepEqual(tileCaption(panel), ['1.50 s  f90  whoosh', 'move  panel', 'loudest on the peak of 1.00-2.00 s']);
+  const first = soundTiles(plain.plan).find((t) => t.node === 'panel')!;
+  assert.deepEqual([first.frame, first.time, first.anchor, tileCaption(first)], [60, 1, 'start', ['1.00 s  f60  whoosh', 'move  panel']]);
+  assert.deepEqual(tileCaption({ ...ball, anchor: 'end' }), ['2.60 s  f156  pop', 'appear  ball', 'loudest on the end']);
+  // The arrow: the way of the move, from its first frame to its last. None for what is not a move, or hardly moves.
+  assert.deepEqual([tileArrow(panel)![0], tileArrow(panel)![60], tileArrow(panel)!.length], [[660, 540], [1260, 540], 61]);
+  assert.deepEqual(tileArrow(first), tileArrow(panel), 'a move has its arrow whatever its sound is placed on');
+  assert.deepEqual([tileArrow(ball), ball.move, tileArrow(nudge)], [null, undefined, null]);
+  assert.equal(nudge.move!.track.length, 19);
+
+  // The picture. Tiles of 480 by 270, one row; a place of the frame is a quarter of it on the tile.
+  const sheet = await renderSoundSheet(c, bake, fitted.plan, { cols: 4, tileWidth: 480, lang: 'en', gpu: false });
+  assert.deepEqual(sheet.tiles, tiles);
+  const image = await loadImage(sheet.png);
+  assert.deepEqual([image.width, image.height], [1920, 270]);
+  const canvas = new Canvas(image.width, image.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const px = ctx.getImageData(0, 0, image.width, image.height).data;
+  const colour = (t: (typeof tiles)[number], x: number, y: number): number[] => {
+    const i = 4 * (Math.round(y / 4) * image.width + tiles.indexOf(t) * 480 + Math.round(x / 4));
+    return [px[i]!, px[i + 1]!, px[i + 2]!];
+  };
+  const ink = (t: (typeof tiles)[number], x: number, y: number): boolean => [-4, 0, 4].some((dy) => colour(t, x, y + dy)[0]! > 200 && colour(t, x, y + dy)[1]! > 170 && colour(t, x, y + dy)[2]! < 150);
+  const aqua = ([red, green, blue]: number[]): boolean => red! < 140 && green! > 130 && blue! > 130;
+  // The frame is the fastest one: the panel is in the middle of the frame, under its ring.
+  assert.ok(aqua(colour(panel, 960, 516)), `${colour(panel, 960, 516)}`);
+  // The line of the arrow, along the way on both sides of the ring, and nowhere beyond its two ends.
+  for (const x of [680, 740, 800, 860, 1060, 1120, 1180, 1240]) assert.ok(ink(panel, x, 540), `the line at x ${x}`);
+  for (const x of [560, 620, 1300, 1360]) assert.ok(!ink(panel, x, 540), `no line at x ${x}`);
+  // Its head is at the end of the move and opens back along it; the start has none.
+  assert.ok(ink(panel, 1260 - 36, 540 - 20) && ink(panel, 1260 - 36, 540 + 20), 'the two strokes of the head');
+  assert.ok(!ink(panel, 660 + 36, 540 - 20) && !ink(panel, 660 + 36, 540 + 20) && !ink(panel, 1260 + 36, 540 - 20), 'and only there');
+  // The tile of what is not a move, and of what hardly moves, has a ring and no line.
+  for (const x of [200, 480, 600, 780]) assert.ok(!ink(ball, x, 240), `no line at x ${x}`);
+  for (const x of [1240, 1340, 1600, 1700]) assert.ok(!ink(nudge, x, 840), `no line at x ${x}`);
+  // The writing is in the bottom-left corner of a tile; in the top-left one when the ring is down there.
+  const written = (t: (typeof tiles)[number], y0: number): number => {
+    let count = 0;
+    for (let y = y0; y < y0 + 120; y += 4) for (let x = 0; x < 480; x += 4) if (ink(t, x, y)) count++;
+    return count;
+  };
+  assert.ok(written(panel, 960) > 40 && written(panel, 0) === 0, `the panel: ${written(panel, 960)} below, ${written(panel, 0)} above`);
+  assert.ok(written(low, 0) > 40, `a node in the corner: ${written(low, 0)} above`);
 });
 
 test('wav: PCM of 8, 16, 24 and 32 bits and float, mono and stereo, is read; anything else says what it is', () => {

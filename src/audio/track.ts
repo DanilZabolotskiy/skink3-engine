@@ -7,7 +7,7 @@ import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { BankError, type SoundBank, type SoundOwnRules, type SoundRules } from './bank.ts';
 import { EVENT_KINDS, sceneEvents, type EventKind, type SceneEvent } from './events.ts';
-import { loadTakes, mixVoices, SAMPLE_RATE } from './mix.ts';
+import { loadTakes, mixVoices, panAt, SAMPLE_RATE, takePeak } from './mix.ts';
 import { density, DROP_RULES, planSound, showersOf, soundOf, type DropRule, type SoundPlan } from './plan.ts';
 import { writeWav } from './wav.ts';
 
@@ -102,6 +102,16 @@ export interface SoundReport {
     readonly seconds: number;
     /** Left out for an accent; for a sound of a shower, which one: its place in `showers`. */
     readonly shower?: number;
+    /**
+     * Left out for a sound that starts where its event starts. For a sound
+     * placed by its loudest point: on what ('peak', the fastest moment of the
+     * move, or 'end'), and `at`, that moment in seconds. `time` is then when
+     * the sound starts to be heard, before that moment.
+     */
+    readonly anchor?: 'peak' | 'end';
+    readonly at?: number;
+    /** A pan that moves with the node: `pan` is where it is when the sound starts, `panTo` where it is when the sound ends. */
+    readonly panTo?: number;
   }[];
   /** The rules as they were applied: the bank's, with the engine's defaults for the ones it leaves out. */
   readonly rules: SoundRules;
@@ -194,6 +204,8 @@ export function soundReport(c: CompiledShot, bank: SoundBank, events: readonly S
       pan: round(v.pan, 3),
       seconds: round(v.seconds),
       ...(showerOf.has(v) ? { shower: showerOf.get(v)! } : {}),
+      ...(v.anchor === 'start' ? {} : { anchor: v.anchor, at: round(v.frame / FPS) }),
+      ...(v.follow ? { panTo: round(panAt(v.follow, (v.time + v.seconds) * FPS), 3) } : {}),
     })),
     rules: bank.rules,
     soundRules: Object.fromEntries(Object.entries(bank.sounds).flatMap(([key, s]) => (s.rules ? [[key, s.rules] as const] : []))),
@@ -211,12 +223,20 @@ export function renderSound(c: CompiledShot, bake: Bake, bank: SoundBank, opts: 
   const events = opts.events ?? sceneEvents(c, bake, opts.lang === undefined ? {} : { lang: opts.lang });
   const wanted = events.map((e) => soundOf(bank, e).key).filter((key): key is string => key !== null);
   const takes = loadTakes(bank, wanted);
+  const measured = new Map<string, number>();
   const plan = planSound(events, bank, {
     seed: c.spec.seed,
     frames: c.frames,
     lengthOf: (key, take) => {
       const t = takes.get(key)![take]!;
       return t.left.length / t.rate;
+    },
+    // Asked only for a sound that is placed by its loudest point and whose entry does not say where that is.
+    peakOf: (key, take) => {
+      const id = `${key}#${take}`;
+      let at = measured.get(id);
+      if (at === undefined) measured.set(id, (at = takePeak(takes.get(key)![take]!)));
+      return at;
     },
   });
   const mix = mixVoices(plan.voices, takes, c.frames);
@@ -257,7 +277,12 @@ export function formatSoundReport(r: SoundReport): string {
   const accents = r.voices.filter((v) => v.shower === undefined);
   if (accents.length > 0) lines.push('heard:');
   for (const v of accents) {
-    lines.push(`  ${v.time.toFixed(2).padStart(7)} s  ${v.kind.padEnd(9)} ${(v.node ?? '-').padEnd(16)} ${v.sound.padEnd(16)} gain ${v.gain.toFixed(2)}  pan ${v.pan >= 0 ? '+' : ''}${v.pan.toFixed(2)}  pitch ${v.pitch.toFixed(3)}`);
+    const pan = (p: number): string => `${p >= 0 ? '+' : ''}${p.toFixed(2)}`;
+    // A sound that is fitted to its event: on what, which take, and how long it is heard.
+    const placed = v.anchor === undefined ? '' : `  its loudest point on the ${v.anchor}, ${v.at!.toFixed(2)} s; take ${v.take}, ${v.seconds.toFixed(2)} s`;
+    lines.push(
+      `  ${v.time.toFixed(2).padStart(7)} s  ${v.kind.padEnd(9)} ${(v.node ?? '-').padEnd(16)} ${v.sound.padEnd(16)} gain ${v.gain.toFixed(2)}  pan ${pan(v.pan)}${v.panTo === undefined ? '' : ` to ${pan(v.panTo)}`}  pitch ${v.pitch.toFixed(3)}${placed}`,
+    );
   }
   return lines.join('\n');
 }

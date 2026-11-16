@@ -17,6 +17,11 @@
 // priority the bank gives the sound, then the order of the kinds, then the
 // stronger event.
 //
+// A sound may be fitted to a move: its loudest point placed on the fastest
+// moment of the move, its pan moving with the node, its take picked by the
+// length of the move. Without those words in the bank a sound starts where
+// its event starts and stays where it started.
+//
 // A sound may set rules for its own events. It is then thinned by itself, and
 // when it stands apart from the limits of the whole track it is a shower: a
 // pour of many small things is heard impact by impact, beside the accents and
@@ -28,8 +33,9 @@
 
 import { Rng } from '../core/rng.ts';
 import { FPS } from '../core/time.ts';
-import { curveAt, type SoundBank, type SoundOwnRules } from './bank.ts';
+import { curveAt, type SoundAnchor, type SoundBank, type SoundOwnRules } from './bank.ts';
 import type { SceneEvent } from './events.ts';
+import { panAt, SAMPLE_RATE, SAMPLES_PER_FRAME } from './mix.ts';
 
 /**
  * Why an event that has a sound is not heard.
@@ -61,14 +67,26 @@ export interface Voice {
   /** Key of the sound in the bank, and which of its takes. */
   readonly key: string;
   readonly take: number;
+  /** The moment of its event it is placed on: its start, its fastest moment or its end. */
+  readonly anchor: SoundAnchor;
+  /**
+   * The frame it is placed on. Anchored on the start, it starts on the first
+   * sample of this frame; anchored on the peak or the end, its loudest point
+   * lands on the first sample of this frame.
+   */
   readonly frame: number;
+  /** Seconds into the shot at which it starts to be heard. */
   readonly time: number;
+  /** Seconds of the sound, as it is played, that are left out at its beginning: it would have started before the shot. */
+  readonly skip: number;
   /** Its gain with everything in it: the track, the sound, the curves, the scene's own gain, the jitter. */
   readonly gain: number;
   /** Playback speed: 1 as recorded; above 1 it is higher and shorter. */
   readonly pitch: number;
-  /** -1 hard left, 0 the middle, 1 hard right. */
+  /** -1 hard left, 0 the middle, 1 hard right. For a pan that moves: where it is when the sound starts to be heard. */
   readonly pan: number;
+  /** A pan that moves with the node: the pan on every frame from `frame` on. Before that frame it is the first, after the last it stays. */
+  readonly follow?: { readonly frame: number; readonly pans: readonly number[] };
   /** Seconds it is heard. */
   readonly seconds: number;
   /** Its sound stands apart from the limits of the whole track: it is part of a shower. */
@@ -100,6 +118,12 @@ export interface PlanOptions {
   readonly frames: number;
   /** Seconds a take of a sound lasts as recorded. */
   readonly lengthOf: (key: string, take: number) => number;
+  /**
+   * Seconds into a take, as recorded, of its loudest point: asked for a sound
+   * that is placed by that point and whose bank entry does not give it
+   * (`peakAt`). Without it such a sound is placed by its first sample.
+   */
+  readonly peakOf?: (key: string, take: number) => number;
 }
 
 /** Who chose the sound of an event: the scene (on the intent, or with sfx), the voice of a node, or the bank's table of kinds. */
@@ -203,9 +227,34 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
     const rng = new Rng(opts.seed, `sound/${event.id}`);
     const pitch = 2 ** ((rng.range(-1, 1) * sound.pitchJitter) / 12);
     const gain = base * (1 + rng.range(-1, 1) * sound.gainJitter);
-    const take = Math.min(sound.files.length - 1, Math.floor(rng.next() * sound.files.length));
-    const seconds = Math.max(0, Math.min(opts.lengthOf(key, take) / pitch, shotSeconds - event.time));
-    const pan = Math.max(-1, Math.min(1, (event.x - 960) / 960)) * rules.pan;
+    const seeded = Math.min(sound.files.length - 1, Math.floor(rng.next() * sound.files.length));
+    // The take: by the seed, or the one that lasts most nearly as long as the action; the earlier of two that are as near.
+    let take = seeded;
+    if (sound.pick === 'duration') {
+      take = 0;
+      for (let i = 1; i < sound.files.length; i++) {
+        if (Math.abs(opts.lengthOf(key, i) - event.dur) < Math.abs(opts.lengthOf(key, take) - event.dur) - 1e-9) take = i;
+      }
+    }
+    // Where it is placed: on the start of its event, or with its loudest point on the fastest moment or on the end of the action.
+    const anchor = sound.anchor;
+    const last = event.track ? event.frame + event.track.length - 1 : Math.min(opts.frames - 1, Math.round((event.time + event.dur) * FPS));
+    const frame = anchor === 'peak' ? (event.peakFrame ?? event.frame) : anchor === 'end' ? last : event.frame;
+    let time = event.time;
+    let skip = 0;
+    if (anchor !== 'start') {
+      const peakAt = sound.peakAt ? sound.peakAt[take]! : opts.peakOf ? opts.peakOf(key, take) : 0;
+      const first = frame * SAMPLES_PER_FRAME - Math.round((peakAt / pitch) * SAMPLE_RATE);
+      time = Math.max(0, first) / SAMPLE_RATE;
+      skip = Math.max(0, -first) / SAMPLE_RATE;
+    }
+    const seconds = Math.max(0, Math.min(opts.lengthOf(key, take) / pitch - skip, shotSeconds - time));
+    // Its pan: where it is placed; with "follow", where the node is from frame to frame.
+    const track = event.track && event.track.length > 1 ? event.track : null;
+    const panOf = (x: number): number => Math.max(-1, Math.min(1, (x - 960) / 960)) * rules.pan;
+    const follow = sound.pan === 'follow' && track ? { frame: event.frame, pans: track.map(([x]) => panOf(x)) } : null;
+    const placedX = anchor === 'start' || !track ? event.x : track[Math.max(0, Math.min(track.length - 1, frame - event.frame))]![0];
+    const pan = follow ? panAt(follow, time * FPS) : panOf(placedX);
     // What matters more keeps its sound: a sound placed by hand, one the scene named on an intent, then the
     // priority the bank gives the sound, the place of the kind in rules.priority, and the gain.
     const source = forced ? 0 : from === 'scene' ? 1 : 2;
@@ -218,7 +267,7 @@ export function planSound(events: readonly SceneEvent[], bank: SoundBank, opts: 
       own,
       pool: own ? `sound:${key}` : `kind:${event.kind}`,
       rank,
-      voice: { event, key, take, frame: event.frame, time: event.time, gain, pitch, pan, seconds, apart: own?.apart === true },
+      voice: { event, key, take, anchor, frame, time, skip, gain, pitch, pan, ...(follow ? { follow } : {}), seconds, apart: own?.apart === true },
     };
     if (forced) return void live.push(c);
     if (!event.seen) return drop('unseen', c);

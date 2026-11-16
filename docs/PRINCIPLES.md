@@ -77,6 +77,7 @@ Target norms (checked with `tools/metrics` on renders):
 - Only what is seen sounds. Small and slow moves are silent. A crowd of events sounds as a few.
 - One event makes one sound.
 - **A pour may be heard as it is seen.** Where the crowd is the point of the picture, a sound can stand apart from the limits and be a shower of impacts, beside the accents and never in their place.
+- **A sound fits what it sounds for.** The whoosh of a move has its loudest point on the fastest moment of the move, goes across with the thing and lasts about as long. The engine reads the motion from the scene; how a sound is laid on it is data of the bank.
 - **Every sound has an event the author can see.** The report names the node of each sound, and the sound sheet shows the frame and the node it belongs to: an author who cannot hear checks the track by eye.
 - The engine holds no sounds: a production brings its bank. The limits (thresholds, gaps, caps, priorities) are data of the bank, and the defaults in the engine are quiet rather than busy.
 - Sound never changes a pixel or a bake.

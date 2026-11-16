@@ -73,9 +73,10 @@ print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes
 pictures of the worst few subjects of the report: a trail and a graph for
 motion; a close-up, a trail or a graph, by the kind of finding, for physics.
 --sheet (of sfx) writes the sound sheet of the track: a tile for every sound,
-with the frame at which it starts, the node it comes from ringed, and the
-sound, the kind of event and the time written on it. A shower, the run of a
-sound that the bank sets apart, is one tile, with its count and its length.`;
+with the frame it is placed on, the node it comes from ringed, an arrow along
+the way of a move, and the sound, the kind of event and the time written on
+it. A shower, the run of a sound that the bank sets apart, is one tile, with
+its count and its length.`;
 
 interface Common {
   compiled: CompiledShot;

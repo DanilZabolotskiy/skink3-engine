@@ -11,7 +11,9 @@
 // An event says what was seen of it: how large the thing is on screen, how fast
 // it goes, where it is, and whether it is seen at all. Those are read from the
 // motion series (review/series.ts), so "seen" means here what it means in the
-// motion review.
+// motion review. A move also says how it goes: its fastest moment, its two
+// ends, the length of its way and the way itself, so that a sound can be
+// fitted to it.
 
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
@@ -27,7 +29,7 @@ import { STAGE_H, STAGE_W } from '../scene/types.ts';
  *
  *   appear, disappear   popIn and popOut of a shape, a group or an eye
  *   label               popIn of a label
- *   move                the start of a moveTo, the take-off of a hop, the start of a travel
+ *   move                the start of a moveTo, the take-off of a hop, the start of a travel; it carries its motion
  *   land                the landing of a hop
  *   turn                turnTo
  *   grow, shrink        scaleTo, by whether the node gets larger or smaller
@@ -95,6 +97,24 @@ export interface SceneEvent {
   /** A burst: how many particles. */
   readonly count?: number;
   /**
+   * A move (a moveTo, a travel, the take-off of a hop): its fastest moment.
+   * The fastest frames of a move are those within a tenth of its highest speed on
+   * screen, the camera left out. Among them the moment is the frame on which
+   * the node is nearest the middle of the frame: a thing that crosses the
+   * frame at one speed has its moment where it passes the middle, and a move
+   * with one top of speed has it at that top. A move that goes nowhere has it
+   * at its start.
+   */
+  readonly peakFrame?: number;
+  readonly peakTime?: number;
+  /** A move: where the node is on screen on its first and on its last frame, in px from the top-left corner. */
+  readonly from?: readonly [number, number];
+  readonly to?: readonly [number, number];
+  /** A move: the length of its way on screen, in px, the camera left out. */
+  readonly distance?: number;
+  /** A move: where the node is on screen on every frame of it, from its first frame to its last. */
+  readonly track?: readonly (readonly [number, number])[];
+  /**
    * Largest size on screen during the action, in px of a 1080p frame: the
    * diameter of the circle that holds the node and what is in it; the length
    * of a link; for a burst the diameter of a disc as large as all its
@@ -122,6 +142,9 @@ export interface EventsOptions {
 }
 
 type Draft = Omit<SceneEvent, 'id' | 'time'>;
+
+/** Share of its highest speed within which a frame of a move is one of its fastest. */
+export const PEAK_BAND = 0.1;
 
 const round = (v: number): number => Math.round(v * 100) / 100;
 
@@ -174,6 +197,38 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     return { size, seen };
   };
 
+  /** How a move goes between its first and its last frame: its fastest moment, its ends, its way on screen. */
+  const motionOf = (s: PlacedSeries, first: number, last: number): Pick<Draft, 'peakFrame' | 'peakTime' | 'from' | 'to' | 'distance' | 'track'> => {
+    const view = series.views[s.node.layer]!;
+    const track: [number, number][] = [];
+    const speeds: number[] = [];
+    let distance = 0;
+    let top = 0;
+    for (let f = first; f <= last; f++) {
+      const [x, y] = screenAt(series, s, f);
+      track.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+      // As in the speed of an event: the step of the node in its layer, as large as it is on screen, so the camera is left out.
+      const step = f > first ? Math.hypot(s.x[f]! - s.x[f - 1]!, s.y[f]! - s.y[f - 1]!) * view.zoom[f]! : 0;
+      speeds.push(step);
+      distance += step;
+      top = Math.max(top, step);
+    }
+    // Among its fastest frames, the one nearest the middle of the frame; the earlier of two that are as near.
+    let peak = 0;
+    if (top > 1e-9) {
+      let nearest = Infinity;
+      for (let i = 1; i < speeds.length; i++) {
+        if (speeds[i]! < top * (1 - PEAK_BAND)) continue;
+        const d = Math.hypot(track[i]![0] - STAGE_W / 2, track[i]![1] - STAGE_H / 2);
+        if (d < nearest - 1e-6) {
+          nearest = d;
+          peak = i;
+        }
+      }
+    }
+    return { peakFrame: first + peak, peakTime: (first + peak) / FPS, from: track[0]!, to: track[track.length - 1]!, distance: round(distance), track };
+  };
+
   /** An event of a node that has a place: from `start` (seconds), lasting `dur`; `back` frames before it are watched too. */
   const placed = (kind: EventKind, n: CNode, start: number, dur: number, asked: string | false | undefined, back = 0): void => {
     const frame = frameOf(start);
@@ -181,7 +236,8 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     const s = series.placed[n.index]!;
     const seenOf = watch(s, frame - back, frameOf(start + dur), kind);
     const [x, y] = screenAt(series, s, frame);
-    drafts.push({ kind, frame, dur, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), ...seenOf, x, y });
+    const motion = kind === 'move' ? motionOf(s, frame, clamp(frameOf(start + dur))) : {};
+    drafts.push({ kind, frame, dur, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), ...seenOf, x, y, ...motion });
   };
 
   /** An event of a link, at one of its two ends. */
@@ -327,6 +383,7 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
       x: round(d.x),
       y: round(d.y),
       seen: d.seen,
+      ...(d.peakFrame === undefined ? {} : { peakFrame: d.peakFrame, peakTime: d.peakTime!, from: d.from!, to: d.to!, distance: d.distance!, track: d.track! }),
     };
   });
 }

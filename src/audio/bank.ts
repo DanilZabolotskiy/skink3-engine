@@ -4,7 +4,8 @@
 //   {
 //     "about":  "any note",
 //     "gain":   1,
-//     "sounds": { "<key>": { "file": "pop.wav", "gain": 0.8, "pitchJitter": 0.5, "gainJitter": 0.1, "priority": 0, "rules": { ... } }, ... },
+//     "sounds": { "<key>": { "file": "pop.wav", "gain": 0.8, "pitchJitter": 0.5, "gainJitter": 0.1, "priority": 0, "rules": { ... },
+//                            "anchor": "start", "peakAt": 0.2, "pan": "fixed", "pick": "seed" }, ... },
 //     "kinds":  { "appear": "pop", "contact": "tick", "move": null, ... },
 //     "curves": { "size": [[24, 0.5], [320, 1]], "speed": [[4, 0.6], [40, 1]], "impulse": [[0.25, 0.4], [2, 1]] },
 //     "rules":  { "gap": 0.5, "starts": 4, "startsWindow": 10, ... }
@@ -18,7 +19,10 @@
 // "rules" keep a film from being crowded with sound. Curves and rules have
 // defaults here, chosen to be quiet rather than busy. A sound may set rules
 // for its own events ("rules" inside the sound): that is how a pour of many
-// small things is heard as a shower of impacts, apart from the accents.
+// small things is heard as a shower of impacts, apart from the accents. And a
+// sound may be fitted to the move it sounds for: its loudest point on the
+// fastest moment of the move ("anchor"), its pan with the node ("pan"), and
+// the take that is as long as the move ("pick").
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -59,6 +63,18 @@ export interface SoundOwnRules {
   readonly apart?: boolean;
 }
 
+/**
+ * Which moment of its event a sound is placed on.
+ *
+ *   start   the sound starts where the event starts
+ *   peak    the loudest point of the sound lands on the fastest moment of a move;
+ *           on the moment of the event itself when it is not a move
+ *   end     the loudest point of the sound lands where the action ends
+ */
+export type SoundAnchor = 'start' | 'peak' | 'end';
+
+export const SOUND_ANCHORS: readonly SoundAnchor[] = ['start', 'peak', 'end'];
+
 export interface BankSound {
   /** The takes of the sound: absolute paths of PCM WAV files. */
   readonly files: readonly string[];
@@ -72,6 +88,14 @@ export interface BankSound {
   readonly priority: number;
   /** Rules of its own for its events, or null: the rules of the bank. */
   readonly rules: SoundOwnRules | null;
+  /** The moment of its event it is placed on; 'start' unless the bank says otherwise. */
+  readonly anchor: SoundAnchor;
+  /** Seconds into each take, as recorded, of its loudest point; null: measured from the take when it is needed. */
+  readonly peakAt: readonly number[] | null;
+  /** 'fixed': panned where it is placed. 'follow': the pan moves with the node over the length of the sound. */
+  readonly pan: 'fixed' | 'follow';
+  /** How a use picks one of several takes: 'seed' by the seed of the shot; 'duration' the take whose length is nearest the duration of the event. */
+  readonly pick: 'seed' | 'duration';
 }
 
 /** The rules that keep a shot from being crowded with sound. */
@@ -197,6 +221,22 @@ function curve(where: string, value: unknown): Curve {
   return points;
 }
 
+/** One of a few words, or the fallback when the bank leaves it out. */
+function oneOf<W extends string>(where: string, value: unknown, words: readonly W[], fallback: W): W {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !(words as readonly string[]).includes(value)) throw new BankError(`${where} must be one of ${words.map((w) => `"${w}"`).join(', ')}, got ${JSON.stringify(value)}`);
+  return value as W;
+}
+
+/** Where the loudest point of each take is: one number for all the takes, or one for each. */
+function peaks(where: string, value: unknown, takes: number): number[] {
+  if (Array.isArray(value)) {
+    if (value.length !== takes) throw new BankError(`${where} lists ${value.length} moment(s) for ${takes} take(s): give one number, or one for each take`);
+    return value.map((v, i) => num(`${where}[${i}]`, v, 0, 600));
+  }
+  return Array.from({ length: takes }, () => num(where, value, 0, 600));
+}
+
 /** The rules a sound sets for its own events, checked: only the ones it names. */
 function ownRules(where: string, value: unknown): SoundOwnRules {
   if (!isObject(value)) throw new BankError(`${where} must be an object of rules for the events of this sound`);
@@ -250,8 +290,8 @@ export function parseBank(json: unknown, dir: string): SoundBank {
   for (const [key, raw] of Object.entries(json['sounds'])) {
     const where = `bank: sound "${key}"`;
     if (!isSoundKey(key)) throw new BankError(`${where}: a key is lower-case parts joined by ".", "_" or "-", such as "pop" or "marble.contact"`);
-    if (!isObject(raw)) throw new BankError(`${where} must be { "file": "<path>", "gain"?, "pitchJitter"?, "gainJitter"?, "priority"?, "rules"? }`);
-    known(where, raw, ['file', 'gain', 'pitchJitter', 'gainJitter', 'priority', 'rules']);
+    if (!isObject(raw)) throw new BankError(`${where} must be { "file": "<path>", "gain"?, "pitchJitter"?, "gainJitter"?, "priority"?, "rules"?, "anchor"?, "peakAt"?, "pan"?, "pick"? }`);
+    known(where, raw, ['file', 'gain', 'pitchJitter', 'gainJitter', 'priority', 'rules', 'anchor', 'peakAt', 'pan', 'pick']);
     const list = typeof raw['file'] === 'string' ? [raw['file']] : raw['file'];
     if (!Array.isArray(list) || list.length === 0 || !list.every((f) => typeof f === 'string' && f.length > 0)) {
       throw new BankError(`${where}: "file" must be the path of a WAV file relative to the bank, or a list of such paths`);
@@ -263,6 +303,10 @@ export function parseBank(json: unknown, dir: string): SoundBank {
       gainJitter: raw['gainJitter'] === undefined ? 0.1 : num(`${where}: gainJitter`, raw['gainJitter'], 0, 0.9),
       priority: raw['priority'] === undefined ? 0 : num(`${where}: priority`, raw['priority'], -1000, 1000),
       rules: raw['rules'] === undefined ? null : ownRules(`${where}: rules`, raw['rules']),
+      anchor: oneOf(`${where}: anchor`, raw['anchor'], SOUND_ANCHORS, 'start'),
+      peakAt: raw['peakAt'] === undefined ? null : peaks(`${where}: peakAt`, raw['peakAt'], list.length),
+      pan: oneOf(`${where}: pan`, raw['pan'], ['fixed', 'follow'] as const, 'fixed'),
+      pick: oneOf(`${where}: pick`, raw['pick'], ['seed', 'duration'] as const, 'seed'),
     };
   }
 

@@ -760,8 +760,13 @@ An event has these fields:
 | `speed` | peak speed on screen during the action, in px per frame, the camera left out: of the node, of the end of a link that is drawn on, of a pulse |
 | `x`, `y` | where it is on screen at that moment, in px from the top-left corner of the frame |
 | `seen` | whether it is seen at some frame of the action |
+| `peakFrame`, `peakTime` | a move: its fastest moment (see "A sound fitted to a move") |
+| `from`, `to` | a move: where the node is on screen on its first and on its last frame, as `[x, y]` |
+| `distance` | a move: the length of its way on screen, in px, the camera left out |
+| `track` | a move: where the node is on screen on every frame of it, as a list of `[x, y]` from its first frame to its last |
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
+- **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 
@@ -792,6 +797,7 @@ A bank is a JSON file that lies next to its sounds:
   - `pitchJitter` (0.5) tunes each use up or down by at most that many semitones, and `gainJitter` (0.1) makes it louder or softer by at most that share of its gain: two repeats do not sound the same.
   - `priority` (0): see the rules below.
   - `rules`: rules of its own for its events, in place of the rules of the bank; see "Rules of a sound".
+  - `anchor`, `peakAt`, `pan`, `pick`: how the sound is fitted to a move; see "A sound fitted to a move".
 - **A file is a PCM WAV:** integer samples of 8, 16, 24 or 32 bits, or float samples of 32 or 64 bits; mono or stereo; any sample rate (a take is brought to 48 kHz when it is used). A compressed file (MP3, OGG, ADPCM in a WAV) is refused with a message: convert it first.
 - **`kinds`** maps a kind of event to the key of a sound: what such an event sounds like when nothing else decides. A kind that is left out, or mapped to `null`, is silent.
 - **`gain`** (1) is the gain of the whole track.
@@ -884,11 +890,43 @@ The rules of the bank treat every event alike. A sound may set rules of its own 
 
 A **shower** is a run of a sound that stands apart: starts that follow each other by less than a second. The report counts a shower as one thing, with its starts, its length and its busiest second, and the sound sheet gives it one tile. With about 8 to 12 starts a second single impacts are still heard; a sound of about a tenth of a second suits that.
 
+### A sound fitted to a move
+
+A whoosh that is not fitted to what moves reads as noise. So a move says how it goes, and a sound of the bank can be laid on it: its loudest point on the fastest moment of the move, its pan going across with the node, its length near the length of the move.
+
+```json
+"panel.move": {
+  "file": ["story/whoosh-short.wav", "story/whoosh.wav", "story/whoosh-long.wav"],
+  "anchor": "peak",
+  "pan": "follow",
+  "pick": "duration"
+}
+```
+
+A node with `sound: 'panel'` then whooshes when a `moveTo`, a `travel` or a `hop` moves it.
+
+| In a sound | Default | What it does |
+|---|---|---|
+| `anchor` | `"start"` | the moment of its event the sound is placed on. `"start"`: the sound starts where the event starts. `"peak"`: the loudest point of the sound lands on the fastest moment of the move. `"end"`: the loudest point lands where the action ends |
+| `peakAt` | measured | seconds into the take of its loudest point: one number, or a list with one for each take. Left out, it is measured from the take |
+| `pan` | `"fixed"` | `"fixed"`: the sound is panned where it is placed. `"follow"`: its pan moves with the node over the length of the sound |
+| `pick` | `"seed"` | how a use picks one of several takes. `"seed"`: by the seed of the shot. `"duration"`: the take whose length is nearest the duration of the event, the earlier of two that are as near |
+
+- **The fastest moment of a move** is in its event (`peakFrame`, `peakTime`). The fastest frames of a move are those within a tenth of its highest speed on screen. Among them the moment is the frame on which the node is nearest the middle of the frame. So a thing that crosses the frame at one speed has its moment where it passes the middle; a move from rest to rest has it in the middle of its fast stretch; one that comes in at speed and brakes has it just before it brakes; one that leaves from rest has it as soon as it is at speed.
+- **The loudest point of a take,** when `peakAt` does not give it, is the middle of the stretch around its loudest 30 ms in which the take stays within 1 dB of them: the top of a swell, the middle of a burst. Give `peakAt` when a take has two tops, or when its accent is not its loudest part.
+- With `"peak"` or `"end"` the sound starts before the moment it is placed on, by `peakAt` (less when it is tuned up). A sound that would start before the shot is heard from inside its take, faded in over 10 ms.
+- An event that is not a move has no fastest moment: `"peak"` places the loudest point on the frame of the event itself. That holds for `sfx()` too: the loudest point of such a sound lands on its `at`.
+- **`"follow"`** reads the way of the move (`track`): before the move the pan is where the move starts, after it where the move ends. The power stays the same while the pan moves. An event without a way, which is every event but a move, is panned where it is.
+- A sound that is placed on the peak or on the end, and does not follow, is panned where the node is on that frame.
+- **`"duration"`** compares the length of each take as recorded with the `dur` of the event. A take is not stretched: give the sound takes of a few lengths. The gain still comes from the speed of the move, on the `speed` curve.
+- The rules of the bank count a sound at the moment of its event, whatever its anchor: the gaps and the caps are about the starts of events. Only the voices at once are counted by when the sounds are heard.
+- A bank that uses none of these fields gives the track it gave before, byte for byte.
+
 ### The track
 
 - **48 kHz, stereo, 24-bit PCM WAV, exactly as long as the shot:** 800 samples for every frame.
-- A sound starts on the first sample of the frame of its event.
-- **Pan follows x on screen,** with constant power; in the middle of the frame both channels have the gain of the sound.
+- A sound starts on the first sample of the frame of its event. With the anchor `"peak"` or `"end"` it is its loudest point that lands on the first sample of the frame it is placed on.
+- **Pan follows x on screen,** with constant power; in the middle of the frame both channels have the gain of the sound. A sound stays where it is placed, unless its pan follows the node.
 - A sound that is still heard when the shot ends is cut there, with a fade of 10 ms.
 - **The same scene, bank and seed give the same bytes.** The jitter of a sound comes from the seed of the shot and the id of its event, so an event more or less does not change the others.
 - Nothing is limited or compressed. The report gives the peak of the mix and the number of samples that had to be held at full scale; when there are any, lower the gains.
@@ -905,11 +943,11 @@ The report is printed, and written in full to `out/<shot>/sfx.json`:
 | `silent`, `muted` | events of kinds the bank keeps silent; events the scene muted |
 | `dropped` | for each rule (`unseen`, `small`, `slow`, `weak`, `merged`, `kind-gap`, `crowd`, `sound-starts`, `sound-voices`, `gap`, `starts`, `voices`) the events it took out, each with the event that is heard instead where the rule names one |
 | `byKind` | for each kind: its events, and how many of them are heard |
-| `voices` | every sound of the track: the id of its event, its time and kind, the `node` it comes from (null for a sound placed by hand without one), the sound and its take, gain, pitch, pan and length; for a sound of a shower also `shower`, its place in `showers` |
+| `voices` | every sound of the track: the id of its event, its time and kind, the `node` it comes from (null for a sound placed by hand without one), the sound and its take, gain, pitch, pan and length; for a sound of a shower also `shower`, its place in `showers`. `time` is when the sound starts to be heard. A sound placed by its loudest point also has `anchor` (`peak` or `end`) and `at`, the moment that point lands on; a pan that moves has `panTo`, where it is when the sound ends (`pan` is where it starts) |
 | `peak`, `clipped` | the largest sample of the mix (1 is full scale), and the samples above it |
 | `rules`, `soundRules` | the rules as they were applied; the rules that sounds set for themselves, by the key of the sound |
 
-The printed report lists the accents one by one, each with its node, and every shower in one line.
+The printed report lists the accents one by one, each with its node, and every shower in one line. A sound that is fitted says so in its line: `pan -0.27 to -0.60`, and `its loudest point on the peak, 4.20 s; take 1, 0.69 s`.
 
 ### The sound sheet
 
@@ -919,14 +957,17 @@ skink3 sfx <scene> --bank bank.json --sheet [--cols 4] [--tile 480]      -> out/
 
 The sheet shows which event each sound belongs to, for an author who cannot hear the track. It has one tile for every sound, in order of time:
 
-- **The picture** is the frame on which the sound starts.
+- **The picture** is the frame the sound is placed on: where it starts, or, with the anchor `"peak"` or `"end"`, where its loudest point lands.
 - **A ring** goes around the node the sound comes from, where it is on that frame, as large as the node gets during the event. A link and an emitter get a small ring at the place of the event: the end of the link, the place of the burst. A sound placed by hand without a `node` has no ring.
 - **Written on the tile** are the time, the frame and the key of the sound; then the kind of event and the id of the node (`placed by hand` without one), and for a contact the other body: `contact  marble-3 on jar`.
-- **A shower is one tile,** at its first start, with a dashed ring and a third line: `shower: 40 starts in 3.5 s`.
+- **A move has an arrow:** the way of the node from the first frame of the move to its last, with a head where it ends. A move of less than 40 px has none.
+- **A sound placed by its loudest point** says so in a third line: `loudest on the peak of 2.00-2.80 s`, with the span of the move. The ring is then where the node is at that moment, on its way along the arrow.
+- **A shower is one tile,** at its first start, with a dashed ring and a line of its own: `shower: 40 starts in 3.5 s`.
 
-Read it tile by tile. Is the ring on the thing a viewer would take for the source of that sound at that moment, and does the sound suit what the thing does there? A sound whose ring holds nothing a viewer sees act is a sound to mute (`sound: false`) or to move. A pour that shows as a few single tiles is a few accents: give its sound `rules`, and set it `apart`.
+Read it tile by tile. Is the ring on the thing a viewer would take for the source of that sound at that moment, and does the sound suit what the thing does there? For a whoosh: is the ring where the thing is at its fastest, and does the arrow show a move a viewer sees? A sound whose ring holds nothing a viewer sees act is a sound to mute (`sound: false`) or to move. A pour that shows as a few single tiles is a few accents: give its sound `rules`, and set it `apart`.
 
 - An `appear` starts while its node is still invisible, so its ring is empty on that frame: it marks where the node is about to be.
+- The writing is in the bottom-left corner of a tile, and in the top-left one when the ring is down there.
 - The sheet holds at most 60 tiles, the first in time, and the command says how many sounds are left out. `--cols` sets the tiles in a row, `--tile` the width of a tile in px.
 - With `--out` the sheet is `<out>.sheet.png`, next to the track.
 
@@ -934,7 +975,7 @@ Read it tile by tile. Is the ring on the thing a viewer would take for the sourc
 
 - No narration, no music and no mix of a film: the track of a shot holds its sound effects and nothing else.
 - No reverb, no filter, no change of a sound over its length.
-- A sound does not follow its node while it plays: its pan is the place of its event. It cannot loop for as long as something lasts.
+- A sound follows its node only as a move with `pan: "follow"`; any other stays where it is placed. It cannot loop for as long as something lasts, and it is not stretched to the length of a move: the bank picks among takes.
 - Nothing is heard of what a shot's last sound would do after the shot: a film that puts its shots end to end cuts each track at the cut.
 
 ## Command line
@@ -1010,7 +1051,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration into subtitle cues (lines of a set length, breaks at the ends of sentences and at pauses), and `formatSrt`, `formatVtt` and `formatYtt` write them out; see `src/text/subtitles.ts`.
 
-For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption` and `tileRing` are what is on it). See `src/audio`.
+For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, `takePeak(take)` measures the loudest point of a take, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption`, `tileRing` and `tileArrow` are what is on it). See `src/audio`.
 
 ## What is not there yet
 
