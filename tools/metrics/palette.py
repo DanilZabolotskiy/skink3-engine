@@ -26,7 +26,7 @@ sat = (S > 0.35) & (V > 0.25)
 hh = np.histogram(H[sat], bins=12, range=(0, 360))[0]; hh = hh / max(1, hh.sum())
 stats = dict(frames=len(files), meanV=round(float(V.mean()), 3), medL=round(float(np.median(L)), 1),
              dark_V_lt_0_3=round(float((V < 0.3).mean()), 3), bright_L_gt_80=round(float((L > 80).mean()), 3),
-             meanS=round(float(S.mean()), 3), meanS_dark=round(float(S[V < 0.3].mean()), 3),
+             meanS=round(float(S.mean()), 3), meanS_dark=round(float(S[V < 0.3].mean()), 3) if (V < 0.3).any() else 0.0,  # no dark pixel: 0.0, not NaN
              accent_S06_V05=round(float(((S > 0.6) & (V > 0.5)).mean()), 3),
              near_gray_S_lt_0_12=round(float((S < 0.12).mean()), 3),
              hue_hist_30deg=[round(float(x), 3) for x in hh])

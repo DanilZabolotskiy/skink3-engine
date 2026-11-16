@@ -1,5 +1,6 @@
 """global palette by role across all sampled frames: python -I roles.py ROOT [skip_first_n=3]
-the first skip_first_n sampled frames of each video are left out (intro, sponsor); pass 0 for a single shot"""
+the first skip_first_n sampled frames of each video are left out (intro, sponsor); pass 0 for a single shot
+a role that few pixels have gets as many colours as it has pixels; one that none has is reported with share 0.0 and no colours"""
 import glob, json, sys, numpy as np, cv2
 ROOT = sys.argv[1]
 SKIP = int(sys.argv[2]) if len(sys.argv) > 2 else 3
@@ -20,17 +21,21 @@ roles = {"deep (L<12)": L < 12, "dark (12-30)": (L >= 12) & (L < 30), "mid (30-6
 out = {}
 crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, .5)
 for name, m in roles.items():
-    sub = lab[m]; k = 6 if "accent" not in name else 10
-    _, lbl, cen = cv2.kmeans(sub, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+    # never more clusters than pixels: a dark shot may hold a handful of light pixels, or no accent at all
+    sub = lab[m]; k = min(6 if "accent" not in name else 10, len(sub))
+    if k == 0:
+        out[name] = dict(share=0.0, colors=[]); print(name, 0.0); continue
+    # one pixel is its own cluster (cv2.kmeans would read a single row as three samples of one number)
+    _, lbl, cen = cv2.kmeans(sub, k, None, crit, 3, cv2.KMEANS_PP_CENTERS) if len(sub) > 1 else (0, np.zeros((1, 1), np.int32), sub)
     cnt = np.bincount(lbl.ravel(), minlength=k) / len(lbl)
     c = cv2.cvtColor(cen.astype(np.uint8).reshape(-1, 1, 3), cv2.COLOR_Lab2BGR).reshape(-1, 3)
     o = np.argsort(-cnt)
     out[name] = dict(share=round(float(m.mean()) * 100, 1), colors=[["#%02X%02X%02X" % tuple(int(x) for x in c[i][::-1]), round(float(cnt[i]) * 100)] for i in o])
     print(name, out[name]["share"], " ".join(f"{h}:{p}" for h, p in out[name]["colors"]))
-# hue of darks
+# hue of darks; frames without a dark pixel have none: every bin is 0.0, and so is the saturation of the darks
 dk = (L < 30) & (S > .2)
-hh = np.histogram(hsv[dk, 0] * 2, bins=12, range=(0, 360))[0]; print("dark hue hist 30deg:", np.round(hh / hh.sum(), 2).tolist())
-print("overall: median L", np.median(L).round(1), " S of L<30:", S[L < 30].mean().round(2), " gray(S<.12):", (S < .12).mean().round(3))
+hh = np.histogram(hsv[dk, 0] * 2, bins=12, range=(0, 360))[0]; print("dark hue hist 30deg:", np.round(hh / max(1, hh.sum()), 2).tolist())
+print("overall: median L", np.median(L).round(1), " S of L<30:", (S[L < 30].mean() if (L < 30).any() else np.float32(0)).round(2), " gray(S<.12):", (S < .12).mean().round(3))
 # tone per frame: a whole video mixes dark and bright shots, so the share of L<30 over all pixels says little about one shot
 fL = np.array(fL); dk = np.array(fV) > .5
 q = lambda a: f"median {100 * np.median(a):.0f} %, quartiles {100 * np.percentile(a, 25):.0f}-{100 * np.percentile(a, 75):.0f} %"
