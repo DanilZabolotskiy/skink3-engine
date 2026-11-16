@@ -445,7 +445,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   }
   const t = frame / FPS;
   const world = computeWorld(c, frame, posesFromBake(bake));
-  const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames);
+  const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames, c.cameraTrack);
 
   const { own, alpha } = opacities(c, t);
 

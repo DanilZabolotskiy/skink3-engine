@@ -286,6 +286,8 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
       drafts.push({ kind: 'sfx', frame, dur: 0, node: key.target, key: from ? keyOf(from) : null, sound: key.sound, gain: key.gain, size: 0, speed: 0, x, y, seen: true });
       continue;
     }
+    // The keys of the camera are no event.
+    if (key.kind === 'cameraTo') continue;
     const n = c.byId.get(key.target)!;
     // A muted intent is silent in all it does; a key it names is the sound of its start.
     const after = key.sound === false ? false : undefined;

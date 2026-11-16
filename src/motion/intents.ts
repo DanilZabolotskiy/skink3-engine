@@ -198,6 +198,24 @@ export interface BlinkKey extends Voiced {
   readonly at: number;
 }
 
+/**
+ * A move of the camera at a moment: to a zoom, to a place, or both. It has no
+ * node: it is a key of the timeline that the camera reads.
+ */
+export interface CameraToKey extends Voiced {
+  readonly kind: 'cameraTo';
+  /** A camera key has no node. */
+  readonly target: null;
+  readonly at: number;
+  readonly dur: number;
+  /** The zoom the camera has when the key ends, as a factor of the authored view. Left out: the zoom it has. */
+  readonly zoom?: number;
+  /** Where the camera looks when the key ends, in units of the focus plane. Left out: where it looks when the key starts. */
+  readonly to?: Vec2;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
 export interface SfxKey {
   readonly kind: 'sfx';
@@ -227,6 +245,7 @@ export type Key =
   | PulseKey
   | OpenToKey
   | BlinkKey
+  | CameraToKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -700,6 +719,35 @@ export function sfx(key: string, opts: { at: number; node?: string; gain?: numbe
     at: num(w, 'at', opts.at, 0, MAX_T),
     sound: key,
     gain: num(w, 'gain', opts.gain ?? 1, 0, 8),
+  };
+}
+
+/**
+ * Move the camera at a moment: `zoom` is the zoom it reaches, as a factor of
+ * the authored view (2 shows the focus plane twice as large); `to` is the
+ * place it looks at when the key ends. Give one or both. Keys chain: each
+ * takes over from where the camera is at its moment. The zoom runs at one
+ * apparent speed along its profile, so it may span orders of magnitude; the
+ * drift and the wander of the camera stay on top, as large on screen as ever.
+ *
+ *   cameraTo({ at: 2, zoom: 0.5, dur: 1.6 })               // pull back
+ *   cameraTo({ at: 5, zoom: 4, to: [300, -120] })          // push into a detail
+ */
+export function cameraTo(opts: { at: number; dur?: number; zoom?: number; to?: Vec2; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number }): CameraToKey {
+  const w = 'cameraTo';
+  only(w, opts, ['at', 'dur', 'zoom', 'to', 'profile', 'ramp']);
+  if (opts.zoom === undefined && opts.to === undefined) throw new IntentError(`${w}: give zoom, to, or both`);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'cameraTo',
+    target: null,
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
+    ...(opts.zoom === undefined ? {} : { zoom: num(w, 'zoom', opts.zoom, 0.01, 10000) }),
+    ...(opts.to === undefined ? {} : { to: point(w, 'to', opts.to) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
 }
 

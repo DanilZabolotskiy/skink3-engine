@@ -62,7 +62,7 @@ export async function renderCloseUp(c: CompiledShot, bake: Bake, opts: CloseUpOp
     return n;
   });
   const layer = c.layers[nodes[0]!.layer]!;
-  const view = (f: number): { zoom: number; tx: number; ty: number } => layerView(cameraAt(c.spec.camera, c.cameraNoise, f, c.frames), layer.parallax);
+  const view = (f: number): { zoom: number; tx: number; ty: number } => layerView(cameraAt(c.spec.camera, c.cameraNoise, f, c.frames, c.cameraTrack), layer.parallax);
   const radiusOf = (i: number): number => {
     const node = nodes[i]!.node;
     if (node.type !== 'shape') return 0;

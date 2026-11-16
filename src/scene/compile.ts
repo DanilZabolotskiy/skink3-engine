@@ -4,6 +4,7 @@
 // Compiling also validates the shot as a whole.
 
 import { springParams, type SpringParams } from '../core/dynamics.ts';
+import { buildCameraTrack, type CameraTrack } from '../camera/camera.ts';
 import { hashOf } from '../core/hash.ts';
 import type { Vec2 } from '../core/math.ts';
 import { Noise } from '../core/noise.ts';
@@ -13,6 +14,7 @@ import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
 import type {
   BumpKey,
+  CameraToKey,
   DrawOnKey,
   FadeToKey,
   HopKey,
@@ -135,6 +137,8 @@ export interface CompiledShot {
   readonly covers: readonly number[];
   /** True when some node is clipped to a shape. */
   readonly clips: boolean;
+  /** The camera keys of the shot, or null: the camera does only what the shot's `camera` says. */
+  readonly cameraTrack: CameraTrack | null;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' }>;
@@ -239,6 +243,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const pulses = new Map<number, PulseKey[]>();
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
+  const cameraKeys: CameraToKey[] = [];
   const push = <T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
     if (list) list.push(item);
@@ -256,6 +261,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         const from = drafts[at]!.node;
         if (!isPlaced(from) && from.type !== 'label') fail(`${where}: sfx("${key.sound}") names ${from.type} "${key.target}"; it must be a shape, a group, an eye or a label`);
       }
+      continue;
+    }
+    if (key.kind === 'cameraTo') {
+      // A key of the camera: it has no node.
+      if (key.at > spec.seconds) fail(`${where}: cameraTo starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      cameraKeys.push(key);
       continue;
     }
     const index = idIndex.get(key.target);
@@ -602,6 +613,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     sceneHash,
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
+    cameraTrack: cameraKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys) : null,
   };
 }
 

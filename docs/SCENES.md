@@ -189,6 +189,36 @@ camera: {
 - A closed path at a set speed is the way to hold a subject in a long shot. An open path with a speed stands still for a moment at each end; a path covered once is for a move that is the point of the shot.
 - `skink3 motion` prints how far the camera travels, the box it stays in, and how fast each layer slides (see Motion review). `skink3 graph <scene> --camera` draws its speed.
 
+#### Camera keys
+
+The drift, the push-in and a path run over the whole shot. A camera move with a moment of its own is a key of the timeline: a pull-back that starts on a word, a push into a detail, a long zoom through orders of scale.
+
+```ts
+// timeline
+cameraTo({ at: 2, zoom: 0.5, dur: 1.6 }),                          // pull back: the view shows twice as much
+cameraTo({ at: 5, zoom: 4, to: [300, -120] }),                     // push into a detail
+cameraTo({ at: 8, zoom: 40, dur: 3, profile: 'steady' }),          // a long zoom at one apparent speed ...
+cameraTo({ at: 11, zoom: 4000, dur: 3, profile: 'out' }),          // ... that speeds up, and comes to rest
+```
+
+| Option of `cameraTo` | Default | Meaning |
+|---|---|---|
+| `at` | required | seconds: when the move starts |
+| `dur` | `1.2` | seconds it takes |
+| `zoom` | the zoom it has | the zoom the camera has when the key ends, as a factor of the authored view: `2` shows the focus plane twice as large, `0.5` half as large. 0.01 to 10000 |
+| `to` | where it looks | `[x, y]`: the place the camera looks at when the key ends, in units of the focus plane |
+| `profile`, `ramp` | `'ease'`, `0.3` | how the speed is spread, as for a move: `'ease'` from rest to rest, `'steady'` at one speed, `'in'`, `'out'` with one eased end |
+
+- Give `zoom`, `to`, or both. **Keys chain:** each takes over from where the camera is at its moment, also when the key before it is still under way.
+- **The zoom is a ratio.** It runs from one factor to the other at one apparent speed along its profile, so a zoom from 1 to 1000 looks as even as one from 1 to 2. Two `'steady'` keys in a row are a zoom that changes speed where they meet.
+- **A zoom alone holds the view:** what is in the middle of the frame stays there while the camera zooms. With `to` the camera is exactly there when the key ends, whatever the drift did meanwhile.
+- **A push into a detail keeps the detail in view.** While the camera zooms in and moves, the place it is heading for nears the middle of the frame at one speed on screen; while it pulls back, the place it leaves slides out at one speed.
+- **The drift, the wander and the push-in stay on top.** The keyed zoom multiplies the push-in. After a key the drift goes on from where the key ended, and it and the wander are as large on screen as ever: the more the camera has zoomed in, the fewer units they cover. Before the first key the camera is exactly what the shot's `camera` says.
+- **Depth still shows.** A layer takes the keyed zoom to the power of its parallax: a far layer grows less than the focus plane and a near one more, whatever the zoom. Blur and halos stop growing at 400 px of a 1080p frame, so a deep zoom still draws.
+- On a camera `path` the keys act from where the path has carried the camera; after a key the path goes on, as large on screen as before.
+- A camera key is no node's intent: it has no target, no sound and makes no event. The motion review judges it as it judges the camera: a `'steady'` key from rest is an `abrupt-start` and an `abrupt-stop` on `(camera)`; mark it with `intended` when it is meant.
+- Scaling a group instead of the camera leaves the other layers and their parallax behind; use a camera key.
+
 ### Physics style
 
 ```ts
@@ -455,6 +485,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
+| `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
@@ -806,7 +837,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo` is no event.
+- A `solidTo` and a `cameraTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 

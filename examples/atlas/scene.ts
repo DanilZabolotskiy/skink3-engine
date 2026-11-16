@@ -1,14 +1,15 @@
-// Atlas shot: lines, with neutral content.
+// Atlas shot: lines and a camera that moves on cue, with neutral content.
 //
 // A route draws itself across the frame behind a bead that travels along it;
 // its last stretch is dotted at first and then closes into a solid line. A
 // jagged line falls, a dashed outline runs round a block, and a ring fills
-// part of the way round.
+// part of the way round. The camera pushes in on what lies ahead while it is
+// made certain, and pulls back to the whole picture.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
-// profile, solidTo(), and arcPoints().
+// profile, solidTo(), arcPoints(), and cameraTo().
 
-import { arcPoints, circle, drawOn, fadeTo, layer, popIn, rect, shot, solidTo, stroke, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, cameraTo, circle, drawOn, fadeTo, layer, popIn, rect, Rng, shot, solidTo, stroke, travel, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -32,7 +33,14 @@ const timeline: Key[] = [
   drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),
   drawOn('chart', { at: 0.6, dur: 2.2, profile: 'steady' }),
   fadeTo('fence', { at: 5.5, to: 1, dur: 0.8 }),
+  // The camera: in on the stretch ahead while it closes, and back out to everything.
+  cameraTo({ at: 5.6, zoom: 1.7, to: [470, 20], dur: 1.4 }),
+  cameraTo({ at: 8.3, zoom: 1, to: [0, 0], dur: 1.3 }),
 ];
+
+// A far layer of faint dots: it moves and grows less than the stage when the camera does.
+const rng = new Rng(SEED, 'far');
+const far = Array.from({ length: 34 }, (_, i) => circle({ id: `far${i}`, at: [rng.range(-1500, 1500), rng.range(-800, 800)], r: rng.range(5, 12), fill: 'mid.violet', lit: false, opacity: 0.5 }));
 
 export default shot({
   id: 'atlas',
@@ -43,6 +51,7 @@ export default shot({
   background: { inner: 'deep.night', outer: 'deep.abyss' },
   atmosphere: 'mid.mist',
   layers: [
+    layer({ id: 'far', depth: 1.6, nodes: far }),
     layer({
       id: 'stage',
       depth: 0,

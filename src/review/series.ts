@@ -441,10 +441,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   for (let f = 0; f < frames; f++) {
     const t = f / FPS;
     const world = computeWorld(c, f, poses);
-    const cam = cameraAt(c.spec.camera, c.cameraNoise, f, frames);
+    const cam = cameraAt(c.spec.camera, c.cameraNoise, f, frames, c.cameraTrack);
     camera.x[f] = cam.x;
     camera.y[f] = cam.y;
-    camera.zoom[f] = cam.zoom;
+    camera.zoom[f] = cam.keyZoom === undefined ? cam.zoom : cam.zoom * cam.keyZoom;
     c.layers.forEach((layer, li) => {
       const v = layerView(cam, layer.parallax);
       views[li]!.zoom[f] = v.zoom;

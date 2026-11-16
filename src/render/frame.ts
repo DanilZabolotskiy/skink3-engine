@@ -43,6 +43,12 @@ export function heightFor(width: number): number {
   return Math.round((width * STAGE_H) / STAGE_W / 2) * 2;
 }
 
+/**
+ * A blur and a halo are never wider than this, in px of a 1080p frame. It is far above what a view near the authored
+ * zoom reaches; it keeps a camera that has zoomed in by orders of magnitude from asking for a blur wider than the frame.
+ */
+export const MAX_SOFT_PX = 400;
+
 /** Samples per pixel used when exporting from the GPU. */
 export const GPU_MSAA = 4;
 
@@ -337,7 +343,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   // 3. Layers.
   for (const { layer, leaves, paint, seen } of layers) {
     if (leaves.length === 0) continue;
-    const blurPx = layer.layer.blur * k * layer.view.zoom;
+    const blurPx = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
     const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu };
@@ -360,8 +366,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     let halo: { canvas: Canvas; pad: number; tight: number; wide: number } | null = null;
     if (anyGlow) {
       const scale = k * layer.view.zoom;
-      const tight = Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx;
-      const wide = Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx;
+      const tight = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx);
+      const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
       const gpad = Math.ceil(wide * 3);
       const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
       drawGlow(gx, layer.items, paint, c.covers.length > 0, seen);

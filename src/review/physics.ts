@@ -319,7 +319,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
   const tx = new Float64Array(F);
   const ty = new Float64Array(F);
   for (let f = 0; f < F; f++) {
-    const v = layerView(cameraAt(c.spec.camera, c.cameraNoise, f, F), layer.parallax);
+    const v = layerView(cameraAt(c.spec.camera, c.cameraNoise, f, F, c.cameraTrack), layer.parallax);
     zoom[f] = v.zoom;
     tx[f] = v.tx;
     ty[f] = v.ty;
