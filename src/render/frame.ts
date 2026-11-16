@@ -11,7 +11,7 @@ import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, type FrameState, type Item, type LayerState, type LeafItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
-import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode } from '../scene/types.ts';
+import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
   drawEye,
@@ -21,6 +21,8 @@ import {
   drawParticles,
   drawShape,
   drawShapeGlow,
+  drawStroke,
+  drawStrokeGlow,
   eraseGlow,
   makePaint,
   clipToShape,
@@ -54,6 +56,8 @@ function glowStrength(item: LeafItem): number {
       return Math.max((item.node.node as LinkNode).glow, item.pulses.length > 0 ? 1 : 0) * item.alpha;
     case 'particles':
       return item.node.node.type === 'emitter' ? item.node.node.glow : 0;
+    case 'stroke':
+      return (item.node.node as StrokeNode).glow * item.alpha;
     default:
       return 0;
   }
@@ -115,6 +119,7 @@ function drawItems(
       case 'link': drawLink(ctx, item, paint); break;
       case 'label': drawLabel(ctx, item, paint); break;
       case 'particles': drawParticles(ctx, item, paint); break;
+      case 'stroke': drawStroke(ctx, item, paint); break;
       case 'group': {
         const { canvas, ctx: gx } = layerCanvas(target);
         // A canvas of its own starts without the stretches it is nested in.
@@ -191,6 +196,7 @@ function drawGlow(
         if (item.kind === 'shape') drawShapeGlow(ctx, item, paint);
         else if (item.kind === 'link') drawLinkGlow(ctx, item, paint);
         else if (item.kind === 'particles') drawParticles(ctx, item, paint, s);
+        else if (item.kind === 'stroke') drawStrokeGlow(ctx, item, paint);
       }
     }
   }

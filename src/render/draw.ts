@@ -11,8 +11,9 @@ import { atmosphereTone, lightTone, shadowTone, withAlpha } from '../look/color.
 import { litParts } from '../look/light.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
-import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem } from '../scene/evaluate.ts';
-import type { EmitterNode, EyeNode, LinkNode, ShapeNode } from '../scene/types.ts';
+import { pathTable } from '../motion/paths.ts';
+import type { ClipItem, EyeItem, LabelItem, LinkItem, ParticlesItem, ShapeItem, StrokeItem } from '../scene/evaluate.ts';
+import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
@@ -302,6 +303,62 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
     drawPulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
   }
   ctx.restore();
+}
+
+/**
+ * Strokes the drawn part of a stroke in the current colour. The dashes are
+ * anchored at the first point of the line, so they stay where they are while
+ * the line is drawn on; closing the gaps lengthens every dash in place.
+ */
+function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
+  const node = item.node.node as StrokeNode;
+  const table = pathTable(node.path);
+  const { xf } = item;
+  const upTo = table.length * item.drawn;
+  const whole = item.drawn >= 1 - 1e-9;
+  ctx.save();
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  ctx.lineWidth = node.width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (node.dash && item.solid < 1 - 1e-6) {
+    // A dash has round ends, so a gap between two of them is one width longer than it looks.
+    const gap = node.dash[1] + node.width;
+    ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
+  }
+  ctx.beginPath();
+  ctx.moveTo(table.xs[0]!, table.ys[0]!);
+  const m = table.cum.length;
+  for (let i = 1; i < m; i++) {
+    if (table.cum[i]! <= upTo) {
+      ctx.lineTo(table.xs[i]!, table.ys[i]!);
+      continue;
+    }
+    // The line ends between two samples.
+    const span = table.cum[i]! - table.cum[i - 1]!;
+    const u = span > 1e-12 ? (upTo - table.cum[i - 1]!) / span : 0;
+    if (u > 1e-9) ctx.lineTo(table.xs[i - 1]! + (table.xs[i]! - table.xs[i - 1]!) * u, table.ys[i - 1]! + (table.ys[i]! - table.ys[i - 1]!) * u);
+    break;
+  }
+  if (whole && node.path.closed) ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A stroke: a line along a path, solid or dashed, as far as it is drawn. */
+export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
+  ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
+  strokeLine(ctx, item);
+}
+
+/** What a glowing stroke feeds the halo with: the line itself. It fades with the stroke. */
+export function drawStrokeGlow(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
+  const node = item.node.node as StrokeNode;
+  if (node.glow <= 0) return;
+  ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
+  strokeLine(ctx, item);
 }
 
 /** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. */

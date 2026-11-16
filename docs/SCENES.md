@@ -335,6 +335,44 @@ A curved line between two nodes of the same layer. It follows them as they move.
 
 List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden, and it fades with the fainter of the two. Animate it with `drawOn` and `pulse`. A pulse is drawn as travelling light: a bright head with a tail that narrows and fades.
 
+### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, clipTo?, sound? })`
+
+A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `points` | required | at least two points `[x, y]` the line runs through, the first being where it starts |
+| `color` | required | palette reference |
+| `width` | `7` | thickness in units |
+| `closed` | `false` | back to the first point after the last (at least three points) |
+| `smooth` | `1` | `1` joins the points with a smooth curve, `0` with straight lines; between them the corners are partly rounded. The same as the path of a `travel` |
+| `dash` | none | `[dash, gap]` in units: the straight part of a dash and the clear gap between two. The dashes have round ends, so a dash of `0` is a dot as wide as the line |
+| `solid` | `0` | a dashed stroke: how far its gaps are closed at the start, `0` as authored, `1` a solid line. `solidTo` animates it |
+| `drawn` | all, or none | the share of the line that is drawn before its first `drawOn`, from its first point. Left out: all of it, and none of it when the stroke has a `drawOn` |
+| `at`, `rotation`, `scale`, `opacity` | `[0, 0]`, `0`, `1`, `1` | as for a shape |
+| `glow` | `0` | `0` to `1`: the line glows, with a halo around it |
+| `clipTo` | none | id of a shape of the same layer: the stroke is drawn only inside it |
+| `sound` | none | key of the stroke's voice: what its `drawOn` sounds like (see Sound) |
+
+```ts
+stroke({ id: 'route', points: [[-760, 250], [-520, 60], [-260, 150], [-40, -40], [200, 40]], color: 'accent.amber', width: 9, glow: 0.5 }),
+stroke({ id: 'ahead', points: [[200, 40], [380, 120], [560, -20]], color: 'accent.amber', width: 9, dash: [0, 22] }),   // dots
+stroke({ id: 'share', at: [-560, -40], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16 }),      // a ring, from its top
+// timeline
+drawOn('route', { at: 1, dur: 3, profile: 'ease' }),   // behind a node that travels the same path with the same at, dur and profile
+drawOn('ahead', { at: 4.2, dur: 1.4 }),
+solidTo('ahead', { at: 7, dur: 1.2 }),                 // the dots grow into a line
+drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),        // 62 % of the way round
+```
+
+- **Drawing on.** `drawOn(id, { at, dur?, to?, profile?, ramp? })` draws the stroke from its first point. `to` is the share of its length that is drawn when the key ends (`1` when left out). Keys chain: each starts from the share reached at its moment, so `to: 0.4` and later a key without `to` draw two fifths and then the rest; a smaller `to` takes the line back. The stroke is hidden before its first `drawOn`, unless it says `drawn`.
+- **The speed of the drawing** follows a `profile` as a travel does: `'ease'` (the default) from rest to rest, `'steady'` at one speed, `'in'`, `'out'`, with `ramp`. A stroke and a node that travels its points with the same `at`, `dur` and profile stay together: the line appears behind the node.
+- **Dashes** are anchored at the first point: they stay where they are while the line is drawn on. `solidTo(id, { at, to?, dur? })` closes the gaps (`to: 1`, the default) or opens them again (`to: 0`): every dash grows where it is until the dashes join.
+- **A route with an uncertain end** is two strokes: a solid one, and a dashed one from where it ends.
+- **`arcPoints(center, r, from, to, { step? })`** returns the points of an arc of a circle: from the angle `from` to the angle `to` in degrees (0 is right of the centre, 90 below it; a larger `to` runs clockwise), a point every `step` degrees (15). A smooth stroke through them is the arc; with `closed: true` and the last point left out it is a ring. A share of a ring is an arc drawn on with `to`.
+- A stroke moves, turns, grows, pops and fades like a shape (`moveTo`, `turnTo`, `scaleTo`, `popIn`, `fadeTo` and the rest), and may be the child of a shape or a group. It has no children, no light and no physics. Its width scales with it.
+- The motion review knows a stroke as a node: a move of it is judged like any move, and a line that is being drawn, or whose dashes close, keeps its part of the frame alive.
+
 ### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
 
 A rounded rectangle with a pointer tail aimed at `target`.
@@ -416,7 +454,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `scaleTo(id, { at, to, ... })` | shape, group, eye, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
 | `fadeTo(id, { at, to, ... })` | shape, group, eye, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | shape, group, eye, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
-| `drawOn(linkId, { at, ... })` | link | `dur` (0.6) | draws the link on from its `from` end. **The link is hidden before `at`**. Once per link |
+| `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
+| `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
 | `blink(eyeId, { at })` | eye | | one blink at that moment, on top of the eye's own schedule |
@@ -736,7 +775,7 @@ Every key of the timeline is an event, and so are every recorded contact of the 
 | `fade` | `fadeTo` | `at` |
 | `level` | `levelTo` | `at` |
 | `bump`, `squash` | `bump`, `squash` | `at` |
-| `draw`, `connect` | `drawOn`: the link starts to be drawn, and reaches its far node | `at`, and `at + dur` |
+| `draw`, `connect` | `drawOn`: the link or the stroke starts to be drawn, and the line reaches its far node, or the share it is drawn to | `at`, and `at + dur` |
 | `pulse` | a `pulse` arrives at the far node of its link | `at + dur` |
 | `open`, `blink` | `openTo`, `blink` | `at` |
 | `contact` | two rigid bodies hit each other | the frame of the impact |
@@ -767,6 +806,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
+- A `solidTo` is no event.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 

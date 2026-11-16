@@ -163,6 +163,37 @@ export interface LinkNode {
   readonly sound?: string;
 }
 
+/**
+ * A stroke along a free-form path: a line with round ends, solid or dashed,
+ * that can be drawn on over time. It is placed like a shape (at, rotation,
+ * scale, a parent) and its points are in its own space.
+ */
+export interface StrokeNode extends NodeBase {
+  readonly type: 'stroke';
+  /** The points the line runs through, open or closed, joined as the path of a travel is. */
+  readonly path: PathSpec;
+  readonly width: number;
+  readonly color: ColorRef;
+  /**
+   * Dashes: the length of the straight part of a dash (0 is a dot) and the
+   * clear gap between two dashes, in units. null is a solid line.
+   */
+  readonly dash: readonly [number, number] | null;
+  /** 0..1 at the start: how far the gaps of a dashed line are closed; 1 is a solid line. solidTo animates it. */
+  readonly solid: number;
+  /** 0..1 at the start. */
+  readonly opacity: number;
+  /** 0 = no glow; 1 = the line feeds the halo. */
+  readonly glow: number;
+  /**
+   * The share of the line that is drawn before its first drawOn, 0..1 from its
+   * first point. Left out: all of it, or none of it when the line has a drawOn.
+   */
+  readonly drawn?: number;
+  /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
+  readonly clipTo?: string | null;
+}
+
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
 
 /** A rounded rectangle with a pointer tail, sized and wrapped to its string. */
@@ -277,7 +308,7 @@ export interface EmitterNode {
   readonly sound?: string;
 }
 
-export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode;
+export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode | EmitterNode | StrokeNode;
 
 /** A depth layer. Depth 0 is the focus plane; positive is farther, negative is nearer. */
 export interface LayerSpec {

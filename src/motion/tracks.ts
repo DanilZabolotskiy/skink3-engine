@@ -4,7 +4,7 @@
 import { ease } from '../core/easing.ts';
 import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
-import { arcBump, bumpScale, BUMP_SECONDS, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, type MoveProfile } from './curves.ts';
+import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, type MoveProfile } from './curves.ts';
 import type {
   BumpKey,
   DrawOnKey,
@@ -17,6 +17,7 @@ import type {
   PopOutKey,
   PulseKey,
   ScaleToKey,
+  SolidToKey,
   SquashKey,
   TravelKey,
   TurnToKey,
@@ -488,6 +489,53 @@ export function sampleReveal(track: LinkTrack, t: number): number {
   if (!track.drawOn) return 1;
   const u = (t - track.drawOn.at) / track.drawOn.dur;
   return u <= 0 ? 0 : u >= 1 ? 1 : ease('inOutCubic', u);
+}
+
+/** How much of a stroke is drawn, and how far its dashes are closed, over time. */
+export interface StrokeTrack {
+  /** The share drawn before the first drawOn. */
+  readonly base: number;
+  readonly draws: readonly { readonly at: number; readonly dur: number; readonly from: number; readonly to: number; readonly profile: Exclude<MoveProfile, 'settle'>; readonly ramp: number }[];
+  /** How far the gaps are closed before the first solidTo. */
+  readonly solidBase: number;
+  readonly solids: readonly FadeSeg[];
+}
+
+/** The share of a stroke that is drawn at time t, 0..1 from its first point. */
+export function sampleDrawn(track: StrokeTrack, t: number): number {
+  let seg: StrokeTrack['draws'][number] | null = null;
+  for (const s of track.draws) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return track.base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  const [a, b] = profileRamps(seg.profile, seg.ramp);
+  return seg.from + (seg.to - seg.from) * rampProgress(u, a, b);
+}
+
+/** How far the gaps of a dashed stroke are closed at time t: 0 as authored, 1 solid. */
+export function sampleSolid(track: StrokeTrack, t: number): number {
+  return sampleOpacity({ base: track.solidBase, segs: track.solids }, t);
+}
+
+/**
+ * The track of a stroke. `drawn` is the share the node says is drawn at the
+ * start; left out, a stroke with a drawOn starts undrawn and one without is
+ * whole. Keys chain: each starts from what is reached at its moment.
+ */
+export function buildStrokeTrack(drawn: number | undefined, solid: number, draws: readonly DrawOnKey[], solids: readonly SolidToKey[]): StrokeTrack {
+  const base = drawn ?? (draws.length > 0 ? 0 : 1);
+  const segs: StrokeTrack['draws'][number][] = [];
+  for (const k of draws.slice().sort((a, b) => a.at - b.at)) {
+    segs.push({ at: k.at, dur: k.dur, from: sampleDrawn({ base, draws: segs, solidBase: solid, solids: [] }, k.at), to: k.to ?? 1, profile: k.profile ?? 'ease', ramp: k.ramp ?? DEFAULT_RAMP });
+  }
+  const closes: FadeSeg[] = [];
+  for (const k of solids.slice().sort((a, b) => a.at - b.at)) {
+    closes.push({ at: k.at, dur: k.dur, from: sampleOpacity({ base: solid, segs: closes }, k.at), to: k.to });
+  }
+  return { base, draws: segs, solidBase: solid, solids: closes };
 }
 
 /** Bumps that pulses give to the node at the far end of their link. */

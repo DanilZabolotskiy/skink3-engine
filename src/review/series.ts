@@ -14,7 +14,8 @@ import type { SpringParams } from '../core/dynamics.ts';
 import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
-import { sampleLevel, sampleLid, sampleReveal } from '../motion/tracks.ts';
+import { pathTable } from '../motion/paths.ts';
+import { sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
@@ -44,11 +45,11 @@ export const IN_FRAME = 2;
 export const REGION_COLS = 3;
 export const REGION_ROWS = 2;
 
-/** A shape, a group, an eye or a label over the whole shot. */
+/** A shape, a group, an eye, a stroke or a label over the whole shot. */
 export interface PlacedSeries {
   readonly node: CNode;
   readonly id: string;
-  readonly type: 'shape' | 'group' | 'eye' | 'label';
+  readonly type: 'shape' | 'group' | 'eye' | 'label' | 'stroke';
   /** Its motion comes from the rigid-body solver: a body, or a label that points at one. */
   readonly solver: boolean;
   /**
@@ -86,6 +87,12 @@ export interface PlacedSeries {
   readonly open: Float32Array | null;
   /** Shapes with a level: the height of the surface in the layer's space, per frame; null for other nodes. */
   readonly level: Float32Array | null;
+  /**
+   * What else changes in the node by itself, as a length in the layer's units
+   * per frame: for a stroke, how much of it is drawn and how far its gaps are
+   * closed. A step of it is a change a viewer sees. null for other nodes.
+   */
+  readonly life: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -291,6 +298,13 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       turnRadius[n.index] = node.shape.kind === 'circle' ? 0 : radius[n.index]!;
     } else if (node.type === 'eye') {
       radius[n.index] = node.r;
+    } else if (node.type === 'stroke') {
+      // The farthest point of the line from its origin, with half its width.
+      const table = pathTable(node.path);
+      let far = 0;
+      for (let i = 0; i < table.xs.length; i++) far = Math.max(far, Math.hypot(table.xs[i]!, table.ys[i]!));
+      radius[n.index] = far + node.width / 2;
+      turnRadius[n.index] = radius[n.index]!;
     } else if (node.type === 'label') {
       const box = labelLayout(c, n, lang).geometry.box;
       radius[n.index] = Math.max(
@@ -304,7 +318,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   for (let i = N - 1; i >= 0; i--) {
     const n = c.nodes[i]!;
     const node = n.node;
-    if (n.parent < 0 || (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye')) continue;
+    if (n.parent < 0 || (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke')) continue;
     const offset = Math.hypot(node.at[0], node.at[1]);
     radius[n.parent] = Math.max(radius[n.parent]!, offset + radius[i]! * node.scale);
     turnRadius[n.parent] = Math.max(turnRadius[n.parent]!, offset + turnRadius[i]! * node.scale);
@@ -333,6 +347,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       // A content whose level changes or whose surface ripples; a node that is squashed or stretched.
       (n.level !== null && (n.level.segs.length > 0 || (node.type === 'shape' && (node.level?.wave?.amp ?? 0) > 0))) ||
       n.stretch !== null ||
+      (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
     still[n.index] = animated ? 0 : 1;
@@ -362,6 +377,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       flags: new Uint8Array(frames),
       open: type === 'eye' ? f32() : null,
       level: n.level ? f32() : null,
+      life: type === 'stroke' ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -447,6 +463,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       const xf = world[i]!;
       if (node.type === 'shape' || node.type === 'label') drawn[i] = xf.scale > HIDDEN && (n.level === null || sampleLevel(n.level, t) > LEVEL_EMPTY) ? 1 : 0;
       else if (node.type === 'eye') drawn[i] = xf.scale > HIDDEN && (n.lid ? sampleLid(n.lid, t) : 1) > SHUT ? 1 : 0;
+      else if (node.type === 'stroke') drawn[i] = xf.scale > HIDDEN && sampleDrawn(n.stroke!, t) > 1e-6 ? 1 : 0;
     }
     // What lies wholly behind a cover, or wholly outside the shape it is clipped to, is not seen.
     if (hides) markHidden(c, world, alpha, drawn);
@@ -541,6 +558,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
       if (s.open && n.lid) s.open[f] = sampleLid(n.lid, t) * eyeOpen(n.blinks, t);
       if (s.level) s.level[f] = levelGeometry(n, xf, t).y;
+      if (s.life && node.type === 'stroke') s.life[f] = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * pathTable(node.path).length * xf.scale;
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;
@@ -585,6 +603,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     for (const a of [s.x, s.y, s.rot, s.scale, s.alpha, s.ownAlpha, s.ownX, s.ownY, s.ownRot, s.ownScale]) a.fill(a[0]!);
     if (s.open) s.open.fill(s.open[0]!);
     if (s.level) s.level.fill(s.level[0]!);
+    if (s.life) s.life.fill(s.life[0]!);
   }
 
   // Particles: the bake keeps the velocity of every stored particle beside its place.

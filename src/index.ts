@@ -5,13 +5,13 @@
 // See docs/SCENES.md.
 
 // --- Scene authoring -------------------------------------------------------
-export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, intended } from './scene/build.ts';
+export { shot, layer, circle, capsule, polygon, rect, blob, group, link, label, eye, emitter, stroke, intended } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
-export { hop, travel, levelTo, squash, moveTimes, sfx } from './motion/intents.ts';
+export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo } from './motion/intents.ts';
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile } from './motion/curves.ts';
-export { loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
+export { arcPoints, loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { definePalette, checkPalette, resolveColor, PALETTE_LAWS, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, Palette, PaletteIssue, PaletteSpec, Role } from './look/palette.ts';
 export { hsv, hexToHsv, lightness, mix } from './look/color.ts';

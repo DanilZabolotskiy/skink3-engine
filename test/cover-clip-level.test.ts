@@ -399,7 +399,7 @@ test('squash: a kick that makes the picture lower and wider about a point, and r
   const bake = await bakeShot(c);
   assert.deepEqual(evaluate(c, bake, 0, 'en').layers[0]!.items.map((i) => i.kind), ['shape']);
   assert.deepEqual(evaluate(c, bake, 35, 'en').layers[0]!.items.map((i) => i.kind), ['stretch']);
-  assert.throws(() => make([label({ id: 'l', text: 'label.a', target: 'a', fill: 'light.cream', ink: 'deep.abyss' }), circle({ id: 'a', r: 9, fill: 'accent.aqua' })], [squash('l', { at: 0 })]), /applies to shapes, groups and eyes/);
+  assert.throws(() => make([label({ id: 'l', text: 'label.a', target: 'a', fill: 'light.cream', ink: 'deep.abyss' }), circle({ id: 'a', r: 9, fill: 'accent.aqua' })], [squash('l', { at: 0 })]), /applies to shapes, groups, eyes and strokes/);
   // A move that is squashed on the way is still judged as a move.
   const moved = await review(make([circle({ id: 'a', at: [-200, 0], r: 50, fill: 'accent.amber' })], [moveTo('a', { at: 0.5, to: [200, 0] }), squash('a', { at: 1.2, amount: -0.2 })]));
   assert.deepEqual(flagged(moved), []);

@@ -124,6 +124,20 @@ export interface DrawOnKey extends Voiced {
   readonly target: string;
   readonly at: number;
   readonly dur: number;
+  /** Strokes: the share of the line, from its first point, that is drawn when the key ends. Left out: all of it. */
+  readonly to?: number;
+  /** Strokes: how the speed of the drawing is spread; left out, 'ease'. */
+  readonly profile?: Exclude<MoveProfile, 'settle'>;
+  readonly ramp?: number;
+}
+
+/** Close or open the gaps of a dashed stroke: at 1 the line is solid, at 0 dashed as authored. */
+export interface SolidToKey extends Voiced {
+  readonly kind: 'solidTo';
+  readonly target: string;
+  readonly at: number;
+  readonly to: number;
+  readonly dur: number;
 }
 
 export interface PulseKey extends Voiced {
@@ -209,6 +223,7 @@ export type Key =
   | BumpKey
   | SquashKey
   | DrawOnKey
+  | SolidToKey
   | PulseKey
   | OpenToKey
   | BlinkKey
@@ -608,15 +623,48 @@ export function squash(id: string, opts: { at: number; amount?: number; dur?: nu
   };
 }
 
-/** Draw a link on from its `from` end. The link is hidden before `at`. */
-export function drawOn(linkId: string, opts: { at: number; dur?: number; sound?: string | false }): DrawOnKey {
-  const w = `drawOn("${linkId}")`;
+/**
+ * Draw a link on from its `from` end, or a stroke from its first point. It is
+ * hidden before `at`. A stroke also takes `to`, the share of its length that
+ * is drawn when the key ends (keys chain: each starts from the share reached),
+ * and a `profile` with its `ramp`, as a travel does, so that a line can be
+ * drawn at the speed of the thing that draws it.
+ */
+export function drawOn(
+  id: string,
+  opts: { at: number; dur?: number; to?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; sound?: string | false },
+): DrawOnKey {
+  const w = `drawOn("${id}")`;
+  only(w, opts, ['at', 'dur', 'to', 'profile', 'ramp', 'sound']);
+  const profile = opts.profile === undefined ? undefined : profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && (profile === undefined || profile === 'steady')) throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
   return {
     kind: 'drawOn',
-    target: target(w, linkId),
+    target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 30),
+    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 600),
+    // A key that says none of this is the key a link always had.
+    ...(opts.to === undefined ? {} : { to: num(w, 'to', opts.to, 0, 1) }),
+    ...(profile === undefined ? {} : { profile }),
+    ...(opts.ramp === undefined ? {} : { ramp: num(w, 'ramp', opts.ramp, 0.02, 0.5) }),
     ...voiced(w, opts),
+  };
+}
+
+/**
+ * Close the gaps of a dashed stroke, or open them again: `to` 1 is a solid
+ * line, 0 the dashes as authored. The dashes grow where they are until they
+ * join. Several keys chain from what is reached at that moment.
+ */
+export function solidTo(strokeId: string, opts: { at: number; to?: number; dur?: number }): SolidToKey {
+  const w = `solidTo("${strokeId}")`;
+  only(w, opts, ['at', 'to', 'dur']);
+  return {
+    kind: 'solidTo',
+    target: target(w, strokeId),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to ?? 1, 0, 1),
+    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 600),
   };
 }
 

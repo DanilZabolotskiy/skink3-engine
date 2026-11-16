@@ -51,11 +51,13 @@ rect({ id: 'tray', fill: 'dark.indigo', w: 240, h: 50, /* = */ radius: 11 }); //
 blob({ id: 'buddy', fill: 'accent.amber', r: 50, /* = */ points: 9, wobble: 0.14, seed: 1 });
 group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: no turning with its parent
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
+stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // a line; + dash: [dash, gap] (0: dots), drawn, at, rotation, scale, opacity
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /* = */ side: 'top', size: 38, maxWidth: 420, maxLines: 3 });
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
 - Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. They are convex; a `group` composes them. `children` are drawn over their parent.
+- `stroke`: `smooth` 0 joins the points with straight lines; `arcPoints(center, r, from, to)` gives an arc or a ring (degrees).
 - `label`: the tail points at the edge of `target` on `side`; the text wraps, then shrinks, and is never cut. To place it elsewhere, point it at an empty group. List a `link` before its nodes.
 
 ## Springs and rigid bodies (opt-in)
@@ -85,7 +87,8 @@ popOut('c', { at: 3, /* = */ dur: 0.35 });
 bump('c', { at: 2, /* = */ amount: 0.14 }); // a kick of the size, 0.7 s
 squash('buddy', { at: 5, /* = */ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
-drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at
+drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share; keys chain), profile, ramp
+solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node
 openTo('pupil', { at: 0.5, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
@@ -114,11 +117,9 @@ popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names 
 sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a word; + node: it is panned to that node
 ```
 
-- Every intent, contact and burst is an event. `skink3 sfx` makes the track of the shot from them and a bank of sounds that the production brings: the engine holds none. One event makes one sound; a kind the bank does not map is silent.
-- Sound is in measure: only what is seen sounds, and the rules of the bank drop most of the rest (by default no two starts within 0.5 s, and 4 starts in any 10 s). It changes no pixel and no bake.
-- A sound of the bank can have `rules` of its own and stand `apart` from those limits: a pour is then a shower, heard impact by impact.
-- A move (`moveTo`, `travel`, `hop`) carries its fastest moment and its way. A sound can be fitted to it in the bank: `anchor: "peak"` puts its loudest point on that moment, `pan: "follow"` sends it across with the node, `pick: "duration"` takes the take as long as the move.
-- You cannot hear the track: run `sfx --sheet` and read `out/<shot>/sfx_sheet.png`. It has a tile for every sound (one for a shower): the frame it is placed on, its node ringed, an arrow along a move, and the sound, the kind of event and the time.
+- Every intent, contact and burst is an event; `skink3 sfx` makes the track from them and a bank of sounds the production brings (the engine holds none). One event, one sound; a kind the bank does not map is silent. Only what is seen sounds, and the bank's rules drop most of the rest (by default no two starts within 0.5 s, 4 in any 10 s). No pixel or bake changes.
+- In the bank a sound can have `rules` of its own and stand `apart` (a pour as a shower of impacts), or be fitted to a move (`moveTo`, `travel`, `hop`): `anchor: "peak"` (loudest on its fastest moment), `pan: "follow"`, `pick: "duration"`.
+- You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`): a tile per sound with its frame, its node ringed, an arrow along a move, the sound, the kind of event and the time.
 
 ## Words, subtitles, generated content
 

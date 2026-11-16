@@ -7,6 +7,7 @@ import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type 
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import {
+  sampleDrawn,
   sampleLevel,
   sampleLid,
   sampleOpacity,
@@ -15,6 +16,7 @@ import {
   sampleReveal,
   sampleRot,
   sampleScale,
+  sampleSolid,
   sampleStretch,
   sampleTravelling,
 } from '../motion/tracks.ts';
@@ -165,7 +167,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
 
   for (const n of c.nodes) {
     const node = n.node;
-    if (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye') continue;
+    if (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke') continue;
     const scale = node.scale * (n.scale ? sampleScale(n.scale, t) : 1);
     if (n.bodySlot >= 0) {
       const p = poses.body(n.bodySlot, frame);
@@ -173,7 +175,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       continue;
     }
     let [x, y] = samplePos(n.pos!, t);
-    if (n.idleNoise && node.type !== 'eye' && node.idle) {
+    if (n.idleNoise && (node.type === 'shape' || node.type === 'group') && node.idle) {
       const u = t / node.idle.period;
       x += node.idle.amp * n.idleNoise.n1(u);
       y += node.idle.amp * n.idleNoise.n1(u + 71.3);
@@ -253,6 +255,17 @@ export interface LinkItem {
   readonly alpha: number;
 }
 
+export interface StrokeItem {
+  readonly kind: 'stroke';
+  readonly node: CNode;
+  readonly xf: Xf;
+  readonly alpha: number;
+  /** The share of the line that is drawn, 0..1 from its first point. */
+  readonly drawn: number;
+  /** How far the gaps of its dashes are closed: 0 as authored, 1 a solid line. */
+  readonly solid: number;
+}
+
 export interface LabelItem {
   readonly kind: 'label';
   readonly node: CNode;
@@ -311,7 +324,7 @@ export interface StretchItem {
   readonly items: readonly Item[];
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | GroupItem | ClipItem | StretchItem;
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | GroupItem | ClipItem | StretchItem;
 export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem>;
 
 /** All items of a list with the groups, clips and stretches opened up, in draw order. */
@@ -526,6 +539,13 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           items.push({ kind: 'eye', node: n, xf, look, open: lid * eyeOpen(n.blinks, t), alpha: a });
+          break;
+        }
+        case 'stroke': {
+          if (xf.scale <= HIDDEN) break;
+          const drawn = sampleDrawn(n.stroke!, t);
+          if (drawn <= 1e-6) break;
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1 });
           break;
         }
         case 'link': {

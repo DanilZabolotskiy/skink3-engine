@@ -24,6 +24,7 @@ import type {
   PopOutKey,
   PulseKey,
   ScaleToKey,
+  SolidToKey,
   SquashKey,
   TravelKey,
   TurnToKey,
@@ -37,6 +38,7 @@ import {
   buildRotTrack,
   buildScaleTrack,
   buildStretchTrack,
+  buildStrokeTrack,
   type LevelTrack,
   type LidTrack,
   type LinkTrack,
@@ -45,6 +47,7 @@ import {
   type RotTrack,
   type ScaleTrack,
   type StretchTrack,
+  type StrokeTrack,
 } from '../motion/tracks.ts';
 import { resolveString } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
@@ -72,6 +75,8 @@ export interface CNode {
   readonly level: LevelTrack | null;
   /** Squashes and stretches, or null when the node has none. */
   readonly stretch: StretchTrack | null;
+  /** Strokes: how much of the line is drawn and how far its dashes are closed, over time. */
+  readonly stroke: StrokeTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -132,10 +137,11 @@ export interface CompiledShot {
   readonly clips: boolean;
 }
 
-type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' }>;
+type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' }>;
 
-function isPlaced(node: SceneNode): node is Placed {
-  return node.type === 'shape' || node.type === 'group' || node.type === 'eye';
+/** True for the nodes that have a place of their own: a position, a rotation and a size in their parent's space. */
+export function isPlaced(node: SceneNode): node is Placed {
+  return node.type === 'shape' || node.type === 'group' || node.type === 'eye' || node.type === 'stroke';
 }
 
 function fail(message: string): never {
@@ -204,7 +210,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     const index = idIndex.get(id);
     if (index === undefined) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to "${id}", which does not exist (nodes: ${known()})`);
     const other = drafts[index]!;
-    if (!isPlaced(other.node)) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to ${other.node.type} "${id}"; it must be a shape, a group or an eye`);
+    if (!isPlaced(other.node)) fail(`${where}: ${owner.type} "${owner.id}" ${prop} refers to ${other.node.type} "${id}"; it must be a shape, a group, an eye or a stroke`);
     if (sameLayer && other.layer !== drafts[idIndex.get(owner.id)!]!.layer) {
       fail(`${where}: ${owner.type} "${owner.id}" and its ${prop} "${id}" must be in the same layer`);
     }
@@ -229,6 +235,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const scales = new Map<number, ScaleToKey[]>();
   const fades = new Map<number, FadeToKey[]>();
   const draws = new Map<number, DrawOnKey[]>();
+  const solids = new Map<number, SolidToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
@@ -260,13 +267,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     };
     switch (key.kind) {
       case 'moveTo':
-        need(isPlaced(node), 'shapes, groups and eyes');
+        need(isPlaced(node), 'shapes, groups, eyes and strokes');
         if (node.type === 'shape' && node.body) fail(`${where}: moveTo cannot target "${node.id}": a rigid body is moved by the physics bake`);
         push(moves, index, key);
         break;
       case 'hop':
       case 'travel':
-        need(isPlaced(node), 'shapes, groups and eyes');
+        need(isPlaced(node), 'shapes, groups, eyes and strokes');
         if (node.type === 'shape' && node.body) fail(`${where}: ${key.kind} cannot target "${node.id}": a rigid body is moved by the physics bake`);
         if (key.kind === 'travel' && (key.roll !== null || key.orient) && node.type === 'eye') {
           fail(`${where}: travel("${node.id}") cannot roll or orient an eye: an eye does not turn; put it in a group and move that`);
@@ -280,38 +287,46 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         push(levels, index, key);
         break;
       case 'squash':
-        need(isPlaced(node), 'shapes, groups and eyes');
+        need(isPlaced(node), 'shapes, groups, eyes and strokes');
         push(squashes, index, key);
         break;
       case 'turnTo':
-        need(node.type === 'shape' || node.type === 'group', 'shapes and groups');
+        need(node.type === 'shape' || node.type === 'group' || node.type === 'stroke', 'shapes, groups and strokes');
         if (node.type === 'shape' && node.body) fail(`${where}: turnTo cannot target "${node.id}": a rigid body is turned by the physics bake`);
         push(turns, index, key);
         break;
       case 'popIn':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
         push(popIns, index, key);
         break;
       case 'popOut':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
         push(popOuts, index, key);
         break;
       case 'scaleTo':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
         if (node.type === 'shape' && node.body) fail(`${where}: scaleTo cannot target "${node.id}": the size of a rigid body is fixed by the physics bake`);
         push(scales, index, key);
         break;
       case 'fadeTo':
-        need(node.type !== 'emitter', 'shapes, groups, eyes, labels and links');
+        need(node.type !== 'emitter', 'shapes, groups, eyes, strokes, labels and links');
         push(fades, index, key);
         break;
       case 'bump':
-        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes and labels');
+        need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes and labels');
         push(bumps, index, { at: (key as BumpKey).at, amount: (key as BumpKey).amount });
         break;
       case 'drawOn':
-        need(node.type === 'link', 'links');
+        need(node.type === 'link' || node.type === 'stroke', 'links and strokes');
+        if (node.type === 'link' && (key.to !== undefined || key.profile !== undefined || key.ramp !== undefined)) {
+          fail(`${where}: drawOn("${node.id}"): to, profile and ramp are for a stroke; a link is drawn on whole`);
+        }
         push(draws, index, key);
+        break;
+      case 'solidTo':
+        need(node.type === 'stroke', 'strokes');
+        if (node.type === 'stroke' && node.dash === null) fail(`${where}: solidTo cannot target "${node.id}": the stroke has no dash to close`);
+        push(solids, index, key);
         break;
       case 'pulse':
         need(node.type === 'link', 'links');
@@ -427,6 +442,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         // Blinks the timeline asks for join the schedule.
         blinks = [...blinks, ...(askedBlinks.get(d.index) ?? [])].sort((a, b) => a - b);
         break;
+      case 'stroke':
+        colors['color'] = col(node, 'color', node.color);
+        break;
       case 'link':
         colors['color'] = col(node, 'color', node.color);
         colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
@@ -507,6 +525,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       lid: node.type === 'eye' ? buildLidTrack(node.open, opens.get(d.index) ?? []) : null,
       level: node.type === 'shape' && node.level ? buildLevelTrack(node.level.at, levels.get(d.index) ?? []) : null,
       stretch: squashes.has(d.index) ? buildStretchTrack(squashes.get(d.index)!) : null,
+      stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? []) : null,
       clipIndex,
       bodySlot,
       springSlot,

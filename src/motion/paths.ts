@@ -149,6 +149,23 @@ export function pathAt(table: PathTable, s: number): PathPoint {
 }
 
 /**
+ * Points of an arc of a circle, for a stroke or a path: from the angle `from`
+ * to the angle `to`, in degrees (0 = right of the centre, 90 = below it; a
+ * larger `to` runs clockwise on screen). A point every `step` degrees at most,
+ * so that a smooth path through them is the arc.
+ */
+export function arcPoints(center: Vec2, r: number, from: number, to: number, opts: { step?: number } = {}): Vec2[] {
+  const step = Math.min(45, Math.max(1, opts.step ?? 15));
+  const n = Math.max(2, Math.ceil(Math.abs(to - from) / step));
+  const out: Vec2[] = [];
+  for (let i = 0; i <= n; i++) {
+    const a = ((from + ((to - from) * i) / n) * Math.PI) / 180;
+    out.push([center[0] + Math.cos(a) * r, center[1] + Math.sin(a) * r]);
+  }
+  return out;
+}
+
+/**
  * Points of an ellipse around a centre, for a closed path: a loop that never
  * stops and never leaves its middle. `start` is the angle of the first point
  * in degrees (0 = right of the centre, 90 = below it, 180 = left of it).

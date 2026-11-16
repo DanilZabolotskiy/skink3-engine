@@ -58,7 +58,7 @@ node bin/skink3.mjs sfx examples/demo/scene.ts --bank <bank.json> --sheet   # an
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
 
-How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift.
+How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift. [examples/atlas/scene.ts](examples/atlas/scene.ts) is a third, for lines: a route that draws itself behind a bead, dots that close into a line, a dashed outline and a ring that fills to a share.
 
 ### Using the engine from another repository
 
@@ -133,7 +133,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
 | `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
 | `src/scene` | scene description types, factory functions (shapes as covers, backdrops, clips and contents with a level), compiler (validation, tracks, bake slots), pure evaluation of a frame |
-| `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `pulse`, `openTo`, `blink`), `stagger`, the curves behind them, free-form paths measured by their length |
+| `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `pulse`, `openTo`, `blink`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
 | `src/text` | string tables, bundled font, auto-fit layout, label geometry, subtitles from word timings (.srt, .vtt, .ytt) |
@@ -142,7 +142,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
 | `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), the sound sheet, PCM WAV read and written |
 | `src/cli`, `bin/` | the `skink3` command |
-| `examples/` | the demo shot, the flow shot and a minimal scene |
+| `examples/` | the demo shot, the flow shot, the atlas shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
 | `assets/fonts/` | the bundled font family with its licence |
 | `bench/` | drawing and physics benchmarks |

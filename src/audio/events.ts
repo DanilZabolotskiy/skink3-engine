@@ -18,6 +18,8 @@
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { BUMP_SECONDS } from '../motion/curves.ts';
+import { pathAt, pathTable } from '../motion/paths.ts';
+import { sampleDrawn } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { DRAWN, IN_FRAME, sampleMotion, screenAt, type LinkSeries, type MotionSeries, type PlacedSeries } from '../review/series.ts';
 import { T } from '../review/thresholds.ts';
@@ -252,6 +254,28 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
     drafts.push({ kind, frame, dur, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), size, speed, x, y, seen });
   };
 
+  /** An event of a stroke that is drawn on: at the end of what is drawn at that moment. `from` and `span`: the drawOn it belongs to. */
+  const drawn = (kind: EventKind, n: CNode, start: number, dur: number, from: number, span: number, asked: string | false | undefined): void => {
+    const frame = frameOf(start);
+    if (!inShot(frame) || n.node.type !== 'stroke' || !n.stroke) return;
+    const s = series.placed[n.index]!;
+    const view = series.views[n.layer]!;
+    const table = pathTable(n.node.path);
+    const k = s.scale[frame]! * view.zoom[frame]!;
+    // Where the line ends at that moment: a hair along it, so that the start of a drawing has a place too.
+    const p = pathAt(table, Math.max(1e-6, sampleDrawn(n.stroke, frame / FPS) * table.length));
+    const rot = s.rot[frame]! * DEG;
+    const [x, y] = onScreen(n.layer, s.x[frame]! + (p.x * Math.cos(rot) - p.y * Math.sin(rot)) * s.scale[frame]!, s.y[frame]! + (p.x * Math.sin(rot) + p.y * Math.cos(rot)) * s.scale[frame]!, frame);
+    // As for a link: its size is its length on screen, its speed that of the end that is drawn.
+    const size = table.length * k;
+    const grown = Math.abs(sampleDrawn(n.stroke, from + span) - sampleDrawn(n.stroke, from - 1e-6)) * size;
+    let seen = false;
+    for (let f = clamp(frame - (dur > 0 ? 0 : 2)); f <= clamp(frameOf(start + dur)); f++) {
+      if ((s.flags[f]! & DRAWN) !== 0 && (s.flags[f]! & IN_FRAME) !== 0 && s.alpha[f]! >= T.visibleAlpha) seen = true;
+    }
+    drafts.push({ kind, frame, dur, node: n.id, key: keyOf(n), ...(asked === undefined ? {} : { sound: asked }), size, speed: span > 0 ? grown / (span * FPS) : 0, x, y, seen });
+  };
+
   // 1. The timeline: every key is an event, or two.
   for (const key of c.spec.timeline) {
     if (key.kind === 'sfx') {
@@ -304,6 +328,11 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
         placed('squash', n, key.at, key.dur, key.sound);
         break;
       case 'drawOn':
+        if (n.node.type === 'stroke') {
+          drawn('draw', n, key.at, key.dur, key.at, key.dur, key.sound);
+          drawn('connect', n, key.at + key.dur, 0, key.at, key.dur, after);
+          break;
+        }
         linked('draw', n, key.at, key.dur, 'from', key.dur, key.sound);
         linked('connect', n, key.at + key.dur, 0, 'to', key.dur, after, 2);
         break;

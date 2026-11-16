@@ -8,7 +8,7 @@ import { lightVector, type LightSpec } from '../look/light.ts';
 import { ROLES, type ColorRef, type Palette } from '../look/palette.ts';
 import { DEFAULT_RAMP, type MoveProfile } from '../motion/curves.ts';
 import { isSoundKey, type Key } from '../motion/intents.ts';
-import { pathLength } from '../motion/paths.ts';
+import { pathLength, type PathSpec } from '../motion/paths.ts';
 import {
   blobShape,
   capsuleShape,
@@ -41,6 +41,7 @@ import type {
   SceneNode,
   ShapeNode,
   ShotSpec,
+  StrokeNode,
   TurbulenceSpec,
 } from './types.ts';
 
@@ -391,6 +392,75 @@ export function link(o: {
     color: c,
     pulseColor: o.pulseColor === undefined ? c : color(where, 'pulseColor', o.pulseColor),
     gap: o.gap === undefined ? 6 : num(where, 'gap', o.gap, 0, 400),
+    opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
+    glow: o.glow === undefined ? 0 : num(where, 'glow', o.glow, 0, 1),
+  };
+}
+
+/**
+ * A stroke: a line with round ends along a free-form path. `points` are the
+ * places it runs through, in its own space; they are joined as the path of a
+ * travel is (`smooth` 1: a smooth curve; 0: straight lines), open or closed.
+ * `dash: [dash, gap]` makes it dashed (a dash of 0 is a dot). drawOn() draws
+ * it on from its first point, solidTo() closes its gaps. It is placed like a
+ * shape and may be the child of a shape or a group.
+ */
+export function stroke(o: {
+  id: string;
+  points: readonly Vec2[];
+  color: ColorRef;
+  /** Default 7. */
+  width?: number;
+  /** Back to the first point after the last; default false. */
+  closed?: boolean;
+  /** 0 = straight lines between the points, 1 = a smooth curve through them; default 1. */
+  smooth?: number;
+  /** [dash, gap] in units: the straight part of a dash (0 = a dot) and the clear gap between two. Default: a solid line. */
+  dash?: readonly [number, number];
+  /** 0..1: how far the gaps of a dashed line are closed at the start; default 0. */
+  solid?: number;
+  /** 0..1: the share that is drawn before the first drawOn; default all of it, or none when the stroke has a drawOn. */
+  drawn?: number;
+  at?: Vec2;
+  rotation?: number;
+  scale?: number;
+  /** 0..1 at the start; default 1. */
+  opacity?: number;
+  /** 0..1: the line glows (a halo around it); default 0. */
+  glow?: number;
+  /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
+  clipTo?: string;
+  /** Key of the node's voice in the bank of sounds. */
+  sound?: string;
+}): StrokeNode {
+  const where = `stroke("${o?.id}")`;
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'clipTo', 'sound']);
+  if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
+  const closed = o.closed === undefined ? false : flag(where, 'closed', o.closed);
+  if (closed && o.points.length < 3) fail(where, 'a closed stroke needs at least three points');
+  const path: PathSpec = { points: o.points.map((p, i) => vec(where, `points[${i}]`, p)), closed, smooth: o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1) };
+  if (!(pathLength(path) > 1e-6)) fail(where, 'the points give a line without length');
+  const width = o.width === undefined ? 7 : num(where, 'width', o.width, 0.5, 200);
+  let dash: [number, number] | null = null;
+  if (o.dash !== undefined) {
+    if (!Array.isArray(o.dash) || o.dash.length !== 2) fail(where, `dash must be [dash, gap] in units (a dash of 0 is a dot), got ${JSON.stringify(o.dash)}`);
+    dash = [num(where, 'dash[0]', o.dash[0], 0, 1e4), num(where, 'dash[1]', o.dash[1], 0.5, 1e4)];
+  }
+  if (o.solid !== undefined && dash === null) fail(where, 'solid is for a dashed stroke: give dash');
+  return {
+    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
+    ...voice(where, o.sound),
+    type: 'stroke',
+    id: idOf(where, o.id),
+    path,
+    width,
+    color: color(where, 'color', o.color),
+    dash,
+    solid: o.solid === undefined ? 0 : num(where, 'solid', o.solid, 0, 1),
+    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
+    scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     glow: o.glow === undefined ? 0 : num(where, 'glow', o.glow, 0, 1),
   };
