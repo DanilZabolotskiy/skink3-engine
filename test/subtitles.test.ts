@@ -59,12 +59,17 @@ test('subtitles: a sentence ends a cue, a pause ends a cue, and a long sentence 
   for (const tail of ['one purpose.', 'stone and power.', 'a little bigger.']) {
     assert.ok(cues.some((c) => c.lines.join(' ').endsWith(tail)), `a cue ends with "${tail}"`);
   }
-  // A sentence too long for one cue is cut after its last comma when that leaves a cue of a fair length...
+  // A sentence too long for one cue is cut into parts of about the same length: at a comma where one is near...
   const long = cuesFromWords(speak('When the first wave of pulses comes to the far end of the long line, the lamp above it lights up and stays on for a while.'));
-  assert.equal(long[0]!.lines.join(' '), 'When the first wave of pulses comes to the far end of the long line,');
-  // ...and where the only comma is too early for that, it is filled as far as it goes.
-  const firstCut = cues[0]!.lines.join(' ');
-  assert.ok(firstCut.length > 60 && !/,$/.test(firstCut), `the first cue is filled: "${firstCut}"`);
+  assert.deepEqual(long.map((c) => c.lines.join(' ')), ['When the first wave of pulses comes to the far end of the long line,', 'the lamp above it lights up and stays on for a while.']);
+  // ...and where the only comma is far from the middle, near the middle and not after a short word.
+  const parts = cues.filter((c) => c.end <= cues.find((x) => x.lines.join(' ').endsWith('one purpose.'))!.end).map((c) => c.lines.join(' '));
+  assert.deepEqual(parts, ['Every second, more than twenty thousand units pour into', 'the machine and the parts inside it, most of it for one purpose.']);
+  // As many parts as the phrase needs when each is filled, and those about even.
+  const many = cuesFromWords(speak('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen.'), { maxChars: 20, maxLines: 2 });
+  assert.equal(many.length, 4);
+  const sizes = many.map((c) => c.lines.join(' ').length);
+  assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 12, `the parts are about even: ${sizes.join(', ')}`);
   // A pause inside a sentence ends a cue even though the text would fit.
   const paused: SpokenWord[] = [
     { w: 'Wait', start: 1, end: 1.3 },

@@ -86,9 +86,11 @@ export function wrapCue(text: string, maxChars: number, maxLines: number): strin
 /**
  * Cuts the words of a narration into subtitle cues.
  *
- * A cue ends at the end of a sentence, at a pause, or where another word would
- * not fit; when it has to end inside a sentence it prefers the last comma. No
- * cue overlaps the next one, and every word is in exactly one cue, in order.
+ * A cue ends at the end of a sentence or at a pause. A sentence that does not
+ * fit one cue is cut into parts of about the same length: at a comma where
+ * one is near, and not after a short word (an article, a preposition) where
+ * that can be helped. No cue overlaps the next one, and every word is in
+ * exactly one cue, in order.
  */
 export function cuesFromWords(words: readonly SpokenWord[], options: CueOptions = {}): Cue[] {
   const o = { ...DEFAULTS, ...options };
@@ -100,26 +102,49 @@ export function cuesFromWords(words: readonly SpokenWord[], options: CueOptions 
 
   // 1. Groups of words: [first, last] indices.
   const groups: [number, number][] = [];
-  let first = 0;
-  while (first < words.length) {
-    let last = first;
-    let comma = -1;
-    for (;;) {
-      const w = words[last]!;
-      if (SENTENCE_END.test(w.w)) break;
-      const next = words[last + 1];
-      if (!next) break;
-      if (next.start - w.end >= o.pause) break;
-      const text = words.slice(first, last + 2).map((x) => x.w).join(' ');
-      const tooLong = wrapCue(text, o.maxChars, o.maxLines) === null || next.end - words[first]!.start > o.maxSeconds;
-      if (tooLong) {
-        // Inside a sentence: back to the last comma, if that leaves a cue of a fair length.
-        if (comma >= first && comma - first + 1 >= 2 && words.slice(first, comma + 1).map((x) => x.w).join(' ').length >= (o.maxChars * o.maxLines) / 3) last = comma;
-        break;
-      }
-      if (CLAUSE_END.test(w.w)) comma = last;
+  const length = (a: number, b: number): number => words.slice(a, b + 1).reduce((n, x) => n + x.w.length, b - a);
+  /** True when the phrase that starts at `a` runs on past word `i`: no end of a sentence and no pause after it. */
+  const runsOn = (i: number): boolean => i + 1 < words.length && !SENTENCE_END.test(words[i]!.w) && words[i + 1]!.start - words[i]!.end < o.pause;
+  /** The last word that still fits a cue that starts at word `a`, not past `limit`. */
+  const fit = (a: number, limit: number): number => {
+    let last = a;
+    while (last < limit) {
+      const text = words.slice(a, last + 2).map((x) => x.w).join(' ');
+      if (wrapCue(text, o.maxChars, o.maxLines) === null || words[last + 1]!.end - words[a]!.start > o.maxSeconds) break;
       last++;
     }
+    return last;
+  };
+  let first = 0;
+  // The phrase the current cue belongs to (up to the end of a sentence or a pause), and the cues it still needs.
+  let phraseEnd = -1;
+  let partsLeft = 0;
+  while (first < words.length) {
+    if (first > phraseEnd) {
+      phraseEnd = first;
+      while (runsOn(phraseEnd)) phraseEnd++;
+      // The fewest cues that hold the phrase: each filled as far as it goes.
+      partsLeft = 0;
+      for (let a = first; a <= phraseEnd; a = fit(a, phraseEnd) + 1) partsLeft++;
+    }
+    let last = fit(first, phraseEnd);
+    if (last < phraseEnd && last > first) {
+      // The phrase goes on: cut it into parts of about the same length instead of filling this cue to the brim.
+      const target = length(first, phraseEnd) / Math.max(2, partsLeft);
+      let best = last;
+      let bestCost = Infinity;
+      for (let k = first; k <= last; k++) {
+        const w = words[k]!.w;
+        // Near the even share; a comma is worth a quarter of a share, and a short word at the end of a cue costs a little.
+        const cost = Math.abs(length(first, k) - target) - (CLAUSE_END.test(w) ? 0.25 * target : 0) + (w.length <= 3 && !CLAUSE_END.test(w) ? 0.15 * target : 0);
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = k;
+        }
+      }
+      last = best;
+    }
+    partsLeft = Math.max(1, partsLeft - 1);
     groups.push([first, last]);
     first = last + 1;
   }
