@@ -57,7 +57,7 @@ export { evaluate, computeWorld, flatItems, labelLayout, posesFromBake, type Fra
 export { levelGeometry, type ClipItem, type LevelGeometry, type ShapeItem, type StretchItem } from './scene/evaluate.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';
 export { Bake, bakeHash, readBake, writeBake, type BakeHeader, type ContactEvent } from './physics/cache.ts';
-export { runChecks, formatReport, checkTextFit, type CheckReport, type CheckIssue, type CheckOptions } from './checks/index.ts';
+export { runChecks, formatReport, checkTextFit, checkGlyphs, type CheckReport, type CheckIssue, type CheckOptions, type GlyphIssue } from './checks/index.ts';
 export { sampleMotion, type MotionSeries, type PlacedSeries, type EmitterSeries, type LinkSeries, type SpringSeries, type SampleOptions } from './review/series.ts';
 export { reviewMotion, buildReport, formatMotionReport, formatMotionShort, motionReportJson, type MotionReport, type HonouredException } from './review/report.ts';
 export { FINDING_KINDS, type Finding, type Channel } from './review/detect.ts';
@@ -75,7 +75,8 @@ export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './rend
 export { renderParallel, type RenderJob, type RenderResult } from './render/parallel.ts';
 export { cameraAt, layerView, type CameraState, type LayerView } from './camera/camera.ts';
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';
-export { FONT_FAMILY } from './text/fonts.ts';
+export { FONT_FAMILY, BUNDLED_FONTS, type BundledFont } from './text/fonts.ts';
+export { fontOf, missingGlyphs } from './text/glyphs.ts';
 export { cuesFromWords, formatSrt, formatVtt, formatYtt, shiftWords, wrapCue, type Cue, type CueOptions, type SpokenWord, type YttStyle } from './text/subtitles.ts';
 export { sceneEvents, EVENT_KINDS, PEAK_BAND, type EventKind, type EventsOptions, type SceneEvent } from './audio/events.ts';
 export { loadBank, parseBank, curveAt, BankError, SOUND_RULES, SOUND_CURVES, SOUND_ANCHORS, type BankSound, type Curve, type SoundAnchor, type SoundBank, type SoundCurves, type SoundOwnRules, type SoundRules } from './audio/bank.ts';

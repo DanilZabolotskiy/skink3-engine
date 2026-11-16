@@ -122,8 +122,25 @@ strings: {
 - Keys look like `label.core`: lower-case letters, digits, and `.`, `_`, `-` between parts.
 - Every key a scene uses must exist in **every** table, or `shot()` throws.
 - A render uses one language (`--lang`, default: the first table). Labels and texts size and wrap themselves to that language's string.
-- The bundled font covers Latin, Latin Extended, Cyrillic and Vietnamese. Lines break at spaces only. Other scripts, right-to-left text and fallback fonts are not implemented yet.
+- Lines break at spaces only. Right-to-left text and scripts that need shaping are not implemented yet.
 - Text never influences the bake: adding a language re-renders without re-baking.
+
+### Fonts
+
+Text is drawn with three bundled typefaces and with no font of the machine, so a string looks the same wherever it is rendered:
+
+| Typeface | Drawn for |
+|---|---|
+| Nunito | everything it has: Latin, Latin Extended, Cyrillic, Vietnamese, digits, punctuation and the common signs. It is the typeface of the engine |
+| Noto Sans | what Nunito lacks of: fractions, super- and subscripts, letterlike signs, punctuation, Greek, more Latin and Cyrillic |
+| Noto Sans Symbols | what both lack of: arrows, Roman numerals, circled numbers, technical and other symbols |
+
+- **A character is drawn by the first of them that has it,** in the weight of the text around it: all three have a weight axis (the two Noto typefaces up to 900), so an arrow in a heavy label is a heavy arrow.
+- **For the typography of a figure they have:** the arrows `← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙`; the fractions `¼ ½ ¾ ⅐ ⅑ ⅒ ⅓ ⅔ ⅕ ⅖ ⅗ ⅘ ⅙ ⅚ ⅛ ⅜ ⅝ ⅞`; the signs `≈ ≠ ≤ ≥ ± × ÷ − ∞ √ ∑ ∏ ∫ ∂ ∆ ∅ ° µ ‰ ′ ″`; super- and subscript digits (`⁰` to `⁹`, `₀` to `₉`); currency signs (`€ £ ¥ ¢ ₽ ₹ ₿` and others); `№ ™ © ® ℓ ℃ ℉`; Roman numerals (`Ⅳ`) and circled numbers (`①` to `⑳`); the Greek alphabet.
+- **They lack:** double and long arrows (`⇒`, `⟶`), the other mathematical operators (`∈`, `≡`, `∝`), geometric shapes (`■ ● ▲`), stars and check marks (`★ ✓ ✗`), and every script beyond Latin, Cyrillic and Greek.
+- **A character that none of them has fails the checks** (see Checks), with the key, the language and the character. It would be drawn with whatever font the machine offers for it, or as an empty box, and the frame would depend on the machine.
+- Every kind of space needs no glyph, and neither do the characters that are not drawn by themselves (a joiner, a soft hyphen).
+- All three are under the SIL Open Font License 1.1 and lie in `assets/fonts/` with their licences. `fontOf(char)` says which of them draws a character, `missingGlyphs(text)` which characters of a text none of them has.
 
 ## `shot({ ... })`
 
@@ -975,6 +992,7 @@ Other helpers a scene may call:
 |---|---|
 | palette | a law above is broken |
 | strings | a used key is missing or empty in a language |
+| glyphs | a string that is used holds, in a language, a character that none of the bundled fonts has (see Fonts) |
 | text fit: overflow | the string of a label or of a text does not fit its `maxWidth` and `maxLines` even at `minSize` |
 | text fit: off-frame | a shown label or text comes closer than 12 units to the frame edge at any sampled frame |
 | text fit: overlap | two shown labels or texts overlap at any sampled frame |
@@ -983,11 +1001,9 @@ Other helpers a scene may call:
 
 A warning is printed with the label, the language, the node and the time ("label "a" [de]: covers node "n3" from 6.50 s to 8.20 s"), and does not fail the checks: sometimes a label over a shape is intended. Nodes fainter than 0.25 and labels fainter than 0.5 are not counted, and neither is a shape marked `backdrop: true` (ground, a wall: things that are there to have labels in front of them). Frames are sampled ten times a second, so a touch shorter than that can be missed.
 
-The checks do not look at the glyphs of a string: a character that the bundled font lacks is drawn as an empty box and passes. Look at the label sheet of every language (`skink3 sheet --lang`).
-
 `skink3 check` also runs the motion review and the physics review and shows each in short form: the number of findings by kind, the worst five, and a pointer to `skink3 motion` or `skink3 physics`. They are warnings and never fail the checks.
 
-`skink3 render` runs the palette, string and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the two reviews.
+`skink3 render` runs the palette, string, glyph and text checks for the language it renders, prints any warnings, and stops if a check fails (`--force` renders anyway). It does not run the two reviews.
 
 `npm run check` in the engine repository also runs `tsc --noEmit` and the unit tests.
 
@@ -1357,7 +1373,7 @@ Read it tile by tile. Is the ring on the thing a viewer would take for the sourc
 ```
 skink3 <command> <scene module> [options]
 
-check   palette laws, string tables and text fit in every language; motion and physics findings in short   [--bank <bank.json>]
+check   palette laws, string tables, glyphs and text fit in every language; motion and physics findings in short   [--bank <bank.json>]
 bake    simulate physics, springs and particles; write the cache        [--force]
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -1423,10 +1439,12 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 `evaluate` wraps what it draws in three kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape) and `'stretch'` (a node that is being squashed). `flatItems` opens all three.
 
+For text, `BUNDLED_FONTS` lists the bundled families in the order they are tried for a character, `fontOf(char)` and `missingGlyphs(text)` answer from their character maps, and `checkGlyphs(c, langs)` is the check `runChecks` makes of the strings a shot uses.
+
 For subtitles, `cuesFromWords(words, options)` turns the word timings of a narration (`[{ w: 'Hello.', start: 0, end: 0.4 }, ...]`) into subtitle cues: lines of a set length, breaks at the ends of sentences and at pauses. Its options, with their defaults: `maxChars` (42) a line, `maxLines` (2) a cue, and `pause` (0.5), the seconds of silence at which a cue ends. `formatSrt`, `formatVtt` and `formatYtt` write the cues out; see `src/text/subtitles.ts`.
 
 For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)` reads a bank, and `renderSound(c, bake, bank)` returns the track (`wav`: the bytes of the WAV file), its `plan` and its `report`. `planSound`, `mixVoices`, `readWav` and `writeWav` are the steps it is made of; `SOUND_RULES` and `SOUND_CURVES` are the defaults. `showersOf(plan.voices)` gives the showers of a plan, `takePeak(take)` measures the loudest point of a take, and `renderSoundSheet(c, bake, plan, options)` draws the sound sheet (`soundTiles`, `tileCaption`, `tileRing` and `tileArrow` are what is on it). See `src/audio`.
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

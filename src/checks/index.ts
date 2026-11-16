@@ -1,5 +1,5 @@
-// Pre-render checks of a shot: palette laws, string tables, text fit in every
-// language, the sound keys against a bank when one is given, and, when asked
+// Pre-render checks of a shot: palette laws, string tables, the glyphs of every
+// string, text fit in every language, the sound keys against a bank when one is given, and, when asked
 // for, the motion review and the physics review in short form. `tsc` and the
 // unit tests are separate steps (see the npm scripts).
 
@@ -12,12 +12,14 @@ import { reviewPhysics, type PhysicsReport } from '../review/physics.ts';
 import { formatMotionShort, reviewMotion, type MotionReport } from '../review/report.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { checkStrings, languagesOf } from '../text/strings.ts';
+import { checkGlyphs } from './glyphs.ts';
 import { checkTextFit, type FitStat } from './textfit.ts';
 
+export { checkGlyphs, type GlyphIssue } from './glyphs.ts';
 export { checkTextFit, type FitIssue, type FitStat } from './textfit.ts';
 
 export interface CheckIssue {
-  readonly check: 'palette' | 'strings' | 'text-fit' | 'sound';
+  readonly check: 'palette' | 'strings' | 'glyphs' | 'text-fit' | 'sound';
   /** An error fails the checks; a warning is only reported. */
   readonly severity: 'error' | 'warning';
   readonly message: string;
@@ -53,6 +55,7 @@ export function runChecks(c: CompiledShot, bake: Bake, langs?: readonly string[]
   const issues: CheckIssue[] = [];
   for (const i of checkPalette(c.spec.palette)) issues.push({ check: 'palette', severity: 'error', message: `${i.law}: ${i.message}` });
   for (const i of checkStrings(c.spec.strings, c.stringKeys)) issues.push({ check: 'strings', severity: 'error', message: i.message });
+  for (const i of checkGlyphs(c, languages)) issues.push({ check: 'glyphs', severity: 'error', message: i.message });
   const fit = checkTextFit(c, bake, languages);
   for (const i of fit.issues) issues.push({ check: 'text-fit', severity: i.severity, message: `${i.kind}: ${i.message}` });
   const sound = opts.bank ? checkSound(c, opts.bank) : null;
@@ -69,7 +72,7 @@ export function formatReport(report: CheckReport): string {
     lines.push(`  ${s.what} ${s.label} [${s.lang}]: ${s.lines} line(s), size ${s.size}, box ${s.width.toFixed(0)} x ${s.height.toFixed(0)}`);
   }
   // The sound keys are held against a bank only when one was given.
-  for (const check of ['palette', 'strings', 'text-fit', ...(report.sound ? (['sound'] as const) : [])] as const) {
+  for (const check of ['palette', 'strings', 'glyphs', 'text-fit', ...(report.sound ? (['sound'] as const) : [])] as const) {
     const list = report.issues.filter((i) => i.check === check);
     const errors = list.filter((i) => i.severity === 'error').length;
     const warnings = list.length - errors;

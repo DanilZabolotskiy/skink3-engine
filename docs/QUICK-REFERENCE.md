@@ -94,7 +94,7 @@ squash('buddy', { at: 5, /* = */ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // l
 countTo('total', { at: 2, to: 1500, /* = */ dur: 1, profile: 'ease' }); // a text with count: 0 and "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
-solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke
+solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of its dashes
 bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // it pulls taut (0), or sags
 reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a region or a stroke, point for point; + smooth
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node. On a stroke: + from, to (shares), profile, length, node (bumped)
@@ -103,7 +103,7 @@ blink('pupil', { at: 3 });
 stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
 ```
 
-- A negative `at` (to -600): the key is under way at frame 0.
+- A negative `at` (to -600): under way at frame 0.
 - `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles: it first arrives at 0.52 of `dur`, peaking at 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). These arrive at `at + dur` exactly.
 
 ## Effects (opt-in)
@@ -140,7 +140,7 @@ new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuff
 
 ```
 npx skink3 <command> <scene.ts> [options]     (in the engine: node bin/skink3.mjs)
-check    palette, strings, text fit in every language; both reviews in short  [--bank bank.json]
+check    palette, strings, glyphs, text fit in every language; both reviews in short  [--bank bank.json]
 bake     [--force]
 still    frames as PNG  --frame n[,n] | --time s[,s]  [--hash]
 strip    frames side by side  --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -155,11 +155,11 @@ sfx      the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 4
 common   --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
-Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a palette law, a missing string, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
+Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a palette law, a missing string, a character no bundled font has, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
 
 ## Reading the reviews
 
-Each kind of finding (a warning), and the usual fix:
+Each kind of finding (a warning) and its usual fix:
 
 - `jump`: a teleport or pop: check the keys there; change place while hidden.
 - `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or use `'ease'` or `'in'`.
@@ -181,12 +181,12 @@ Each kind of finding (a warning), and the usual fix:
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
 ```ts
-shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // the window is optional; also '(camera)', '(frame)', '(frame:top-left)'
+shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // window optional; also for '(camera)', '(frame)', '(frame:top-left)'
 ```
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, an outline that changes, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables** (fonts, their characters); **`shot`** (the camera, its path, its keys, background keys, the physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, lights along strokes); **Timeline: intents** (profiles, travel, turns at a speed, size along one axis, reshape, opacity, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**; **Sound** (events, the bank, a sound's rules, fitting a move, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**, **What these tools cannot tell**.
 

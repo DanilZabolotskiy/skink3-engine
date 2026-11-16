@@ -44,9 +44,13 @@ test('sources: nothing that draws may read a clock or an unseeded random number'
   }
 });
 
-test('fonts: the bundled family ships with its licence', () => {
-  const dir = join(ROOT, 'assets', 'fonts', 'nunito');
-  const files = readdirSync(dir);
-  assert.ok(files.some((f) => f.endsWith('.ttf')));
-  assert.match(readFileSync(join(dir, 'OFL.txt'), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/);
+test('fonts: every bundled family ships with its licence', () => {
+  const families = readdirSync(join(ROOT, 'assets', 'fonts'));
+  assert.ok(families.includes('nunito') && families.length >= 3, 'the typeface of the engine and its fallbacks');
+  for (const family of families) {
+    const dir = join(ROOT, 'assets', 'fonts', family);
+    const files = readdirSync(dir);
+    assert.ok(files.some((f) => f.endsWith('.ttf')), `${family} holds a font file`);
+    assert.match(readFileSync(join(dir, 'OFL.txt'), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/, `${family} holds its licence`);
+  }
 });

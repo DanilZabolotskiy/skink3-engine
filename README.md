@@ -136,15 +136,15 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `bendTo`, `reshape`, `countTo`, `pulse`, `openTo`, `blink`, `cameraTo`, `backgroundTo`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
-| `src/text` | string tables, bundled font, auto-fit layout, label geometry, the block of a free-standing text, counters, subtitles from word timings (.srt, .vtt, .ytt) |
+| `src/text` | string tables, the bundled fonts and what characters they have, auto-fit layout, label geometry, the block of a free-standing text, counters, subtitles from word timings (.srt, .vtt, .ytt) |
 | `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
-| `src/checks` | palette laws, string tables, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
+| `src/checks` | palette laws, string tables, the glyphs of every string, text fit per language (errors), labels covering other nodes (warnings), the motion review and the physics review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups |
 | `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), the sound sheet, PCM WAV read and written |
 | `src/cli`, `bin/` | the `skink3` command |
 | `examples/` | the demo shot, the flow shot, the atlas shot and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
-| `assets/fonts/` | the bundled font family with its licence |
+| `assets/fonts/` | the bundled font families, each with its licence |
 | `bench/` | drawing and physics benchmarks |
 | `tools/metrics/` | style and motion metrics for any video — see [docs/METRICS.md](docs/METRICS.md) |
 | `docs/` | principles, architecture, stack, scene authoring (the guide and its quick reference), motion review, physics review, metrics |
@@ -154,7 +154,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | Phase | Scope | Done when | State |
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
-| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths and camera keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change are built) | three reference shots (dark, light, microscopic) | next |
+| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths and camera keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change, fallback fonts for symbols and Greek with a check of every glyph are built) | three reference shots (dark, light, microscopic) | next |
 | 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, turns and travels whose speed is keyed over time, pulses of light along links and along strokes, squashes, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
 | 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | planned |
@@ -163,4 +163,4 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 
-Not specified yet for the engine's own code. Third-party components keep their own licenses: skia-canvas (MIT), Skia (BSD-3-Clause), Rapier (Apache-2.0); ffmpeg is used as an external binary. The bundled font is Nunito, copyright The Nunito Project Authors, under the SIL Open Font License 1.1 ([assets/fonts/nunito/OFL.txt](assets/fonts/nunito/OFL.txt)).
+Not specified yet for the engine's own code. Third-party components keep their own licenses: skia-canvas (MIT), Skia (BSD-3-Clause), Rapier (Apache-2.0); ffmpeg is used as an external binary. The bundled fonts are under the SIL Open Font License 1.1, each with its licence next to it: Nunito, copyright The Nunito Project Authors ([assets/fonts/nunito/OFL.txt](assets/fonts/nunito/OFL.txt)); Noto Sans and Noto Sans Symbols, copyright The Noto Project Authors ([assets/fonts/noto-sans/OFL.txt](assets/fonts/noto-sans/OFL.txt), [assets/fonts/noto-sans-symbols/OFL.txt](assets/fonts/noto-sans-symbols/OFL.txt)). They are the files their projects publish, unmodified.

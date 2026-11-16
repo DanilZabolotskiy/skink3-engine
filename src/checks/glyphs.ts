@@ -1,0 +1,49 @@
+// Glyphs: every character of every string a shot shows, in every language,
+// must be in one of the bundled fonts. A character that is in none of them
+// would be drawn with whatever font the machine offers for it, or as an empty
+// box: the frame would depend on the machine, and nothing else would notice.
+
+import type { CompiledShot } from '../scene/compile.ts';
+import { formatCount } from '../text/count.ts';
+import { describeChar, missingGlyphs } from '../text/glyphs.ts';
+
+export interface GlyphIssue {
+  readonly lang: string;
+  /** The key of the string. */
+  readonly key: string;
+  /** The characters of it that no bundled font has. */
+  readonly chars: readonly string[];
+  readonly message: string;
+}
+
+/** The characters no bundled font has, in the strings the shot uses, for the given languages. */
+export function checkGlyphs(c: CompiledShot, langs: readonly string[]): GlyphIssue[] {
+  const issues: GlyphIssue[] = [];
+  for (const lang of langs) {
+    const table = c.spec.strings[lang];
+    if (!table) continue;
+    for (const key of c.stringKeys) {
+      const text = table[key];
+      // A missing string is the finding of the strings check.
+      if (typeof text !== 'string') continue;
+      let shown = text;
+      // A counter also shows its number, written the way the language writes numbers: its digits, its signs.
+      for (const n of c.nodes) {
+        if (n.node.type !== 'text' || n.node.text !== key || !n.node.count || !n.count) continue;
+        shown += '0123456789';
+        for (const value of [n.count.base, ...n.count.segs.map((s) => s.to)]) shown += formatCount(value, n.node.count.decimals, lang);
+      }
+      const chars = missingGlyphs(shown);
+      if (chars.length === 0) continue;
+      issues.push({
+        lang,
+        key,
+        chars,
+        message:
+          `"${key}" [${lang}]: no bundled font has ${chars.map(describeChar).join(', ')}; ` +
+          'it would be drawn with a font of the machine, or as an empty box. Write the string without it, or have a font that has it bundled with the engine',
+      });
+    }
+  }
+  return issues;
+}

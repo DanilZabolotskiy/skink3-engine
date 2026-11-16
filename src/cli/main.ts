@@ -34,7 +34,7 @@ import { loadShot } from './load.ts';
 const HELP = `skink3 <command> <scene module> [options]
 
 Commands
-  check   palette laws, string tables and text fit in every language; motion and physics findings in short
+  check   palette laws, string tables, glyphs and text fit in every language; motion and physics findings in short
   bake    simulate physics, springs and particles; write the cache
   still   one or more frames as PNG
   strip   a motion strip: consecutive frames side by side
