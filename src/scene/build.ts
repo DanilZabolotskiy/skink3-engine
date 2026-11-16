@@ -107,6 +107,8 @@ function voice(where: string, value: unknown): { sound?: string } {
 
 function spring(where: string, name: string, value: SpringSpec | undefined): SpringSpec | null {
   if (value === undefined) return null;
+  // A spring is the name of a preset, or its three numbers and nothing else.
+  if (value !== null && typeof value === 'object') checkKeys(`${where} ${name}`, value, ['f', 'z', 'r']);
   try {
     springParams(value);
   } catch (e) {
@@ -991,6 +993,7 @@ export function shot(o: {
     prewarm: num(where, 'physics.prewarm', ph.prewarm ?? P.prewarm, 0, 120),
   };
   const light: LightSpec = o.light ?? { from: 'top-left' };
+  checkKeys(`${where} light`, light, ['from']);
   try {
     lightVector(light);
   } catch (e) {

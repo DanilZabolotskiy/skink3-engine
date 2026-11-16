@@ -17,6 +17,7 @@ Rules that the API enforces:
 |---|---|
 | No on-screen text in scene code | a label takes a string-table **key**; anything that is not a key (for example a sentence) is rejected |
 | No raw colours | every colour is a palette reference `"role.name"`; hex values are rejected |
+| Nothing is dropped | every factory and every intent refuses an option it does not take, by name, with the options it does take: a misspelt option never gives a picture that quietly differs from what was asked |
 | Simple forms only | the shapes are circle, capsule, rounded convex polygon, blob and a free-form region; there are no hands, fingers, feet or limb mechanics to call |
 | Unique ids, valid references | duplicate ids, unknown targets and cross-layer references are rejected |
 | Determinism | the engine never uses `Math.random` or the clock; a scene that generates content must use the seeded `Rng` (see below) |

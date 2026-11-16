@@ -155,6 +155,7 @@ export function pathAt(table: PathTable, s: number): PathPoint {
  * so that a smooth path through them is the arc.
  */
 export function arcPoints(center: Vec2, r: number, from: number, to: number, opts: { step?: number } = {}): Vec2[] {
+  for (const key of Object.keys(opts)) if (key !== 'step') throw new Error(`arcPoints: unknown option "${key}" (allowed: step)`);
   const step = Math.min(45, Math.max(1, opts.step ?? 15));
   const n = Math.max(2, Math.ceil(Math.abs(to - from) / step));
   const out: Vec2[] = [];
@@ -171,6 +172,7 @@ export function arcPoints(center: Vec2, r: number, from: number, to: number, opt
  * in degrees (0 = right of the centre, 90 = below it, 180 = left of it).
  */
 export function loopPoints(center: Vec2, radius: Vec2 | number, opts: { start?: number; clockwise?: boolean; points?: number } = {}): Vec2[] {
+  for (const key of Object.keys(opts)) if (!['start', 'clockwise', 'points'].includes(key)) throw new Error(`loopPoints: unknown option "${key}" (allowed: start, clockwise, points)`);
   const [rx, ry] = typeof radius === 'number' ? [radius, radius] : radius;
   const n = Math.max(4, Math.round(opts.points ?? 8));
   const start = ((opts.start ?? 180) * Math.PI) / 180;

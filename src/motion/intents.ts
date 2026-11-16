@@ -317,7 +317,13 @@ function point(where: string, name: string, value: unknown): Vec2 {
   return [num(where, `${name}[0]`, value[0], -1e6, 1e6), num(where, `${name}[1]`, value[1], -1e6, 1e6)];
 }
 
+/**
+ * Refuses an option an intent does not take. A misspelt option, or one that
+ * belongs to another intent, would otherwise be dropped without a word and
+ * the picture would quietly differ from what was asked.
+ */
 function only(where: string, opts: object, allowed: readonly string[]): void {
+  if (opts === null || typeof opts !== 'object' || Array.isArray(opts)) throw new IntentError(`${where}: the second argument is an options object, e.g. { at: 1 }`);
   for (const key of Object.keys(opts)) {
     if (!allowed.includes(key)) throw new IntentError(`${where}: unknown option "${key}" (allowed: ${allowed.join(', ')})`);
   }
@@ -407,6 +413,7 @@ export function moveTo(
   },
 ): MoveToKey {
   const w = `moveTo("${id}")`;
+  only(w, opts, ['at', 'arrive', 'to', 'dur', 'anticipation', 'overshoot', 'arc', 'profile', 'ramp', 'sound']);
   if (!Array.isArray(opts.to) || opts.to.length !== 2) throw new IntentError(`${w}: to must be [x, y]`);
   const profile = profileOf(w, opts.profile, MOVE_PROFILES, 'settle');
   const settle = profile === 'settle';
@@ -559,6 +566,7 @@ export function travel(
 /** Make a node appear: it grows from nothing, overshoots its size and settles. Hidden before `at`. */
 export function popIn(id: string, opts: { at: number; dur?: number; overshoot?: number; sound?: string | false }): PopInKey {
   const w = `popIn("${id}")`;
+  only(w, opts, ['at', 'dur', 'overshoot', 'sound']);
   return {
     kind: 'popIn',
     target: target(w, id),
@@ -572,6 +580,7 @@ export function popIn(id: string, opts: { at: number; dur?: number; overshoot?: 
 /** Make a node disappear: a small swell, then it shrinks to nothing. */
 export function popOut(id: string, opts: { at: number; dur?: number; sound?: string | false }): PopOutKey {
   const w = `popOut("${id}")`;
+  only(w, opts, ['at', 'dur', 'sound']);
   return {
     kind: 'popOut',
     target: target(w, id),
@@ -666,6 +675,7 @@ export function scaleTo(id: string, opts: { at: number; to: number | Vec2; pivot
  */
 export function fadeTo(id: string, opts: { at: number; to: number; dur?: number; sound?: string | false }): FadeToKey {
   const w = `fadeTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'sound']);
   return {
     kind: 'fadeTo',
     target: target(w, id),
@@ -708,6 +718,7 @@ export function levelTo(
  */
 export function openTo(eyeId: string, opts: { at: number; to: number; dur?: number; overshoot?: number; sound?: string | false }): OpenToKey {
   const w = `openTo("${eyeId}")`;
+  only(w, opts, ['at', 'to', 'dur', 'overshoot', 'sound']);
   return {
     kind: 'openTo',
     target: target(w, eyeId),
@@ -722,12 +733,14 @@ export function openTo(eyeId: string, opts: { at: number; to: number; dur?: numb
 /** Make an eye blink at a chosen moment, in addition to its own schedule. */
 export function blink(eyeId: string, opts: { at: number; sound?: string | false }): BlinkKey {
   const w = `blink("${eyeId}")`;
+  only(w, opts, ['at', 'sound']);
   return { kind: 'blink', target: target(w, eyeId), at: num(w, 'at', opts.at, MIN_T, MAX_T), ...voiced(w, opts) };
 }
 
 /** A quick swell-and-settle of a node's scale: a reaction, a beat. */
 export function bump(id: string, opts: { at: number; amount?: number; sound?: string | false }): BumpKey {
   const w = `bump("${id}")`;
+  only(w, opts, ['at', 'amount', 'sound']);
   return {
     kind: 'bump',
     target: target(w, id),
@@ -826,6 +839,7 @@ export function bendTo(linkId: string, opts: { at: number; to: number; dur?: num
 /** Send a glowing pulse along a link, from its `from` end to its `to` end. */
 export function pulse(linkId: string, opts: { at: number; dur?: number; bump?: number; sound?: string | false }): PulseKey {
   const w = `pulse("${linkId}")`;
+  only(w, opts, ['at', 'dur', 'bump', 'sound']);
   return {
     kind: 'pulse',
     target: target(w, linkId),
@@ -930,6 +944,7 @@ export function stagger(
   make: (id: string, at: number, index: number) => Key | readonly Key[],
 ): Key[] {
   const w = 'stagger';
+  only(w, opts, ['at', 'each', 'order']);
   const at = num(w, 'at', opts.at, MIN_T, MAX_T);
   const each = num(w, 'each', opts.each, 0, 60);
   const n = ids.length;

@@ -27,7 +27,7 @@ const scene = shot({
 export default scene;
 ```
 
-Colours: palette references only; on-screen text: keys of `strings` only (every key in every language); random numbers: `Rng` only. A mistake is rejected with a message that says what to change.
+Colours: palette references only; on-screen text: keys of `strings` (every key in every language); random numbers: `Rng` only. A mistake, or an option that is not taken, is rejected with a message that says what to change.
 
 ## Shot, camera, layers
 
@@ -101,7 +101,7 @@ blink('pupil', { at: 3 });
 stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
 ```
 
-- A negative `at` (down to -600): the key is under way at frame 0.
+- A negative `at` (to -600): the key is under way at frame 0.
 - `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles: it first arrives at 0.52 of `dur`, peaking at 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). These arrive at `at + dur` exactly.
 
 ## Effects (opt-in)
@@ -159,7 +159,7 @@ Output: `./out/<shot id>/`; cache: `./cache/`; every command bakes when it must.
 
 ## Reading the reviews
 
-Each kind of finding (a warning): what it means, and the usual fix:
+Each kind of finding (a warning), and the usual fix:
 
 - `jump`: a teleport or pop: check the keys there; change place while hidden.
 - `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or use `'ease'` or `'in'`.
