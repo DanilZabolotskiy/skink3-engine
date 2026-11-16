@@ -133,7 +133,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/shape` | circle, capsule, rounded convex polygon and blob as data and as paths; helpers over the path operations |
 | `src/look` | colour math, palette by role with the law validator, automatic light (crescents, rim, highlight, glow numbers), atmospheric perspective |
 | `src/scene` | scene description types, factory functions (shapes as covers, backdrops, clips and contents with a level), compiler (validation, tracks, bake slots), pure evaluation of a frame |
-| `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `pulse`, `openTo`, `blink`, `cameraTo`), `stagger`, the curves behind them, free-form paths measured by their length |
+| `src/motion` | intents (`moveTo` with speed profiles, `hop`, `travel`, `popIn`, `popOut`, `turnTo`, `scaleTo`, `fadeTo`, `levelTo`, `bump`, `squash`, `drawOn`, `solidTo`, `bendTo`, `countTo`, `pulse`, `openTo`, `blink`, `cameraTo`), `stagger`, the curves behind them, free-form paths measured by their length |
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, parallax view of a depth layer |
 | `src/text` | string tables, bundled font, auto-fit layout, label geometry, the block of a free-standing text, counters, subtitles from word timings (.srt, .vtt, .ytt) |

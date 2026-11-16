@@ -388,6 +388,23 @@ A curved line between two nodes of the same layer. It follows them as they move.
 
 List links before the nodes they join, so the nodes are drawn over the ends. A link is hidden while either of its nodes is hidden, and it fades with the fainter of the two. Animate it with `drawOn` and `pulse`. A pulse is drawn as travelling light: a bright head with a tail that narrows and fades.
 
+#### A link that sags and pulls taut
+
+The `bend` of a link is set once; `bendTo` changes it over time, so a line can hang slack, pull taut and swing.
+
+```ts
+link({ id: 'line', from: 'post0', to: 'post1', color: 'mid.mist', bend: -0.3 }),   // it hangs
+// timeline
+bendTo('line', { at: 3.4, to: 0, dur: 0.9 }),      // it pulls taut: past the straight line, back, and straight
+bendTo('line', { at: 6.2, to: 0.22, dur: 1.2 }),   // and sags again, to the other side
+```
+
+- `to` is the new bend: the sideways bulge as a fraction of the link's length, as for `bend`; `0` is a straight, taut line and the sign picks the side. `dur` (0.8) is the time it takes.
+- **It swings past the new bend** by `overshoot` (0.25 of the change) and settles; `overshoot: 0` only arrives.
+- **Keys chain:** each starts from the bend reached at its moment.
+- The ends of the link stay on its two nodes; only its middle moves. A `bendTo` makes no event; the motion review counts a line whose bend changes as life in the frame.
+- It is a look: there is no rope and no weight. For a line that hangs between more than two points, use a `stroke`.
+
 ### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, clipTo?, sound? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
@@ -578,6 +595,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
+| `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
 | `blink(eyeId, { at })` | eye | | one blink at that moment, on top of the eye's own schedule |
@@ -987,7 +1005,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo`, a `countTo` and a `cameraTo` are no events.
+- A `solidTo`, a `countTo`, a `bendTo` and a `cameraTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 
@@ -1276,4 +1294,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin and Cyrillic, no check that the font has every glyph of a string, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

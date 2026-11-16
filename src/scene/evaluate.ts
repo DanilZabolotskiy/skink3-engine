@@ -8,6 +8,7 @@ import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import {
   sampleAxis,
+  sampleBend,
   sampleCount,
   sampleDrawn,
   sampleLevel,
@@ -651,7 +652,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const r0 = reachOf(c.nodes[n.fromIndex]!, from, dir, t) + node.gap;
           const r1 = reachOf(c.nodes[n.toIndex]!, to, [-dir[0], -dir[1]], t) + node.gap;
           if (len <= r0 + r1 + 1) break;
-          const mid: Vec2 = [(from.x + to.x) / 2 - dir[1] * node.bend * len, (from.y + to.y) / 2 + dir[0] * node.bend * len];
+          // The bend the link was given, or the one a bendTo has brought it to.
+          const bend = n.link!.bends.length > 0 ? sampleBend(n.link!, node.bend, t) : node.bend;
+          const mid: Vec2 = [(from.x + to.x) / 2 - dir[1] * bend * len, (from.y + to.y) / 2 + dir[0] * bend * len];
           const curve = quadSub([[from.x, from.y], mid, [to.x, to.y]], r0 / len, 1 - r1 / len);
           const pulses: { head: number; tail: number }[] = [];
           for (const p of n.link!.pulses) {

@@ -34,7 +34,7 @@ Colours: palette references only; on-screen text: keys of `strings` only (every 
 ```ts
 shot({ ...scene, /* = */ light: { from: 'top-left' }, vignette: 0.5, camera: { at: [0, 0], drift: { speed: 0.5, heading: 0, wander: 10, period: 7 }, pushIn: { from: 1, to: 1.05 }, focus: { far: 6, near: 60 } } });
 shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } }); // opt-in
-cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a key of the timeline: zoom, to, or both; keys chain
+cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // zoom, to, or both; keys chain
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
@@ -54,14 +54,14 @@ blob({ id: 'buddy', fill: 'accent.amber', r: 50, /* = */ points: 9, wobble: 0.14
 region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // a free-form outline, concave allowed; no body
 group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: no turning with its parent
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
-stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, at, rotation, scale, opacity
+stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, at, rotation, scale
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /* = */ side: 'top', size: 38, maxWidth: 420, maxLines: 3 });
-text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // no pointer; + box: a colour, count, at, rotation, scale, opacity
+text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // no pointer; + box: a colour, count, at, rotation, scale
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
 - Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`. All but `region` are convex; a `group` composes them. `children` are drawn over their parent.
-- `stroke`: `smooth` 0 joins the points with straight lines; `arcPoints(center, r, from, to)` gives an arc or a ring (degrees).
+- `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `label`: its tail points at the edge of `target` on `side`; the text wraps, then shrinks, never cut. `text`: free-standing; as a child of a shape it lies on it; in a `layer` with `parallax: 0` it belongs to the frame.
 
 ## Springs and rigid bodies (opt-in)
@@ -84,7 +84,7 @@ moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive: when it first reaches `to
 hop('buddy', { at: 4.3, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur:, or speeds: [[s, speed], ...]); + roll: r, a wheel of that radius
 turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); speed: degrees per second, instead of to
-scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy] + pivot: [x, y]: along its own axes (a bar from one end)
+scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes (a bar from one end)
 fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 }); // an opacity
 popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /* = */ dur: 0.35 });
@@ -92,8 +92,9 @@ bump('c', { at: 2, /* = */ amount: 0.14 }); // a kick of the size, 0.7 s
 squash('buddy', { at: 5, /* = */ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
 countTo('total', { at: 2, to: 1500, /* = */ dur: 1, profile: 'ease' }); // a text with count: 0 and "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
-drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share; keys chain), profile, ramp
+drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of a dashed stroke
+bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // it pulls taut (0), or sags
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node
 openTo('pupil', { at: 0.5, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
@@ -124,7 +125,7 @@ sfx('chime', { at: 6.5, /* = */ gain: 1 }); // a sound placed by hand, as on a w
 
 - `skink3 sfx` makes the track from the events of the shot (every intent, contact and burst) and a bank the production brings: one event, one sound; only what is seen sounds; the bank's rules drop most of the rest. No pixel or bake changes.
 - The bank can give a sound `rules` of its own, set it `apart` (a pour as a shower) or fit it to a move (`anchor`, `pan`, `pick`): see Sound.
-- You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`), a tile per sound with its frame, its node ringed and an arrow along a move.
+- You cannot hear the track: read `sfx --sheet` (`out/<shot>/sfx_sheet.png`): a tile per sound, its frame, its node ringed, an arrow along a move.
 
 ## Words, subtitles, generated content
 
@@ -177,7 +178,7 @@ Each kind of finding (a warning): what it means, and the usual fix:
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
 
-Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. What is meant is marked, with its reason:
+Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with its reason:
 
 ```ts
 shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // the window is optional; subjects may be '(camera)', '(frame)', '(frame:top-left)'

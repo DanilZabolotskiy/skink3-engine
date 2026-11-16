@@ -13,6 +13,7 @@ import { frameCount } from '../core/time.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, type Palette } from '../look/palette.ts';
 import type {
+  BendToKey,
   BumpKey,
   CameraToKey,
   CountToKey,
@@ -252,6 +253,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const draws = new Map<number, DrawOnKey[]>();
   const solids = new Map<number, SolidToKey[]>();
   const counts = new Map<number, CountToKey[]>();
+  const bends = new Map<number, BendToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
@@ -362,6 +364,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'pulse':
         need(node.type === 'link', 'links');
         push(pulses, index, key);
+        break;
+      case 'bendTo':
+        need(node.type === 'link', 'links');
+        push(bends, index, key);
         break;
       case 'openTo':
         need(node.type === 'eye', 'eyes');
@@ -552,7 +558,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? [], scales.get(d.index) ?? []);
       }
       if (node.type === 'link') {
-        linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? []);
+        linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? [], bends.get(d.index) ?? [], node.bend);
       }
     } catch (e) {
       fail(`${where}: ${(e as Error).message}`);

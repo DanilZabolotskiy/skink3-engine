@@ -9,15 +9,16 @@
 // where the block goes. Three bars grow from their feet, and one comes down
 // again in two steps. A counter runs with the route. Under it all lies an
 // island with a bay, one shape with one light. In the ring a cog spins, and
-// slows to rest. A scout runs the last stretch, faster and then slower.
+// slows to rest. A scout runs the last stretch, faster and then slower. A
+// line between two posts hangs slack, pulls taut and sags again.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
 // profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
 // and on a shape, scaleTo() along one axis with a pivot, a counter with
 // countTo(), region(), a free-form outline, turnTo() with a speed and a
-// profile, and travel() with keys of speed.
+// profile, travel() with keys of speed, and bendTo().
 
-import { arcPoints, cameraTo, circle, countTo, drawOn, fadeTo, layer, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, bendTo, cameraTo, circle, countTo, drawOn, fadeTo, layer, link, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -56,6 +57,9 @@ const timeline: Key[] = [
   drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),
   drawOn('chart', { at: 0.6, dur: 2.2, profile: 'steady' }),
   fadeTo('fence', { at: 5.5, to: 1, dur: 0.8 }),
+  // The line between the posts: taut when the bars are up, slack again later.
+  bendTo('line', { at: 3.4, to: 0, dur: 0.9 }),
+  bendTo('line', { at: 6.2, to: 0.22, dur: 1.2 }),
   // The cog is under way when the shot starts, turns at one speed, and comes to rest with the same speed handed on.
   turnTo('cog', { at: -1, dur: 7, speed: 50 }),
   turnTo('cog', { at: 6, dur: 3, speed: 50, profile: 'out' }),
@@ -94,6 +98,9 @@ export default shot({
         stroke({ id: 'chart', points: CHART, color: 'accent.coral', width: 7, smooth: 0 }),
         rect({ id: 'block', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children: [text({ id: 'tag', text: 'block.tag', ink: 'light.cream', size: 34, maxWidth: 200 })] }),
         stroke({ id: 'fence', at: [560, 300], points: [[-150, -105], [150, -105], [150, 105], [-150, 105]], closed: true, smooth: 0.25, color: 'mid.mist', width: 5, dash: [18, 14], opacity: 0 }),
+        link({ id: 'line', from: 'post0', to: 'post1', color: 'mid.mist', width: 5, bend: -0.3 }),
+        circle({ id: 'post0', at: [-760, -120], r: 14, fill: 'mid.rose' }),
+        circle({ id: 'post1', at: [-480, -150], r: 14, fill: 'mid.rose' }),
         ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [70 + i * 70, 440], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
         polygon({ id: 'cog', at: [-180, -300], sides: 6, r: 38, fill: 'mid.violet' }),
         stroke({ id: 'ring', at: [-180, -300], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),

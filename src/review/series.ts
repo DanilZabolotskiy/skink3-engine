@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import { sampleAxis, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
@@ -113,7 +113,7 @@ export interface LinkSeries {
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly half: Float32Array;
-  /** 1 while a pulse travels along it or it is being drawn on. */
+  /** 1 while a pulse travels along it, it is being drawn on, or its bend changes. */
   readonly active: Uint8Array;
   readonly flags: Uint8Array;
 }
@@ -610,6 +610,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       for (const p of n.link!.pulses) {
         if (p.at > t) break;
         if (pulseSpan(t, p.at, p.dur)) active = true;
+      }
+      // A bend that changes moves the middle of the line sideways.
+      if (!active && n.link!.bends.length > 0 && n.node.type === 'link') {
+        active = Math.abs(sampleBend(n.link!, n.node.bend, t) - sampleBend(n.link!, n.node.bend, t - 1 / FPS)) * 2 * half * zoom >= T.alivePx;
       }
       s.active[f] = active ? 1 : 0;
     }

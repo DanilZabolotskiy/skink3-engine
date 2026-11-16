@@ -154,6 +154,18 @@ export interface SolidToKey extends Voiced {
   readonly dur: number;
 }
 
+/** Change the bend of a link: it sags, pulls taut, swings. */
+export interface BendToKey extends Voiced {
+  readonly kind: 'bendTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new bend: the sideways bulge as a fraction of the link's length; 0 is a straight, taut line. */
+  readonly to: number;
+  readonly dur: number;
+  /** How far it swings past the new bend, as a fraction of the change. */
+  readonly overshoot: number;
+}
+
 export interface PulseKey extends Voiced {
   readonly kind: 'pulse';
   readonly target: string;
@@ -276,6 +288,7 @@ export type Key =
   | SquashKey
   | DrawOnKey
   | SolidToKey
+  | BendToKey
   | PulseKey
   | OpenToKey
   | BlinkKey
@@ -787,6 +800,26 @@ export function solidTo(strokeId: string, opts: { at: number; to?: number; dur?:
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to ?? 1, 0, 1),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 600),
+  };
+}
+
+/**
+ * Change the bend of a link over time: `to` is its new bulge as a fraction of
+ * its length (0 is a taut, straight line; the sign picks the side, as for the
+ * link's own `bend`). It swings past the new bend by `overshoot` and settles,
+ * so a line pulls taut, sags or goes slack. Several keys chain from the bend
+ * reached at that moment.
+ */
+export function bendTo(linkId: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): BendToKey {
+  const w = `bendTo("${linkId}")`;
+  only(w, opts, ['at', 'to', 'dur', 'overshoot']);
+  return {
+    kind: 'bendTo',
+    target: target(w, linkId),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, -1, 1),
+    dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 60),
+    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.25, 0, 0.5),
   };
 }
 

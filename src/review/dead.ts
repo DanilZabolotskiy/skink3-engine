@@ -3,7 +3,8 @@
 //
 // "Alive" means that something visible there changes by itself: a node moves,
 // turns, grows, fades or blinks, a pulse runs along a link, a link or a stroke
-// is being drawn, the dashes of a stroke close, a particle travels. The camera is left out on purpose: its drift
+// is being drawn, the dashes of a stroke close, a link sags or pulls taut, a
+// particle travels. The camera is left out on purpose: its drift
 // slides the whole picture, and a picture that only slides is still a hold.
 // An area with nothing in it counts as dead too.
 //

@@ -6,6 +6,7 @@ import { overshootStep } from '../core/dynamics.ts';
 import type { Vec2 } from '../core/math.ts';
 import { arcBump, bumpScale, BUMP_SECONDS, DEFAULT_RAMP, moveProgress, popInScale, popOutScale, profileRamps, rampProgress, speedDistance, type MoveProfile, type SpeedKeys } from './curves.ts';
 import type {
+  BendToKey,
   BumpKey,
   CountToKey,
   DrawOnKey,
@@ -573,15 +574,33 @@ export interface LinkTrack {
   /** null: the link is fully drawn from the start. */
   readonly drawOn: { readonly at: number; readonly dur: number } | null;
   readonly pulses: readonly { readonly at: number; readonly dur: number }[];
+  /** Changes of its bend, each from the bend reached before it; empty: the bend the link was given. */
+  readonly bends: readonly LidSeg[];
 }
 
-export function buildLinkTrack(id: string, draws: readonly DrawOnKey[], pulses: readonly PulseKey[]): LinkTrack {
+/** The bend of a link at time t: `base` is the bend it was given. */
+export function sampleBend(track: LinkTrack, base: number, t: number): number {
+  let seg: LidSeg | null = null;
+  for (const s of track.bends) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  return seg.from + (seg.to - seg.from) * overshootStep(u, seg.overshoot, 0.5);
+}
+
+export function buildLinkTrack(id: string, draws: readonly DrawOnKey[], pulses: readonly PulseKey[], bends: readonly BendToKey[] = [], bend = 0): LinkTrack {
   if (draws.length > 1) throw new TrackError(`link "${id}" has ${draws.length} drawOn keys; a link is drawn on once`);
   const d = draws[0];
-  return {
-    drawOn: d ? { at: d.at, dur: d.dur } : null,
-    pulses: pulses.map((p) => ({ at: p.at, dur: p.dur })).sort((a, b) => a.at - b.at),
-  };
+  const pulseList = pulses.map((p) => ({ at: p.at, dur: p.dur })).sort((a, b) => a.at - b.at);
+  // A bendTo takes over from the bend reached at its moment, also when the one before is still under way.
+  const segs: LidSeg[] = [];
+  for (const k of bends.slice().sort((a, b) => a.at - b.at)) {
+    segs.push({ at: k.at, dur: k.dur, from: sampleBend({ drawOn: null, pulses: [], bends: segs }, bend, k.at), to: k.to, overshoot: k.overshoot });
+  }
+  return { drawOn: d ? { at: d.at, dur: d.dur } : null, pulses: pulseList, bends: segs };
 }
 
 /** How much of the link is drawn at time t, 0..1. */
