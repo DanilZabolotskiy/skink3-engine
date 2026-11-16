@@ -126,9 +126,9 @@ const vessel: SceneNode[] = [
 // --- A creature that hops onto a step ------------------------------------------
 
 const BUDDY_R = 50;
-const STEP: Vec2 = [672, 240];
+const STEP: Vec2 = [610, 240];
 const STEP_TOP = STEP[1] - 60;
-const buddyStart: Vec2 = [824, GROUND_Y - BUDDY_R];
+const buddyStart: Vec2 = [762, GROUND_Y - BUDDY_R];
 const buddyOnStep: Vec2 = [STEP[0], STEP_TOP - BUDDY_R];
 const HOP_AT = 4.3;
 const HOP_SECONDS = 0.72;
