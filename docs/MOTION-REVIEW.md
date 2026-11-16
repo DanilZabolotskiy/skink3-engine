@@ -123,7 +123,7 @@ Things that are legitimate and are not flagged:
 | abrupt start, abrupt stop | yes | size only | – | – | yes |
 | mechanical | yes | size only | – | – | no |
 | too-fast | yes | yes | per emitter | pulses | no |
-| dead-area | count as alive while they move | the same | the same | while a pulse runs or the link is drawn on | never counts |
+| dead-area | count as alive while they move | the same | the same | while a pulse runs, the link is drawn on or its bend changes | never counts |
 
 A content with a level (a shape that fills from the bottom) has one more channel: `level`, the travel of its surface in px. It is judged like a move: a jump, an abrupt start or stop, one speed between two rests. Its children ride on the surface and are judged on their own motion, which includes that ride. A level that moves, or a surface that ripples, counts as alive.
 
@@ -140,7 +140,11 @@ Whether the simulation itself is sound is a different question: bodies that sink
 - **Behind a cover** is judged on nine points of a shape or an eye: its middle and eight points of its edge. It is hidden when every one of them lies under a cover that is at least 95 % opaque and is drawn after it in the same layer. One point that shows, and the node is seen.
 - **Too fast** is the only check in screen space: the step of a node on screen divided by its size along that step. A part is measured against its parent as the parent is turned at each moment, so a ball on a stick that whips round is caught, and an eye on a body that pops in is not.
 - **Springs.** A response starts when the node leaves its rest place (where it would be without the spring) by 0.5 px and ends when it is back within it. Reported per response: the largest lag, the overshoot past the rest place, the number of visible swings (1 px or more) after the target stopped, how long it kept swinging, and when it settled.
-- **Alive** means that something visible changes by itself: a node moves, turns, grows, fades or blinks, a pulse runs, a link is drawn on, a particle travels. A thing counts in every region that the circle around it touches. An area with nothing in it is dead too. The camera never counts: a picture that only slides is still a hold.
+- **Alive** means that something visible changes by itself: a node moves, turns, grows, fades or blinks, changes its width or its height, a pulse runs, a link is drawn on or changes its bend, a stroke is drawn on or its dashes close, a counter runs, a particle travels. A thing counts in every region that the circle around it touches. An area with nothing in it is dead too. The camera never counts: a picture that only slides is still a hold.
+
+- **Strokes and free-standing texts** are nodes like shapes: their moves, turns, sizes and fades are judged as a shape's. A stroke that is being drawn, a counter that runs and a link that bends are not judged for their speed; they count as life.
+- **A change of width and height** (`scaleTo` with `to: [sx, sy]`) is judged on the scale channel, as the travel of the edge along each axis, the larger of the two.
+- **Camera keys** (`cameraTo`) are judged as the camera always is: a jump, an abrupt start or stop of its position or of its zoom. A keyed zoom is measured as a ratio, because that is what it is to the eye: a zoom from 10 to 20 is the change that one from 1 to 2 is.
 
 ## Thresholds
 
