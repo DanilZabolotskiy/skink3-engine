@@ -24,10 +24,17 @@ export interface CapsuleSpec {
 
 export interface PolygonSpec {
   readonly kind: 'polygon';
-  /** Outer corners of a convex polygon, before rounding. */
+  /** Outer corners of a convex polygon, before rounding. For a region: the points its outline runs through, clockwise on screen. */
   readonly points: readonly Vec2[];
-  /** Corner radius. */
+  /** Corner radius. 0 for a region. */
   readonly radius: number;
+  /**
+   * Present: the polygon is a region, a free-form closed outline through its
+   * points that may be concave. 0 joins the points with straight edges, 1 with
+   * a smooth curve through them; between, the corners are partly rounded.
+   * Left out: a rounded convex polygon.
+   */
+  readonly smooth?: number;
 }
 
 export interface BlobSpec {
@@ -42,16 +49,19 @@ export interface BlobSpec {
   readonly seed: number;
 }
 
-/** A free-form closed outline through a list of points: it may be concave, with bays and capes. */
-export interface RegionSpec {
-  readonly kind: 'region';
-  /** The points the outline runs through, clockwise on screen. */
-  readonly points: readonly Vec2[];
-  /** 0 joins the points with straight edges, 1 with a smooth curve through them; between, the corners are partly rounded. */
-  readonly smooth: number;
-}
+/**
+ * A free-form closed outline through a list of points: it may be concave, with
+ * bays and capes. It is kept as a polygon that has a `smooth`, so that the
+ * kinds of shape stay the four that code may switch over.
+ */
+export type RegionSpec = PolygonSpec & { readonly smooth: number };
 
-export type ShapeSpec = CircleSpec | CapsuleSpec | PolygonSpec | BlobSpec | RegionSpec;
+export type ShapeSpec = CircleSpec | CapsuleSpec | PolygonSpec | BlobSpec;
+
+/** True for a polygon that is a region: a free-form outline, possibly concave. */
+export function isRegion(spec: ShapeSpec): spec is RegionSpec {
+  return spec.kind === 'polygon' && spec.smooth !== undefined;
+}
 
 export class ShapeError extends Error {}
 
@@ -224,7 +234,7 @@ export function regionShape(points: readonly Vec2[], smooth = 1): RegionSpec {
   const area = signedArea(points);
   need(Math.abs(area) > 1e-6, 'region: the points enclose no area');
   const cw = (area > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
-  const spec: RegionSpec = { kind: 'region', points: cw, smooth };
+  const spec: RegionSpec = { kind: 'polygon', points: cw, radius: 0, smooth };
   // The outline as it is drawn must not cross itself: a shape has one inside.
   const ring: Vec2[] = [];
   for (const s of regionSegments(spec)) for (let k = 0; k < 12; k++) ring.push(cubicAt(s, k / 12));
@@ -250,8 +260,6 @@ export function scaleShape(spec: ShapeSpec, k: number): ShapeSpec {
       return { ...spec, points: spec.points.map((p) => [p[0] * k, p[1] * k] as Vec2), radius: spec.radius * k };
     case 'blob':
       return { ...spec, r: spec.r * k };
-    case 'region':
-      return { ...spec, points: spec.points.map((p) => [p[0] * k, p[1] * k] as Vec2) };
   }
 }
 
@@ -332,6 +340,11 @@ function denseOutline(spec: ShapeSpec): Vec2[] {
       break;
     }
     case 'polygon': {
+      if (isRegion(spec)) {
+        // A region: the curve through its points.
+        for (const s of regionSegments(spec)) for (let k = 0; k < 24; k++) out.push(cubicAt(s, k / 24));
+        break;
+      }
       const n = spec.points.length;
       if (spec.radius <= 0) {
         for (let i = 0; i < n; i++) {
@@ -361,9 +374,6 @@ function denseOutline(spec: ShapeSpec): Vec2[] {
       // Control points run with increasing angle, which is clockwise on screen already.
       break;
     }
-    case 'region':
-      for (const s of regionSegments(spec)) for (let k = 0; k < 24; k++) out.push(cubicAt(s, k / 24));
-      break;
   }
   return out;
 }
@@ -440,7 +450,7 @@ export function shapeExtent(spec: ShapeSpec): ShapeExtent {
     center = [(c0[0] + c1[0]) / 2, (c0[1] + c1[1]) / 2];
     inner = spec.r;
     outer = spec.length / 2;
-  } else if (spec.kind === 'region') {
+  } else if (isRegion(spec)) {
     // A free-form outline may be concave: its middle is the point inside it that is farthest from its edge
     // (the middle of the largest circle that fits in it), found on a grid and then on a finer one round the best.
     const pts = outline(spec, 256);

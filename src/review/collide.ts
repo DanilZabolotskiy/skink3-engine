@@ -61,16 +61,12 @@ export function colliderOf(shape: ShapeSpec, scale = 1): Collider {
       radius = shape.r;
       break;
     case 'polygon':
-      pts = shape.radius > 0 ? insetConvex(shape.points, shape.radius) : shape.points.slice();
+      // A region is never a body; its hull stands in where a collider is asked for.
+      pts = shape.smooth !== undefined ? convexHull(outline(shape, 48)) : shape.radius > 0 ? insetConvex(shape.points, shape.radius) : shape.points.slice();
       radius = shape.radius;
       break;
     case 'blob':
       pts = convexHull(outline(shape, 28));
-      radius = 0;
-      break;
-    case 'region':
-      // Never a body; its hull stands in where a collider is asked for.
-      pts = convexHull(outline(shape, 48));
       radius = 0;
       break;
   }

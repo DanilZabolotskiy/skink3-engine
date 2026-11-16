@@ -23,7 +23,7 @@ import {
   type ShotSpec,
   type Vec2,
 } from '../src/index.ts';
-import { outlineOf, shapeExtent } from '../src/shape/geometry.ts';
+import { isRegion, outlineOf, shapeExtent } from '../src/shape/geometry.ts';
 
 // A region: a free-form closed outline through points, concave allowed, as one shape.
 
@@ -74,13 +74,16 @@ function inside(poly: readonly Vec2[], x: number, y: number): boolean {
 test('region: a concave outline through its points is one shape, filled inside and nowhere else', async () => {
   const node = region({ id: 'c', points: C, fill: 'accent.pink', smooth: 0, lit: false });
   assert.equal(node.type, 'shape');
-  assert.deepEqual([node.shape.kind, node.shape.kind === 'region' && node.shape.smooth, node.shape.kind === 'region' && node.shape.points], ['region', 0, C]);
+  // It is kept as a polygon with a `smooth`: the kinds of shape are the four they were.
+  assert.deepEqual([node.shape.kind, isRegion(node.shape), isRegion(node.shape) && node.shape.smooth, isRegion(node.shape) && node.shape.points, isRegion(node.shape) && node.shape.radius], ['polygon', true, 0, C, 0]);
   // Given the other way round, the points are kept clockwise on screen.
   const reversed = region({ id: 'c', points: [...C].reverse(), fill: 'accent.pink', smooth: 0 }).shape;
-  assert.deepEqual(reversed.kind === 'region' && reversed.points, C);
-  assert.equal(region({ id: 'c', points: C, fill: 'accent.pink', smooth: 0.2 }).shape.kind === 'region' && region({ id: 'c', points: [[0, 0], [100, 0], [0, 100]], fill: 'accent.pink' }).shape.kind, 'region');
+  assert.deepEqual(isRegion(reversed) && reversed.points, C);
   const smooth = region({ id: 'c', points: [[0, 0], [100, 0], [0, 100]], fill: 'accent.pink' }).shape;
-  assert.equal(smooth.kind === 'region' && smooth.smooth, 1, 'smooth by default');
+  assert.equal(isRegion(smooth) && smooth.smooth, 1, 'smooth by default');
+  // A polygon made as a polygon is none: it has no `smooth` at all.
+  const convex = polygon({ id: 'p', fill: 'accent.pink', points: [[0, 0], [100, 0], [0, 100]] }).shape;
+  assert.ok(!isRegion(convex) && !('smooth' in convex));
 
   // The picture: its arms and its back are filled, its bay is not, and nothing beyond it.
   const at = await reader(make([node]));

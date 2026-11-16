@@ -77,6 +77,8 @@ export function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAP
         .setTranslation((c0[0] + c1[0]) / 2, 0);
     }
     case 'polygon': {
+      // The factory refuses a region as a body; a free-form outline has no convex collider.
+      if (shape.smooth !== undefined) throw new Error(`body "${id}": a region cannot be a rigid body`);
       const pts = shape.radius > 0 ? insetConvex(shape.points, shape.radius) : shape.points;
       const flat = new Float32Array(pts.length * 2);
       pts.forEach((p, i) => {
@@ -98,9 +100,6 @@ export function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAP
       if (!desc) throw new Error(`body "${id}": could not build a convex collider from the blob`);
       return desc;
     }
-    case 'region':
-      // The factory refuses a region as a body; a free-form outline has no convex collider.
-      throw new Error(`body "${id}": a region cannot be a rigid body`);
   }
 }
 
