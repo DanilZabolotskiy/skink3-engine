@@ -437,14 +437,15 @@ Rules:
 |---|---|---|
 | it stops backing away and goes | 0.24 | 0.24 with an `anticipation`, 0 without |
 | it first reaches the destination | 0.52 | 0.47 to 0.55 with an `anticipation` and an `overshoot`; 0.30 to 0.36 with an `overshoot` alone; exactly 1 without an `overshoot` (the move is then an ease-out) |
-| the rest | overshoot and settle | |
+| it is farthest past the destination | 0.62 | 0.62 with an `anticipation`, 0.5 without; never without an `overshoot` |
+| the rest | it settles | |
 
 Most of the travel happens in about a quarter of the duration, so the peak speed is 5.6 times the mean with the defaults (about 4 without an anticipation, more with a large one): a long move needs a long `dur` to stay under the strobing limit of the motion review, or the profile `'ease'`. Two things spare you the arithmetic:
 
 ```ts
 import { moveTimes, moveTo } from 'skink3-engine';
 
-const { leaves, arrives } = moveTimes({ dur: 1.2 });       // seconds after `at`, for the options you give (here the defaults)
+const { leaves, arrives, peaks } = moveTimes({ dur: 1.2 }); // seconds after `at`, for the options you give (here the defaults)
 moveTo('ball', { arrive: 6.5, to: [200, 0], dur: 1.2 });   // placed by the moment it first reaches its destination
 ```
 

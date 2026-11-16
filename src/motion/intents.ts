@@ -235,19 +235,20 @@ const RAMPED: readonly Exclude<MoveProfile, 'settle'>[] = ['ease', 'steady', 'in
 
 /**
  * The moments of a move, in seconds after its `at`: when it leaves its place
- * (after the anticipation, if it has one), and when it first reaches its
- * destination. With the profile settle the rest of the duration is overshoot
- * and settle; every other profile, and a hop, arrives at the very end.
+ * (after the anticipation, if it has one), when it first reaches its
+ * destination, and when it is farthest past it. With the profile settle the
+ * rest of the duration is settling; every other profile, and a hop, arrives at
+ * the very end and does not pass its destination.
  *
  *   const { arrives } = moveTimes({ dur: 1.2 });   // the defaults of moveTo
  *   moveTo('ball', { at: word - arrives, to: [200, 0], dur: 1.2 })
  */
 export function moveTimes(
   opts: { dur?: number; profile?: MoveProfile; anticipation?: number; overshoot?: number; /** Length of the move in units: a long move backs away and overshoots by fewer units than its fractions say. */ distance?: number } = {},
-): { leaves: number; arrives: number } {
+): { leaves: number; arrives: number; peaks: number } {
   const dur = opts.dur ?? 1.1;
   const profile = opts.profile ?? 'settle';
-  if (profile !== 'settle') return { leaves: 0, arrives: dur };
+  if (profile !== 'settle') return { leaves: 0, arrives: dur, peaks: dur };
   let anticipation = opts.anticipation ?? 0.08;
   let overshoot = opts.overshoot ?? 0.07;
   if (opts.distance !== undefined && opts.distance > 1e-9) {
@@ -255,7 +256,7 @@ export function moveTimes(
     overshoot = Math.min(overshoot, MAX_OVERSHOOT_UNITS / opts.distance);
   }
   const m = settleMoments(anticipation, overshoot);
-  return { leaves: m.leaves * dur, arrives: m.arrives * dur };
+  return { leaves: m.leaves * dur, arrives: m.arrives * dur, peaks: m.peaks * dur };
 }
 
 /**

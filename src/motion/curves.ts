@@ -135,13 +135,14 @@ export function profilePeak(profile: Exclude<MoveProfile, 'settle'>, ramp: numbe
 
 /**
  * The moments of a settle move as shares of its duration: when it stops
- * backing away and goes (`leaves`), and when it first reaches its destination
- * (`arrives`); the rest of the duration is overshoot and settle. Without an
- * overshoot the move is an ease-out and arrives at the very end.
+ * backing away and goes (`leaves`), when it first reaches its destination
+ * (`arrives`), and when it is farthest past it (`peaks`); after that it
+ * settles. Without an overshoot the move is an ease-out: it arrives at the
+ * very end and never passes its destination.
  */
-export function settleMoments(anticipation: number, overshoot: number): { leaves: number; arrives: number } {
+export function settleMoments(anticipation: number, overshoot: number): { leaves: number; arrives: number; peaks: number } {
   const leaves = anticipation > 1e-6 ? ANTICIPATION_SHARE : 0;
-  if (overshoot <= 1e-4) return { leaves, arrives: 1 };
+  if (overshoot <= 1e-4) return { leaves, arrives: 1, peaks: 1 };
   // The first time the progress is 1: by bisection between the start of the travel and its peak.
   let lo = leaves;
   let hi = leaves + (1 - leaves) * 0.5;
@@ -150,5 +151,6 @@ export function settleMoments(anticipation: number, overshoot: number): { leaves
     if (moveProgress(mid, anticipation, overshoot) < 1) lo = mid;
     else hi = mid;
   }
-  return { leaves, arrives: hi };
+  // The overshoot peaks half-way through the travel that follows the anticipation.
+  return { leaves, arrives: hi, peaks: leaves + (1 - leaves) * 0.5 };
 }

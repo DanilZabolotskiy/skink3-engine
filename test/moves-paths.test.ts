@@ -135,7 +135,12 @@ test('moveTimes: the moment a settle move leaves and the moment it arrives are k
   assert.ok(Math.abs(lowest / 60 - leaves) <= 1 / 60 + 1e-9, `backs away until ${lowest / 60} s, promised ${leaves} s`);
   // Without an overshoot a settle move is an ease-out and arrives at its very end; so does every other profile.
   assert.equal(moveTimes({ dur: 2, overshoot: 0 }).arrives, 2);
-  assert.deepEqual(moveTimes({ dur: 2, profile: 'ease' }), { leaves: 0, arrives: 2 });
+  assert.deepEqual(moveTimes({ dur: 2, profile: 'ease' }), { leaves: 0, arrives: 2, peaks: 2 });
+  // The overshoot is largest at `peaks`: the frame farthest past the destination.
+  const farthest = pts.reduce((a, p, i) => (p[0] > pts[a]![0] ? i : a), 0);
+  assert.ok(Math.abs(farthest / 60 - moveTimes({ dur }).peaks) <= 1 / 60 + 1e-9, `farthest at ${farthest / 60} s, promised ${moveTimes({ dur }).peaks} s`);
+  // A long move backs away and overshoots by fewer units than its fractions say; its distance says by how much.
+  assert.ok(moveTimes({ dur: 1, distance: 2000 }).arrives > moveTimes({ dur: 1 }).arrives);
   // `arrive` is the same move, placed by the moment it lands.
   const key = moveTo('a', { arrive: 5, to: [500, 0], dur });
   assert.ok(Math.abs(key.at - (5 - arrives)) < 1e-12);
