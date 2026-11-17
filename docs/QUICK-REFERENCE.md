@@ -41,7 +41,7 @@ backgroundTo({ at: 3, inner: 'deep.abyss', /* = */ dur: 2, profile: 'ease', ramp
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
-- `drift.speed`: units per frame along `heading` (the norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
+- `drift.speed`: units per frame along `heading` (norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers it once.
 - Keys chain. `cameraTo`: `zoom`: times the authored view; `to`: where it looks at the end; path and drift wait meanwhile. Under `zoomTo` they run on.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
@@ -177,7 +177,7 @@ Each finding (a warning) and its usual fix:
 - `energy-spike`: speed from nowhere: bodies released inside each other or pressed into a wall.
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
-- `low-contrast` (with `contrast`): a node blends into what is behind it: change one of the two colours.
+- `low-contrast` (with `contrast`): a node blends into what is behind it: change one of the colours.
 
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
@@ -188,7 +188,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away',
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, zoom keys, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, zoom keys, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use** (subtitles); **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 
