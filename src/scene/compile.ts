@@ -36,6 +36,7 @@ import type {
   SquashKey,
   TravelKey,
   TurnToKey,
+  ZoomToKey,
 } from '../motion/intents.ts';
 import {
   buildAxisTrack,
@@ -159,7 +160,7 @@ export interface CompiledShot {
   readonly covers: readonly number[];
   /** True when some node is clipped to a shape. */
   readonly clips: boolean;
-  /** The camera keys of the shot, or null: the camera does only what the shot's `camera` says. */
+  /** The camera keys and the zoom keys of the shot, or null: the camera does only what the shot's `camera` says. */
   readonly cameraTrack: CameraTrack | null;
   /** The background keys of the shot, or null: the background is what the shot says on every frame. */
   readonly backgroundTrack: BackgroundTrack | null;
@@ -273,6 +274,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const opens = new Map<number, OpenToKey[]>();
   const askedBlinks = new Map<number, number[]>();
   const cameraKeys: CameraToKey[] = [];
+  const zoomKeys: ZoomToKey[] = [];
   const backgroundKeys: BackgroundToKey[] = [];
   const push =<T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
@@ -297,6 +299,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       // A key of the camera: it has no node.
       if (key.at > spec.seconds) fail(`${where}: cameraTo starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
       cameraKeys.push(key);
+      continue;
+    }
+    if (key.kind === 'zoomTo') {
+      // A key of the camera's zoom: it has no node either.
+      if (key.at > spec.seconds) fail(`${where}: zoomTo starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      zoomKeys.push(key);
       continue;
     }
     if (key.kind === 'backgroundTo') {
@@ -764,7 +772,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     sceneHash,
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
-    cameraTrack: cameraKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys) : null,
+    cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,
     backgroundTrack,
   };
 }

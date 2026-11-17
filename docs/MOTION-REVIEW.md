@@ -59,25 +59,29 @@ springs: 8 spring-driven node(s), 8 responded
 Whether a picture feels alive is mostly a matter of its background: a camera that barely moves, layers that slide as one, motes that stand still. No finding says that, so the report states it in numbers, findings or not. After the summary line (`examples/flow/scene.ts`):
 
 ```
-camera: median drift 0.46 px per frame at depth 0, zoom 1 to 1.05
+camera: median drift 0.48 px per frame at depth 0, zoom 1 to 1.155
 no warnings
-camera path: 279 px long, inside a box of 170 x 70 px; drift between 0.43 and 0.51 px per frame
-layers, farthest first: far 0.18, stage 0.46, near 0.94 px per frame
-particles: motes 0.40 px per frame (51 in frame, moving 100 % of the time); fizz 0.66 px per frame (34 in frame, moving 100 % of the time)
+camera path: 286 px long, inside a box of 174 x 72 px; drift between 0.43 and 0.53 px per frame
+layers, farthest first: far 0.18, stage 0.48, near 0.99 px per frame
+particles: motes 0.41 px per frame (50 in frame, moving 100 % of the time); fizz 0.66 px per frame (34 in frame, moving 100 % of the time)
+zoom keys: 1.027 to 1.152 at 5.40-9.40 s, the camera drifting 0.49 px per frame meanwhile
 ```
 
 | In the JSON report | Meaning | What to look for |
 |---|---|---|
 | `camera.driftPx` | median travel of the camera per frame, in px at depth 0 | the norm is 0.3 to 0.7; below it the picture stands |
 | `camera.driftMinPx`, `camera.driftMaxPx` | the 5th and the 95th percentile of that travel | a minimum near 0 is a camera that stops (the turn of an open path, an eased end) |
-| `camera.zoomFrom`, `camera.zoomTo` | the push-in | a few percent over a shot |
+| `camera.zoomFrom`, `camera.zoomTo` | the zoom at the first and at the last frame: the push-in, times the camera keys and the zoom keys | a few percent over a shot; more where a key pushes in |
 | `camera.travelPx` | length of the camera's path over the shot | |
 | `camera.spanPx` | width and height of the box the camera's centre stays in | how far a subject slides across the frame; on one heading it equals the travel, on a loop it is the size of the loop |
-| `layers[]`: `id`, `depth`, `parallax`, `driftPx` | how fast each depth layer slides across the screen, farthest first | the layers should differ: that is what gives depth |
+| `layers[]`: `id`, `depth`, `parallax`, `driftPx` | how fast each depth layer slides across the screen, farthest first. In a shot with zoom keys it is taken in the middle of the frame, where a zoom moves nothing | the layers should differ: that is what gives depth |
 | `background[]`: `from`, `to` | only in a shot whose background is keyed (`backgroundTo`): the stretches of frames in which it changes fast enough to be seen | an empty list: the change is too slow or too small to read as life |
+| `zooms[]`: `from`, `to`, `zoomFrom`, `zoomTo`, `driftPx` | only in a shot with zoom keys (`zoomTo`), one entry per key that runs within the shot: its frames, the zoom of the camera at the first and the last of them (the push-in and every key in it), and the median travel of the camera per frame meanwhile, in px at depth 0 | the drift under a key should be in the norm like the drift of the shot: a push over a camera that stands is a background that stands |
 | `particles[]`: `id`, `layer`, `inFrame`, `speedPx`, `movingShare` | per emitter: the median number of particles in frame, their median speed on their own (camera left out), and the share of the frames with particles in which they move | motes with a speed near 0 or a low share stand still |
 
-A reviewer who cannot watch the video reads these lines to say whether the background lives; `skink3 graph <scene> --camera` shows the speed of the camera over time.
+A reviewer who cannot watch the video reads these lines to say whether the background lives; `skink3 graph <scene> --camera` shows the speed of the camera over time, and its zoom.
+
+All of it is measured on the camera as it is composed: its drift or its path, its wander, its push-in, its camera keys and its zoom keys. A camera key that zooms holds the view while it runs, and the numbers say so: the slowest drift falls to nearly 0, and over a long key the median with it. A zoom key leaves the drift running, and the line `zoom keys` shows it.
 
 Every finding has:
 
@@ -150,6 +154,7 @@ Whether the simulation itself is sound is a different question: bodies that sink
 - **A change of width and height** (`scaleTo` with `to: [sx, sy]`) is judged on the scale channel, as the travel of the edge along each axis, the larger of the two.
 - **A turn whose speed is keyed** (`turnTo` with `speeds`) is judged as any turn, on the rotation channel: a start at speed from rest in view is an abrupt start, a wheel that never rests in the shot is a flow. Where two keys meet at one speed there is nothing to report.
 - **Camera keys** (`cameraTo`) are judged as the camera always is: a jump, an abrupt start or stop of its position or of its zoom. A keyed zoom is measured as a ratio, because that is what it is to the eye: a zoom from 10 to 20 is the change that one from 1 to 2 is.
+- **Zoom keys** (`zoomTo`) are judged on the zoom of the camera in the same way, as a ratio: a `'steady'` key whose edge of the frame travels 3 px per frame or more starts and stops abruptly, and a zoom squeezed into a few frames does too. A slow push at one speed stays under that and is no finding. The key moves nothing by itself, so it never counts as life; neither does the camera.
 
 ## Thresholds
 

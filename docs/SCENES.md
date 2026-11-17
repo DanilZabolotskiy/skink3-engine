@@ -215,7 +215,7 @@ Text is drawn with three bundled typefaces and with no font of the machine, so a
 | `timeline` | keys | `[]` | in any order; nested arrays are flattened |
 | `light` | `{ from }` | `{ from: 'top-left' }` | `'top-left'`, `'top'`, `'top-right'`, `'left'`, `'right'`, `'bottom-left'`, `'bottom'`, `'bottom-right'`, or an angle in degrees |
 | `vignette` | 0..1 | `0.5` | darkening of the corners toward `background.outer` |
-| `camera` | see below | see below | drift, push-in, depth of field |
+| `camera` | see below | see below | drift or a path, push-in, depth of field; the timeline moves it (`cameraTo`) and zooms it (`zoomTo`) at a moment |
 | `physics` | see below | see below | style of the rigid-body world |
 | `intended` | `intended()[]` | `[]` | findings of the motion review, of the physics review or of the contrast review that are what you want, each with a reason (see Motion review, Physics review, Contrast review) |
 | `contrast` | `{ nodes, lightness, colour, edge?, seconds? }` | off | turns the contrast review on for the nodes it names (see Contrast review) |
@@ -288,13 +288,38 @@ cameraTo({ at: 11, zoom: 4000, dur: 3, profile: 'out' }),          // ... that s
 
 - Give `zoom`, `to`, or both. **Keys chain:** each takes over from where the camera is at its moment, also when the key before it is still under way.
 - **The zoom is a ratio.** It runs from one factor to the other at one apparent speed along its profile, so a zoom from 1 to 1000 looks as even as one from 1 to 2. Two `'steady'` keys in a row are a zoom that changes speed where they meet.
-- **A zoom alone holds the view:** what is in the middle of the frame stays there while the camera zooms. With `to` the camera is exactly there when the key ends, whatever the drift did meanwhile.
+- **A zoom alone holds the view:** what is in the middle of the frame stays there while the camera zooms, so the drift or the path stands still for as long as the key runs. That suits a quick move; for a slow push over a background that keeps sliding, use a zoom key (below). With `to` the camera is exactly there when the key ends, whatever the drift did meanwhile.
 - **A push into a detail keeps the detail in view.** While the camera zooms in and moves, the place it is heading for nears the middle of the frame at one speed on screen; while it pulls back, the place it leaves slides out at one speed.
 - **The drift, the wander and the push-in stay on top.** The keyed zoom multiplies the push-in. After a key the drift goes on from where the key ended, and it and the wander are as large on screen as ever: the more the camera has zoomed in, the fewer units they cover. Before the first key the camera is exactly what the shot's `camera` says.
 - **Depth still shows.** A layer takes the keyed zoom to the power of its parallax: a far layer grows less than the focus plane and a near one more, whatever the zoom. Blur and halos stop growing at 400 px of a 1080p frame, so a deep zoom still draws.
 - On a camera `path` the keys act from where the path has carried the camera; after a key the path goes on, as large on screen as before.
 - A camera key is no node's intent: it has no target, no sound and makes no event. The motion review judges it as it judges the camera: a `'steady'` key from rest is an `abrupt-start` and an `abrupt-stop` on `(camera)`; mark it with `intended` when it is meant.
 - Scaling a group instead of the camera leaves the other layers and their parallax behind; use a camera key.
+
+#### Zoom keys
+
+A camera key takes the view over: while it runs the camera is where the key puts it, and its drift waits. A subject that stays put for fifteen seconds needs the opposite: the camera comes nearer on a word, slowly, and the background goes on sliding all the while. A zoom key does that. It changes the zoom of the camera and nothing else:
+
+```ts
+camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } },   // a loop about the subject
+
+// timeline
+zoomTo({ at: 6, to: 1.15, dur: 8 }),                               // a slow push; the loop runs on under it
+zoomTo({ at: 15, to: 1, dur: 2 }),                                 // and back to the authored view
+```
+
+| Option of `zoomTo` | Default | Meaning |
+|---|---|---|
+| `at` | required | seconds: when the zoom starts |
+| `to` | required | the zoom it reaches, as a factor of the authored view: `1.15` shows the focus plane 15 % larger, `1` is the authored view again. 0.01 to 10000 |
+| `dur` | `3` | seconds it takes |
+| `profile`, `ramp` | `'ease'`, `0.3` | how the speed is spread, as for a camera key |
+
+- **The camera looks where it looks without the key,** at every frame. Its drift, its path and its wander run on at their own speed; the key changes how large the picture is, about the middle of the frame, and never where the camera looks. So the push goes toward the middle of the view: frame the subject with the camera itself (its `at`, or a loop about the subject).
+- **On screen the drift grows with the zoom:** 0.45 units per frame are 0.52 px at a zoom of 1.15. A push by a tenth or a quarter keeps a drift in its norm. For a zoom by a factor of two or more, or into a place off the middle, use `cameraTo`.
+- **The zoom is a ratio, and it multiplies:** the push-in of the shot, and the zoom of the camera keys if the shot has any. `to` is the factor of the zoom keys alone. **Keys chain:** each starts from the factor the zoom keys have reached at its moment, also when the key before it is still under way.
+- **Depth still shows,** as with a camera key: a layer takes the zoom to the power of its parallax, so a far layer grows less than the focus plane and a near one more. A layer of the frame (`parallax: 0`) keeps its size.
+- A zoom key is no node's intent: it has no target, no sound and makes no event. The motion review judges it as it judges the camera: a `'steady'` key that is fast enough to be seen is an `abrupt-start` and an `abrupt-stop` on `(camera)`. Its report has a line for the zoom keys, with the zoom at both ends of each and how fast the camera drifts meanwhile (see Motion review).
 
 ### A background that changes
 
@@ -736,6 +761,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
 | `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
+| `zoomTo({ at, to, ... })` | the camera | `dur` (3), `profile` (`'ease'`), `ramp` (0.3) | changes the zoom of the camera at a moment and nothing else: its drift and its path run on under the key; keys chain (see Zoom keys) |
 | `backgroundTo({ at, ... })` | the background | `dur` (2), `inner`, `outer`, `center`, `radius`, `atmosphere`, `vignette`, `profile` (`'ease'`), `ramp` (0.3) | changes the gradient of the shot, the colour far layers fade toward and the vignette at a moment; keys chain (see A background that changes) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
@@ -1090,7 +1116,7 @@ shot({
 });
 ```
 
-The report also describes the life of the background, findings or not: the median drift of the camera and its zoom, how far the camera travels and the box it stays in, how fast every layer slides across the screen, and for every emitter how many particles are in frame and how fast they travel on their own. A background is alive when the camera drifts in the norm (0.3–0.7 px per frame), the layers slide at different speeds, and the particles move.
+The report also describes the life of the background, findings or not: the median drift of the camera and its zoom, how far the camera travels and the box it stays in, how fast every layer slides across the screen, and for every emitter how many particles are in frame and how fast they travel on their own. A background is alive when the camera drifts in the norm (0.3–0.7 px per frame), the layers slide at different speeds, and the particles move. A shot with zoom keys (`zoomTo`) gets one more line: the zoom at both ends of every key, and the drift of the camera while it runs.
 
 Things to know when you write a scene:
 
@@ -1242,7 +1268,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo`, a `countTo`, a `bendTo`, a `reshape`, a `cameraTo` and a `backgroundTo` are no events.
+- A `solidTo`, a `countTo`, a `bendTo`, a `reshape`, a `cameraTo`, a `zoomTo` and a `backgroundTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 

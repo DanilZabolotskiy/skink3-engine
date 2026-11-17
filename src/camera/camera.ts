@@ -1,14 +1,15 @@
 // Camera: a steady drift with a low-frequency wander, a slow push-in, and the
 // view of each depth layer (parallax). Instead of the straight drift it can
 // travel along a free-form path. Keys of the timeline can move it and zoom it
-// at their moments, with the drift and the wander on top. Everything is a
-// closed-form function of the frame number, so the camera has no state to bake.
+// at their moments, with the drift and the wander on top; zoom keys change its
+// zoom alone, with the drift or the path running on under them. Everything is
+// a closed-form function of the frame number, so the camera has no state to bake.
 
 import { DEG, type Vec2 } from '../core/math.ts';
 import type { Noise } from '../core/noise.ts';
 import { FPS } from '../core/time.ts';
 import { profileRamps, rampProgress, type MoveProfile } from '../motion/curves.ts';
-import type { CameraToKey } from '../motion/intents.ts';
+import type { CameraToKey, ZoomToKey } from '../motion/intents.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import { STAGE_H, STAGE_W, type CameraPathSpec, type CameraSpec } from '../scene/types.ts';
 
@@ -18,7 +19,7 @@ export interface CameraState {
   readonly y: number;
   /** The slow push-in of the shot. */
   readonly zoom: number;
-  /** The zoom the camera keys add, as a factor; left out in a shot without camera keys. */
+  /** The zoom the camera keys and the zoom keys add, as a factor; left out in a shot without either. */
   readonly keyZoom?: number;
 }
 
@@ -35,9 +36,22 @@ export interface CameraSeg {
   readonly to: Vec2;
 }
 
-/** The camera keys of a shot, in order of time. */
+/** One zoom key, with the zoom the zoom keys give when it starts. */
+export interface ZoomSeg {
+  readonly at: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+  readonly from: number;
+  readonly to: number;
+}
+
+/** The keys of a shot that the camera reads, in order of time. */
 export interface CameraTrack {
+  /** The camera keys (cameraTo); none in a shot that has only zoom keys. */
   readonly segs: readonly CameraSeg[];
+  /** The zoom keys (zoomTo). Left out in a shot without any. */
+  readonly zooms?: readonly ZoomSeg[];
 }
 
 /** Where the drift, or the path, has carried the camera from its first place by a frame (which may fall between two frames). */
@@ -101,14 +115,43 @@ export function cameraKeyed(spec: CameraSpec, track: CameraTrack, frame: number,
   return { zoom, x: seg.from[0] + dx * k, y: seg.from[1] + dy * k };
 }
 
-/** The track of the camera keys of a shot. Keys chain: each takes over from where the camera is at its moment. */
-export function buildCameraTrack(spec: CameraSpec, frames: number, keys: readonly CameraToKey[]): CameraTrack {
+/**
+ * The factor the zoom keys give at a moment: 1 before the first of them, then
+ * from one factor to the next at one apparent speed (as a ratio) along the
+ * profile of each key, and the factor of the last key from its end on. It says
+ * nothing about where the camera looks: a zoom key leaves that alone.
+ */
+export function zoomKeyed(zooms: readonly ZoomSeg[], t: number): number {
+  let seg: ZoomSeg | null = null;
+  for (const s of zooms) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return 1;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  const [a, b] = profileRamps(seg.profile, seg.ramp);
+  return seg.from * (seg.to / seg.from) ** rampProgress(Math.max(0, u), a, b);
+}
+
+/**
+ * The track of the camera keys and of the zoom keys of a shot. Keys chain:
+ * a camera key takes over from where the camera is at its moment, a zoom key
+ * from the zoom the zoom keys have reached at its moment.
+ */
+export function buildCameraTrack(spec: CameraSpec, frames: number, keys: readonly CameraToKey[], zoomKeys: readonly ZoomToKey[] = []): CameraTrack {
   const segs: CameraSeg[] = [];
   for (const k of keys.slice().sort((p, q) => p.at - q.at)) {
     const now = cameraKeyed(spec, { segs }, k.at * FPS, frames);
     segs.push({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, zoomFrom: now.zoom, zoomTo: k.zoom ?? now.zoom, from: [now.x, now.y], to: k.to ?? [now.x, now.y] });
   }
-  return { segs };
+  // A shot without zoom keys has the track it always had.
+  if (zoomKeys.length === 0) return { segs };
+  const zooms: ZoomSeg[] = [];
+  for (const k of zoomKeys.slice().sort((p, q) => p.at - q.at)) {
+    zooms.push({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, from: zoomKeyed(zooms, k.at), to: k.to });
+  }
+  return { segs, zooms };
 }
 
 /**
@@ -144,7 +187,11 @@ export function cameraPathDistance(path: CameraPathSpec, length: number, frame: 
 
 /**
  * The camera at a frame. `frames` is the length of the shot (the push-in spans
- * all of it). `track` holds the camera keys of the shot, or is null.
+ * all of it). `track` holds the camera keys and the zoom keys of the shot, or
+ * is null.
+ *
+ * A zoom key changes the zoom and nothing else: the centre of the view is, at
+ * every frame, where it is in the same shot without its zoom keys.
  */
 export function cameraAt(spec: CameraSpec, noise: Noise, frame: number, frames: number, track: CameraTrack | null = null): CameraState {
   const t = frame / FPS;
@@ -156,22 +203,26 @@ export function cameraAt(spec: CameraSpec, noise: Noise, frame: number, frames: 
   const u = frames > 1 ? frame / (frames - 1) : 0;
   // Exponential interpolation: the push-in has a constant apparent speed.
   const zoom = spec.pushIn.from * (spec.pushIn.to / spec.pushIn.from) ** u;
-  if (track) {
+  // The zoom keys: a factor of the zoom, on top of whatever places the view.
+  const lens = track?.zooms ? zoomKeyed(track.zooms, t) : null;
+  if (track && track.segs.length > 0) {
     // Keyed: the keys place the view; the wander stays on top, as large on screen as ever.
     const k = cameraKeyed(spec, track, frame, frames);
-    return { x: k.x + wx / k.zoom, y: k.y + wy / k.zoom, zoom, keyZoom: k.zoom };
+    return { x: k.x + wx / k.zoom, y: k.y + wy / k.zoom, zoom, keyZoom: lens === null ? k.zoom : k.zoom * lens };
   }
+  const keyZoom = lens === null ? {} : { keyZoom: lens };
   const path = spec.path ?? null;
   if (path) {
     // The path replaces the straight drift; the wander stays on top of it.
     const table = pathTable(path);
     const p = pathAt(table, cameraPathDistance(path, table.length, frame, frames));
-    return { x: p.x + wx, y: p.y + wy, zoom };
+    return { x: p.x + wx, y: p.y + wy, zoom, ...keyZoom };
   }
   return {
     x: spec.at[0] + Math.cos(h) * travel + wx,
     y: spec.at[1] + Math.sin(h) * travel + wy,
     zoom,
+    ...keyZoom,
   };
 }
 
@@ -185,9 +236,9 @@ export interface LayerView {
 /**
  * The view of a layer with the given parallax factor. A layer with parallax p
  * sees the camera move p times as far and zoom p times as much, which is what
- * separates the depth levels on screen. The zoom of the camera keys, which may
- * be far from 1, reaches a layer as its p-th power: a far layer grows less, a
- * near one more, and none turns inside out.
+ * separates the depth levels on screen. The zoom of the camera keys and of the
+ * zoom keys, which may be far from 1, reaches a layer as its p-th power: a far
+ * layer grows less, a near one more, and none turns inside out.
  */
 export function layerView(camera: CameraState, parallax: number): LayerView {
   const push = Math.max(0.01, 1 + (camera.zoom - 1) * parallax);

@@ -277,6 +277,24 @@ export interface CameraToKey extends Voiced {
   readonly ramp: number;
 }
 
+/**
+ * A change of the camera's zoom at a moment, and of nothing else: where the
+ * camera looks stays with its drift, its path and its wander, which run on
+ * under the key. It has no node: it is a key of the timeline that the camera
+ * reads.
+ */
+export interface ZoomToKey extends Voiced {
+  readonly kind: 'zoomTo';
+  /** A zoom key has no node. */
+  readonly target: null;
+  readonly at: number;
+  readonly dur: number;
+  /** The zoom the zoom keys give when this one ends, as a factor of the authored view. */
+  readonly to: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** Change the outline of a region, or the line of a stroke, into another: every point runs to a new place. */
 export interface ReshapeKey extends Voiced {
   readonly kind: 'reshape';
@@ -348,6 +366,7 @@ export type Key =
   | BlinkKey
   | CountToKey
   | CameraToKey
+  | ZoomToKey
   | BackgroundToKey
   | ReshapeKey
   | SfxKey;
@@ -1080,6 +1099,39 @@ export function cameraTo(opts: { at: number; dur?: number; zoom?: number; to?: V
     dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
     ...(opts.zoom === undefined ? {} : { zoom: num(w, 'zoom', opts.zoom, 0.01, 10000) }),
     ...(opts.to === undefined ? {} : { to: point(w, 'to', opts.to) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Zoom the camera at a moment and leave it where it is: `to` is the zoom the
+ * key reaches, as a factor of the authored view (1.15 shows the focus plane
+ * 15 % larger). The drift, the path and the wander of the camera run on under
+ * the key as if it were not there: it changes how large the picture is, never
+ * where the camera looks. So a slow push toward a subject can start on a word
+ * while the background keeps sliding. The zoom runs at one apparent speed
+ * along its profile and multiplies the push-in of the shot, and the zoom of
+ * its `cameraTo` keys if it has any. Keys chain: each starts from the zoom the
+ * zoom keys have reached at its moment.
+ *
+ *   zoomTo({ at: 6, to: 1.15, dur: 8 })                    // a slow push, the camera path running on
+ *   zoomTo({ at: 15, to: 1, dur: 2 })                      // and back
+ */
+export function zoomTo(opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number }): ZoomToKey {
+  const w = 'zoomTo';
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  if (typeof opts.to !== 'number') {
+    throw new IntentError(`${w}: to is the zoom it reaches, a number such as 1.15: a zoom key leaves the camera where it is (cameraTo moves it to a place)`);
+  }
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'zoomTo',
+    target: null,
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    dur: num(w, 'dur', opts.dur ?? 3, 0.05, 600),
+    to: num(w, 'to', opts.to, 0.01, 10000),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

@@ -32,6 +32,7 @@ import {
   stagger,
   travel,
   turnTo,
+  zoomTo,
 } from '../src/index.ts';
 
 // An option that an intent or a node does not take is refused, by name, with what is taken. Nothing is dropped
@@ -59,6 +60,7 @@ const INTENTS: Record<string, (extra: object) => unknown> = {
   blink: (x) => blink('a', { at: 1, ...x }),
   countTo: (x) => countTo('a', { at: 1, to: 5, ...x }),
   cameraTo: (x) => cameraTo({ at: 1, zoom: 2, ...x }),
+  zoomTo: (x) => zoomTo({ at: 1, to: 2, ...x }),
   backgroundTo: (x) => backgroundTo({ at: 1, inner: 'deep.night', ...x }),
   sfx: (x) => sfx('chime', { at: 1, ...x }),
   stagger: (x) => stagger(['a', 'b'], { at: 1, each: 0.1, ...x }, (id, at) => popIn(id, { at })),

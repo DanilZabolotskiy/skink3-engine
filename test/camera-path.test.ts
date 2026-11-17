@@ -20,7 +20,7 @@ import {
   type ShotSpec,
 } from '../src/index.ts';
 
-test('the flow example: a path, a cover, a level, a clip and a hop in one shot, without a finding', async () => {
+test('the flow example: a path, a cover, a level, a clip, a hop and a push of the camera in one shot, without a finding', async () => {
   const c = compileShot(flow);
   const bake = await bakeShot(c);
   const checks = await runChecks(c, bake, ['en', 'x-long']);
@@ -35,6 +35,11 @@ test('the flow example: a path, a cover, a level, a clip and a hop in one shot, 
   assert.deepEqual(report.layers.map((l) => l.id), ['far', 'stage', 'near']);
   assert.ok(report.layers[0]!.driftPx < report.layers[1]!.driftPx && report.layers[1]!.driftPx < report.layers[2]!.driftPx);
   for (const p of report.particles) assert.ok(p.inFrame > 5 && p.speedPx > 0.2 && p.movingShare > 0.95, `${p.id}: ${p.speedPx} px per frame`);
+  // The push: one zoom key, and the camera goes on round its loop under it, as fast as before.
+  assert.equal(report.zooms!.length, 1);
+  const push = report.zooms![0]!;
+  assert.deepEqual([push.from, push.to], [324, 564]);
+  assert.ok(push.zoomTo > 1.14 && push.zoomTo < 1.16 && push.driftPx > 0.4 && push.driftPx < 0.55, `zoom ${push.zoomFrom} to ${push.zoomTo}, drift ${push.driftPx}`);
   // And it is deterministic like any shot.
   assert.equal(bakeHash(await bakeShot(compileShot(flow))), bakeHash(bake));
 });

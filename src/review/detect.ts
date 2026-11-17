@@ -780,8 +780,8 @@ export function detectMotion(series: MotionSeries): Finding[] {
       pos.a[f] = (series.camera.x[f]! - series.camera.x[f - 1]!) * z;
       pos.b[f] = (series.camera.y[f]! - series.camera.y[f - 1]!) * z;
       pos.d[f] = Math.hypot(pos.a[f]!, pos.b[f]!);
-      // A zoom moves the edge of the frame by half the frame width times its change. With camera keys the zoom may be
-      // far from 1, and its change is what it is to the eye: a ratio.
+      // A zoom moves the edge of the frame by half the frame width times its change. With camera keys or zoom keys the
+      // zoom may be far from 1, and its change is what it is to the eye: a ratio.
       scl.a[f] = (series.shot.cameraTrack ? z / series.camera.zoom[f - 1]! - 1 : z - series.camera.zoom[f - 1]!) * (STAGE_W / 2);
       scl.d[f] = Math.abs(scl.a[f]!);
     }

@@ -70,6 +70,14 @@ export interface MotionReport {
    * background stays as it is.
    */
   readonly background?: readonly { readonly from: number; readonly to: number }[];
+  /**
+   * A shot with zoom keys (zoomTo), one entry per key that runs within the
+   * shot: its frames there, the zoom of the camera at the first and at the
+   * last of them (the push-in and every key in it), and the median travel of
+   * the camera per frame while the key runs, in px at depth 0: whether the
+   * background lives under the zoom. Left out in a shot without zoom keys.
+   */
+  readonly zooms?: readonly { readonly from: number; readonly to: number; readonly zoomFrom: number; readonly zoomTo: number; readonly driftPx: number }[];
   /** The warnings, worst first. */
   readonly findings: readonly Finding[];
   /** Number of warnings by kind (kinds without any are left out). */
@@ -128,10 +136,10 @@ export function buildReport(series: MotionSeries): MotionReport {
     if (n > 0) byKind[kind] = n;
   }
 
+  /** The travel of the camera into a frame, in px at depth 0. */
+  const cameraStep = (f: number): number => Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * series.camera.zoom[f]!;
   const drift: number[] = [];
-  for (let f = 1; f < series.frames; f++) {
-    drift.push(Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * series.camera.zoom[f]!);
-  }
+  for (let f = 1; f < series.frames; f++) drift.push(cameraStep(f));
   const r3 = (v: number): number => Math.round(v * 1000) / 1000;
 
   // The camera's path: how far it goes, and the box its centre stays in.
@@ -158,15 +166,39 @@ export function buildReport(series: MotionSeries): MotionReport {
   const sortedDrift = drift.slice().sort((a, b) => a - b);
   const pct = (p: number): number => (sortedDrift.length === 0 ? 0 : sortedDrift[Math.min(sortedDrift.length - 1, Math.floor(p * sortedDrift.length))]!);
 
-  // How fast each layer slides across the screen: the camera's travel as that layer sees it.
+  // How fast each layer slides across the screen: the camera's travel as that layer sees it. Under zoom keys it
+  // is taken in the middle of the frame, where a zoom moves nothing: what is left there is the travel alone.
+  const zoomSegs = c.cameraTrack?.zooms ?? null;
   const layers = c.layers
     .map((layer, li) => {
       const v = series.views[li]!;
       const steps: number[] = [];
-      for (let f = 1; f < series.frames; f++) steps.push(Math.hypot(v.tx[f]! - v.tx[f - 1]!, v.ty[f]! - v.ty[f - 1]!));
+      for (let f = 1; f < series.frames; f++) {
+        steps.push(
+          zoomSegs
+            ? Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * layer.parallax * v.zoom[f]!
+            : Math.hypot(v.tx[f]! - v.tx[f - 1]!, v.ty[f]! - v.ty[f - 1]!),
+        );
+      }
       return { id: layer.spec.id, depth: layer.spec.depth, parallax: r3(layer.parallax), driftPx: r3(median(steps)) };
     })
     .sort((a, b) => b.depth - a.depth);
+
+  // The zoom keys: what the camera's zoom is at both ends of each, and how fast the camera travels meanwhile. A
+  // key that is over before the shot starts, or starts on its last frame, has no frames of its own to report.
+  let zooms: { from: number; to: number; zoomFrom: number; zoomTo: number; driftPx: number }[] | null = null;
+  if (zoomSegs) {
+    zooms = [];
+    const last = series.frames - 1;
+    for (const seg of zoomSegs) {
+      const from = Math.max(0, Math.ceil(seg.at * FPS - 1e-9));
+      const to = Math.min(last, Math.floor((seg.at + seg.dur) * FPS + 1e-9));
+      if (to <= from) continue;
+      const steps: number[] = [];
+      for (let f = from + 1; f <= to; f++) steps.push(cameraStep(f));
+      zooms.push({ from, to, zoomFrom: r3(series.camera.zoom[from]!), zoomTo: r3(series.camera.zoom[to]!), driftPx: r3(median(steps)) });
+    }
+  }
 
   const particles = series.emitters.map((e) => {
     const speeds: number[] = [];
@@ -227,6 +259,7 @@ export function buildReport(series: MotionSeries): MotionReport {
     layers,
     particles,
     ...(background === null ? {} : { background }),
+    ...(zooms === null ? {} : { zooms }),
     findings,
     byKind,
     honoured,
@@ -319,6 +352,13 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
     );
   }
 
+  if (report.zooms) {
+    lines.push(
+      report.zooms.length === 0
+        ? 'zoom keys: none runs within the shot'
+        : `zoom keys: ${report.zooms.map((z) => `${z.zoomFrom} to ${z.zoomTo} at ${seconds(z.from)}-${seconds(z.to)} s, the camera drifting ${z.driftPx.toFixed(2)} px per frame meanwhile`).join('; ')}`,
+    );
+  }
   if (report.background) {
     lines.push(
       report.background.length === 0

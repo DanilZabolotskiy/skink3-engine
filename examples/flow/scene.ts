@@ -5,11 +5,12 @@
 // content rises with a rippling surface; fizz stays inside the content, a
 // float rides on it and a label follows it. A blob creature hops onto a step
 // and squashes as it lands. The camera goes round a loop, so the subject stays
-// framed while the background keeps sliding.
+// framed while the background keeps sliding; while the vessel fills it pushes
+// in a little, and the loop goes on under the push.
 //
 // It shows: travel() along a free-form path, keys that start before the shot,
 // cover, level and levelTo(), clipTo, hop() and squash(), the "steady" size of
-// particles, a backdrop for labels, and a camera path.
+// particles, a backdrop for labels, a camera path, and zoomTo() on top of it.
 
 import {
   blob,
@@ -30,6 +31,7 @@ import {
   squash,
   stagger,
   travel,
+  zoomTo,
   type Key,
   type SceneNode,
   type StringTables,
@@ -232,5 +234,7 @@ export default shot({
     buddyKeys,
     popIn('label-block', { at: 0.5 }),
     popIn('label-level', { at: 2.8 }),
+    // A slow push while the vessel fills: the zoom alone, so the camera keeps going round its loop.
+    zoomTo({ at: 5.4, to: 1.1, dur: 4 }),
   ],
 });
