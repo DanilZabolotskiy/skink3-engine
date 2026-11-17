@@ -6,13 +6,16 @@
 //   lit rim          = shape minus the shape shifted away from the light
 //   highlight stroke = a short round-capped stroke just inside the lit edge
 //
+// Every crescent is checked: the path difference behind it is wrong at some
+// offsets, and a wrong one is taken again (crescentPath in shape/path.ts).
+//
 // Glow is described here as numbers (line, halo, background lift); the renderer
 // composites it.
 
 import type { Path2D } from 'skia-canvas';
 import { DEG, TAU, type Vec2 } from '../core/math.ts';
 import { outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
-import { polylinePath, shapePath, shiftPath, subtractPath } from '../shape/path.ts';
+import { crescentPaths, polylinePath, shapePath } from '../shape/path.ts';
 
 export type LightFrom =
   | 'top-left' | 'top' | 'top-right'
@@ -145,11 +148,13 @@ export function litParts(spec: ShapeSpec, lightLocal: Vec2): LitParts {
   const size = shapeExtent(spec).inner;
   const base = shapePath(spec);
   const [lx, ly] = lightLocal;
+  // The shape minus the shape shifted toward the light, or for the rim away from it; each one checked.
+  const [shadow, deepShadow, rim, rimLight] = crescentPaths(base, lx, ly, [size * P.shadowShift, size * P.deepShadowShift, -size * P.rimShift, size * P.rimLightShift]) as [Path2D, Path2D, Path2D, Path2D];
   const parts: LitParts = {
-    shadow: subtractPath(base, shiftPath(base, lx * size * P.shadowShift, ly * size * P.shadowShift)),
-    deepShadow: subtractPath(base, shiftPath(base, lx * size * P.deepShadowShift, ly * size * P.deepShadowShift)),
-    rim: subtractPath(base, shiftPath(base, -lx * size * P.rimShift, -ly * size * P.rimShift)),
-    rimLight: subtractPath(base, shiftPath(base, lx * size * P.rimLightShift, ly * size * P.rimLightShift)),
+    shadow,
+    deepShadow,
+    rim,
+    rimLight,
     highlight: highlightStroke(spec, lightLocal),
     highlightWidth: Math.min(P.highlightMaxWidth, Math.max(1.5, size * P.highlightWidth)),
   };
