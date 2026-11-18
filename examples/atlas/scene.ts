@@ -10,15 +10,16 @@
 // again in two steps. A counter runs with the route. Under it all lies an
 // island with a bay, one shape with one light. In the ring a cog spins, and
 // slows to rest. A scout runs the last stretch, faster and then slower. A
-// line between two posts hangs slack, pulls taut and sags again.
+// line between two posts hangs slack, pulls taut and grows thick, then thins
+// as it sags again.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
 // profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
 // and on a shape, scaleTo() along one axis with a pivot, a counter with
 // countTo(), region(), a free-form outline, turnTo() with a speed and a
-// profile, travel() with keys of speed, and bendTo().
+// profile, travel() with keys of speed, bendTo() and widthTo().
 
-import { arcPoints, bendTo, cameraTo, circle, countTo, drawOn, fadeTo, layer, link, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, bendTo, cameraTo, circle, countTo, drawOn, fadeTo, layer, link, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, widthTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -60,6 +61,9 @@ const timeline: Key[] = [
   // The line between the posts: taut when the bars are up, slack again later.
   bendTo('line', { at: 3.4, to: 0, dur: 0.9 }),
   bendTo('line', { at: 6.2, to: 0.22, dur: 1.2 }),
+  // Taut, it grows thick where it lies; it thins again as it sags.
+  widthTo('line', { at: 4.4, to: 16 }),
+  widthTo('line', { at: 6.2, to: 5, dur: 1.2 }),
   // The cog is under way when the shot starts, turns at one speed, and comes to rest with the same speed handed on.
   turnTo('cog', { at: -1, dur: 7, speed: 50 }),
   turnTo('cog', { at: 6, dur: 3, speed: 50, profile: 'out' }),

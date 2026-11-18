@@ -36,6 +36,7 @@ import type {
   SquashKey,
   TravelKey,
   TurnToKey,
+  WidthToKey,
   ZoomToKey,
 } from '../motion/intents.ts';
 import {
@@ -50,6 +51,7 @@ import {
   buildScaleTrack,
   buildStretchTrack,
   buildStrokeTrack,
+  buildWidthTrack,
   type AxisTrack,
   type CountTrack,
   type LevelTrack,
@@ -61,13 +63,14 @@ import {
   type ScaleTrack,
   type StretchTrack,
   type StrokeTrack,
+  type WidthTrack,
 } from '../motion/tracks.ts';
 import { COUNT_MARK } from '../text/count.ts';
 import { isRegion } from '../shape/geometry.ts';
 import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
 import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
 import { resolveString } from '../text/strings.ts';
-import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
+import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_MAX_WIDTH, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
 export class CompileError extends Error {}
 
@@ -100,6 +103,8 @@ export interface CNode {
   readonly stroke: StrokeTrack | null;
   /** Regions and strokes with a reshape: their outline over time; null for a node that keeps the outline it was given. */
   readonly outline: OutlineTrack | null;
+  /** Links and strokes with a widthTo: their width over time; null for a line that keeps the width it was given. */
+  readonly width: WidthTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -268,6 +273,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const solids = new Map<number, SolidToKey[]>();
   const counts = new Map<number, CountToKey[]>();
   const bends = new Map<number, BendToKey[]>();
+  const widths = new Map<number, WidthToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
   const reshapes = new Map<number, ReshapeKey[]>();
@@ -421,6 +427,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'bendTo':
         need(node.type === 'link', 'links');
         push(bends, index, key);
+        break;
+      case 'widthTo':
+        need(node.type === 'link' || node.type === 'stroke', 'links and strokes');
+        // The key may be as wide as a stroke may be; a link is held to its own limit.
+        if (node.type === 'link' && key.to > LINK_MAX_WIDTH) fail(`${where}: widthTo("${node.id}"): to is ${key.to}, and a link is at most ${LINK_MAX_WIDTH} wide`);
+        push(widths, index, key);
         break;
       case 'reshape':
         if (!(node.type === 'stroke' || (node.type === 'shape' && isRegion(node.shape)))) {
@@ -648,6 +660,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       count: node.type === 'text' && node.count ? countTrackOf(node.id, node.count.from, counts.get(d.index) ?? []) : null,
       stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? [], strokePulses.get(d.index) ?? []) : null,
       outline,
+      // A line without a widthTo has no track: it is as wide as it was made.
+      width: (node.type === 'link' || node.type === 'stroke') && widths.has(d.index) ? buildWidthTrack(node.width, widths.get(d.index)!) : null,
       clipIndex,
       bodySlot,
       springSlot,

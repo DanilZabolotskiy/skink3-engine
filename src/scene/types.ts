@@ -137,6 +137,9 @@ export interface GroupNode extends NodeBase {
   readonly clipTo?: string | null;
 }
 
+/** The widest a link can be, in units: the limit of its `width`, and of a `widthTo` on it. */
+export const LINK_MAX_WIDTH = 80;
+
 /** A curved line between two nodes of the same layer; it follows them as they move. */
 export interface LinkNode {
   readonly type: 'link';

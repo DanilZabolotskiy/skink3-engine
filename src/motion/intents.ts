@@ -171,6 +171,18 @@ export interface BendToKey extends Voiced {
   readonly overshoot: number;
 }
 
+/** Change the width of a link or of a stroke, where the line lies: it grows thick, or thins. */
+export interface WidthToKey extends Voiced {
+  readonly kind: 'widthTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new width, in units. */
+  readonly to: number;
+  readonly dur: number;
+  /** How far it shoots past the new width, as a fraction of the change. */
+  readonly overshoot: number;
+}
+
 export interface PulseKey extends Voiced {
   readonly kind: 'pulse';
   readonly target: string;
@@ -361,6 +373,7 @@ export type Key =
   | DrawOnKey
   | SolidToKey
   | BendToKey
+  | WidthToKey
   | PulseKey
   | OpenToKey
   | BlinkKey
@@ -958,6 +971,30 @@ export function bendTo(linkId: string, opts: { at: number; to: number; dur?: num
     to: num(w, 'to', opts.to, -1, 1),
     dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.25, 0, 0.5),
+  };
+}
+
+/**
+ * Change the width of a link or of a stroke over time: `to` is its new width
+ * in units, as for the line's own `width`. The line stays where it is: the
+ * ends of a link stay on its nodes, and what is drawn from the width (its
+ * round ends, its glow, the lights that run along it) follows. It shoots past
+ * the new width by `overshoot` and settles, so a hair grows thick and thins
+ * again. Several keys chain from the width reached at that moment.
+ *
+ * `to` may be as wide as a stroke may be; a link is narrower, and the shot
+ * holds a key of a link to the limit of `link`.
+ */
+export function widthTo(id: string, opts: { at: number; to: number; dur?: number; overshoot?: number }): WidthToKey {
+  const w = `widthTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'overshoot']);
+  return {
+    kind: 'widthTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, 0.5, 200),
+    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
+    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
   };
 }
 

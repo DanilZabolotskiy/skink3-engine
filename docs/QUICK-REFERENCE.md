@@ -15,7 +15,7 @@ const palette = definePalette({
   mid: { mist: hsv(250, 0.46, 0.74) }, accent: { amber: hsv(40, 0.86, 0.99), aqua: hsv(176, 0.72, 0.93) },
   light: { cream: hsv(52, 0.34, 0.99) },
 });
-const dawn = definePalette({ ...palette.spec, deep: { ...palette.spec.deep, night: hsv(214, 0.7, 0.34) }, rules: [{ roles: ['accent'], saturation: [0.6, 1] }], tones: { shadowHue: 250 } }); // a variant: same names, other colours; a shot draws with the one it names
+const dawn = definePalette({ ...palette.spec, deep: { ...palette.spec.deep, night: hsv(214, 0.7, 0.34) }, rules: [{ roles: ['accent'], saturation: [0.6, 1] }], tones: { shadowHue: 250 } }); // a variant: same names, other colours; a shot names its own
 const scene = shot({
   id: 'minimal', seconds: 4, seed: 1, palette, strings: { en: { 'label.dot': 'A dot' } },
   background: { inner: 'deep.night', outer: 'deep.abyss' }, atmosphere: 'mid.mist',
@@ -36,7 +36,7 @@ export default scene;
 shot({ ...scene, /* = */ light: { from: 'top-left' }, vignette: 0.5, camera: { at: [0, 0], drift: { speed: 0.5, heading: 0, wander: 10, period: 7 }, pushIn: { from: 1, to: 1.05 }, focus: { far: 6, near: 60 } } });
 shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } });
 cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // zoom, to, or both
-zoomTo({ at: 6, to: 1.15, /* = */ dur: 3, profile: 'ease', ramp: 0.3 }); // a slow push: the zoom alone
+zoomTo({ at: 6, to: 1.15, /* = */ dur: 3, profile: 'ease', ramp: 0.3 }); // a slow push: zoom alone
 backgroundTo({ at: 3, inner: 'deep.abyss', /* = */ dur: 2, profile: 'ease', ramp: 0.3 }); // + outer, center, radius, atmosphere, vignette
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
@@ -73,22 +73,22 @@ eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'he
 capsule({ id: 'tail', fill: 'accent.amber', length: 46, r: 8, origin: 'start', sway: 'springy' }); // it swings round its first end; or 'heavy', 'light', 'viscous'
 circle({ id: 'moon', fill: 'light.cream', r: 9, follow: { f: 2.4, z: 0.26, r: 0 } }); // Hz, damping, response: its position lags; also groups, labels
 rect({ id: 'floor', fill: 'dark.indigo', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } });
-circle({ id: 'ball', fill: 'accent.amber', r: 30, body: { kind: 'dynamic', release: 2.5, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: the defaults
+circle({ id: 'ball', fill: 'accent.amber', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: the defaults
 shot({ ...scene, /* = */ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
-A dynamic body waits, touching nothing, until `release` (seconds; down to minus `prewarm`, the seconds simulated before frame 0); then only the simulation moves it. `velocity`: units per second; `spin`: degrees per second; `appear: 'release'`: undrawn until then. The shape is the collider.
+A dynamic body waits, touching nothing, until `release` (seconds; down to minus `prewarm`, simulated before frame 0); then only the simulation moves it. `velocity`: units per second; `spin`: degrees per second; `appear: 'release'`: undrawn until then. The shape is the collider.
 
 ## Motion and timing
 
 ```ts
 moveTo('dot', { at: 1.2, to: [260, -40], /* = */ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance
-moveTo('dot', { arrive: 6.5, to: [0, 0] }); // arrive, instead of at: when it first reaches `to`
-hop('buddy', { at: 4.3, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
-travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur:, or speeds: [[s, speed], ...]); + roll: r, a wheel of that radius
-turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); instead of to: speed (degrees per second), or speeds: [[s, speed], ...]
+moveTo('dot', { arrive: 6, to: [0, 0] }); // arrive, instead of at: when it first reaches `to`
+hop('buddy', { at: 4, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
+travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur: or speeds: [[s, speed], ...]); + roll: r, a wheel's radius
+turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); instead of to: speed (degrees per second) or speeds: [[s, speed], ...]
 scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes (a bar from one end)
-fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 }); // an opacity
+fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 });
 popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /* = */ dur: 0.35 });
 bump('c', { at: 2, /* = */ amount: 0.14 }); // a kick of the size, 0.7 s
@@ -97,12 +97,13 @@ countTo('total', { at: 2, to: 1500, /* = */ dur: 1, profile: 'ease' }); // a tex
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of its dashes
-bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // it pulls taut (0), or sags
+bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
+widthTo('wire', { at: 4, to: 20, /* = */ dur: 0.6, overshoot: 0.15 }); // a link or a stroke: its width
 reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a region or a stroke, point for point; + smooth
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // arrives at at + dur and bumps the far node. On a stroke: + from, to (shares), profile, length, node (bumped)
-openTo('pupil', { at: 0.5, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
+openTo('pupil', { at: 1, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
-stagger(['a', 'b', 'c'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
+stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
 ```
 
 - A negative `at` (to -600): under way at frame 0.
@@ -123,10 +124,10 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 ```ts
 circle({ id: 'marble', fill: 'accent.amber', r: 30, sound: 'marble' }); // the node's voice: the bank's sound "marble.<kind>", or "marble"
 popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names the sound of its start
-sfx('chime', { at: 6.5, /* = */ gain: 1 }); // placed by hand, as on a word; + node: panned to it
+sfx('chime', { at: 6, /* = */ gain: 1 }); // placed by hand, as on a word; + node: panned to it
 ```
 
-- `skink3 sfx` makes the track from the shot's events and the production's bank; only what is seen sounds. Read it on `sfx --sheet`: a tile per sound, with its frame and node.
+- `skink3 sfx` makes the track from the shot's events and a bank; only what is seen sounds. Read it on `sfx --sheet`: a tile per sound, with frame and node.
 
 ## Words, generated content
 
@@ -150,7 +151,7 @@ motion  [--pictures [--top 3]]
 physics [--pictures [--top 3]]
 trail   a ghost trail  --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph   a speed graph  --node id | --camera  [--from f] [--to f] | [--time s,s]
-events  every intent, contact and burst of the shot, as JSON
+events  the shot's intents, contacts and bursts, as JSON
 sfx     the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 480]]
 common  --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
@@ -159,7 +160,7 @@ Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `ch
 
 ## Reading the reviews
 
-Each finding (a warning) and its usual fix:
+Findings (warnings) and their usual fix:
 
 - `jump`: a teleport or pop: check the keys there; change place while hidden.
 - `abrupt-start`: no ease-in: keep `anticipation` or `overshoot`, or `'ease'`, `'in'`.
@@ -177,18 +178,18 @@ Each finding (a warning) and its usual fix:
 - `energy-spike`: speed from nowhere: bodies released inside each other or pressed into a wall.
 - `unseen-hit`: a bounce off an undrawn body: bodies collide from their release on.
 - `not-finite`: the simulation broke down: an extreme velocity, size or spring `f`.
-- `low-contrast` (with `contrast`): a node blends into what is behind it: change one of the colours.
+- `low-contrast` (with `contrast`): a node blends into what is behind it: change a colour.
 
 Not reported: what is hidden, off the frame, wholly behind a `cover` or outside its clip. Mark what is meant, with a reason:
 
 ```ts
 shot({ ...scene, contrast: { nodes: ['dot'], lightness: 18, colour: 24 } }); // off unless given; it blends below both: L*, a*b* (colourDistance(a, b)); + edge, seconds
-shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked away', { from: 1, to: 2 })] }); // window optional; also for '(camera)', '(frame)', '(frame:top-left)'
+shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked', { from: 1, to: 2 })] }); // window optional; also '(camera)', '(frame)', '(frame:top-left)'
 ```
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, zoom keys, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use** (subtitles); **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables** (fonts); **`shot`** (camera, zoom keys, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, line width); **Timeline: intents** (profiles, travel, reshape, stagger); **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound** (events, the bank, the sheet); **Command line**; **From another repository**; **Programmatic use** (subtitles); **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 

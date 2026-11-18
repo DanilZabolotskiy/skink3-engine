@@ -24,6 +24,7 @@ import {
   sampleStretch,
   sampleStrokePulses,
   sampleTravelling,
+  sampleWidth,
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
@@ -284,6 +285,8 @@ export interface LinkItem {
   readonly reveal: number;
   readonly pulses: readonly { readonly head: number; readonly tail: number }[];
   readonly alpha: number;
+  /** A link whose width is keyed (widthTo): the width it has at this frame. Left out: the width of its node. */
+  readonly width?: number;
 }
 
 export interface StrokeItem {
@@ -303,6 +306,8 @@ export interface StrokeItem {
   readonly pulses?: readonly { readonly head: number; readonly tail: number; readonly length: number }[];
   /** A stroke whose line is keyed (reshape): the path it has at this frame. Left out: the path of its node. */
   readonly path?: PathSpec;
+  /** A stroke whose width is keyed (widthTo): the width it has at this frame, in its own units. Left out: the width of its node. */
+  readonly width?: number;
 }
 
 export interface TextItem {
@@ -398,6 +403,14 @@ export function itemPath(item: StrokeItem): PathSpec {
   if (item.path) return item.path;
   if (item.node.node.type !== 'stroke') throw new Error(`"${item.node.id}" is not a stroke`);
   return item.node.node.path;
+}
+
+/** The width a link or a stroke is drawn with at its frame, in its own units. */
+export function itemWidth(item: LinkItem | StrokeItem): number {
+  if (item.width !== undefined) return item.width;
+  const node = item.node.node;
+  if (node.type !== 'link' && node.type !== 'stroke') throw new Error(`"${item.node.id}" is not a line`);
+  return node.width;
 }
 
 export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem;
@@ -684,7 +697,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           if (drawn <= 1e-6) break;
           // A stroke without a pulse is the item it always was.
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline ? { path: strokePathOf(n, t) } : {}) });
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
           break;
         }
         case 'link': {
@@ -710,7 +723,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             const span = pulseSpan(t, p.at, p.dur);
             if (span && span.head > span.tail) pulses.push(span);
           }
-          items.push({ kind: 'link', node: n, curve, reveal, pulses, alpha: a });
+          // A link without a widthTo is the item it always was.
+          items.push({ kind: 'link', node: n, curve, reveal, pulses, alpha: a, ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
           break;
         }
         case 'label': {

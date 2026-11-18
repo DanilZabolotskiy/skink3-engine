@@ -89,7 +89,7 @@ Every finding has:
 |---|---|
 | `kind` | one of the kinds below |
 | `subject` | a node id; `(camera)`; `(frame)` for the whole frame; `(frame:top-left)` and so on for one of its six regions |
-| `channel` | what changed: `position`, `rotation`, `scale`, `opacity`, `level`, `outline`, `particles`, `pulse`, `spring`, `hold` |
+| `channel` | what changed: `position`, `rotation`, `scale`, `opacity`, `level`, `outline`, `width`, `particles`, `pulse`, `spring`, `hold` |
 | `from`, `to` | first and last frame; the text adds the seconds |
 | `value`, `threshold`, `unit` | the measurement and the limit it is held against, in the same unit |
 | `severity` | `value / threshold`; the report is sorted by it |
@@ -102,8 +102,8 @@ The text report is capped: at most 12 subjects and 4 findings per subject. Gener
 
 | Kind | What it means | Usual fix |
 |---|---|---|
-| `jump` | Position, rotation, size, opacity or the level of a content changes between two frames out of line with the frames around it: a teleport or a pop. Also a jump spread over two frames, a flicker (away and back), and a link that appears within a frame because its end node starts to pop in. | Look at the keys at that moment: two keys at once, a duration shorter than a frame, a wrong target. To change place unseen, do it while the node is hidden (`popOut`, then `popIn`) or faded out. Draw a link on (`drawOn`) after its nodes have arrived. |
-| `abrupt-start` | A move that is at its peak speed within two frames of rest: there is no ease-in. | Give it an anticipation or an overshoot above 0. With both at 0 a `moveTo`, `turnTo` or `scaleTo` is a plain ease-out, which starts at full speed. Or use the profile `'ease'` or `'in'`, or lengthen the move. A `travel` that starts in view takes the profile `'in'` or `'ease'`. |
+| `jump` | Position, rotation, size, opacity, the level of a content or the width of a line changes between two frames out of line with the frames around it: a teleport or a pop. Also a jump spread over two frames, a flicker (away and back), and a link that appears within a frame because its end node starts to pop in. | Look at the keys at that moment: two keys at once, a duration shorter than a frame, a wrong target. To change place unseen, do it while the node is hidden (`popOut`, then `popIn`) or faded out. Draw a link on (`drawOn`) after its nodes have arrived. |
+| `abrupt-start` | A move that is at its peak speed within two frames of rest: there is no ease-in. | Give it an anticipation or an overshoot above 0. With both at 0 a `moveTo`, `turnTo`, `scaleTo` or `widthTo` is a plain ease-out, which starts at full speed. Or use the profile `'ease'` or `'in'`, or lengthen the move. A `travel` that starts in view takes the profile `'in'` or `'ease'`. |
 | `abrupt-stop` | A move that is still at its peak speed two frames before it rests: it runs into its place. | Use an eased intent or the profile `'ease'` or `'out'`, lengthen the move, or let it overshoot and settle. |
 | `mechanical` | A move between two rests at constant speed over at least 70 % of its length: a `'steady'` move, travel or level that starts and ends in view. | Replace it with an eased move (the profile `'ease'`). If it is meant as a flow, let it enter and leave the frame, or start and end behind a cover, instead of resting in view. |
 | `too-fast` | The node travels at least half of its own size per frame, and at least 6 px, for a tenth of a second or longer. There is no motion blur, so it strobes at 60 fps. For an emitter: most of its particles in frame do. For a link: a pulse crosses it in fewer than 9 frames. For a stroke: a light that runs along it covers half of its own length per frame or more. | Slow it down or make it larger: a longer move, a lower release velocity or gravity, more drag; for particles a lower speed or a larger size. |
@@ -124,11 +124,11 @@ Things that are legitimate and are not flagged:
 
 | | timeline nodes | rigid bodies | particles | links | camera |
 |---|---|---|---|---|---|
-| jump | yes | size and opacity only | – | appearing or vanishing | yes |
-| abrupt start, abrupt stop | yes | size only | – | – | yes |
+| jump | yes | size and opacity only | – | appearing or vanishing; a width that changes | yes |
+| abrupt start, abrupt stop | yes | size only | – | a width that changes | yes |
 | mechanical | yes | size only | – | – | no |
 | too-fast | yes | yes | per emitter | pulses | no |
-| dead-area | count as alive while they move | the same | the same | while a pulse runs, the link is drawn on or its bend changes | never counts |
+| dead-area | count as alive while they move | the same | the same | while a pulse runs, the link is drawn on, or its bend or its width changes | never counts |
 
 A content with a level (a shape that fills from the bottom) has one more channel: `level`, the travel of its surface in px. It is judged like a move: a jump, an abrupt start or stop, one speed between two rests. Its children ride on the surface and are judged on their own motion, which includes that ride. A level that moves, or a surface that ripples, counts as alive.
 
@@ -145,12 +145,13 @@ Whether the simulation itself is sound is a different question: bodies that sink
 - **Behind a cover** is judged on nine points of a shape or an eye: its middle and eight points of its edge. It is hidden when every one of them lies under a cover that is at least 95 % opaque and is drawn after it in the same layer. One point that shows, and the node is seen.
 - **Too fast** is the only check in screen space: the step of a node on screen divided by its size along that step. A part is measured against its parent as the parent is turned at each moment, so a ball on a stick that whips round is caught, and an eye on a body that pops in is not.
 - **Springs.** A response starts when the node leaves its rest place (where it would be without the spring) by 0.5 px and ends when it is back within it. Reported per response: the largest lag, the overshoot past the rest place, the number of visible swings (1 px or more) after the target stopped, how long it kept swinging, and when it settled.
-- **Alive** means that something visible changes by itself: a node moves, turns, grows, fades or blinks, changes its width, its height or its outline, a pulse runs, a link is drawn on or changes its bend, a stroke is drawn on, its dashes close or a light runs along it, a counter runs, a particle travels. A background that changes (`backgroundTo`) is seen everywhere: while it changes by 0.0005 of the range of its values per frame or more, every part of the frame is alive. A thing counts in every region that the circle around it touches. An area with nothing in it is dead too. The camera never counts: a picture that only slides is still a hold.
+- **Alive** means that something visible changes by itself: a node moves, turns, grows, fades or blinks, changes its width, its height or its outline, a pulse runs, a link is drawn on or changes its bend, a stroke is drawn on, its dashes close or a light runs along it, a link or a stroke changes its width, a counter runs, a particle travels. A background that changes (`backgroundTo`) is seen everywhere: while it changes by 0.0005 of the range of its values per frame or more, every part of the frame is alive. A thing counts in every region that the circle around it touches. An area with nothing in it is dead too. The camera never counts: a picture that only slides is still a hold.
 
 - **Strokes and free-standing texts** are nodes like shapes: their moves, turns, sizes and fades are judged as a shape's. A stroke that is being drawn, a counter that runs and a link that bends are not judged for their speed; they count as life.
 - **A background that changes** (`backgroundTo`) has no finding of its own: a key takes a tenth of a second at least and starts from what the background is at its moment, so it cannot jump. Its change is measured as the largest change of any of its values per frame, each as a share of its full range: a channel of one of its colours, the vignette, the place and the size of the gradient. The report says when it changes visibly.
 - **A light that runs along a stroke** (`pulse` on a stroke) is judged as the pulse of a link is: its mean speed against its own length, on the channel `pulse`, on the stroke. The length of the light is a quarter of its way, at most 120 units, unless the key gives one. While it runs the stroke counts as life.
 - **An outline that changes** (`reshape` of a region or of a stroke) has a channel of its own, `outline`: the travel of the point of the outline that goes farthest, in px. It is judged like a move: a jump, an abrupt start or stop, one speed between two rests. While it changes the node counts as life.
+- **A line whose width changes** (`widthTo` of a link or of a stroke) has a channel of its own, `width`: the travel of the edge of the line, which is half the change of its width, in px. It is judged for a jump and for an abrupt start or stop, on a link as on a stroke. A key has no steady speed, so there is no mechanical change of width to find. While it changes the line counts as life.
 - **A change of width and height** (`scaleTo` with `to: [sx, sy]`) is judged on the scale channel, as the travel of the edge along each axis, the larger of the two.
 - **A turn whose speed is keyed** (`turnTo` with `speeds`) is judged as any turn, on the rotation channel: a start at speed from rest in view is an abrupt start, a wheel that never rests in the shot is a flow. Where two keys meet at one speed there is nothing to report.
 - **Camera keys** (`cameraTo`) are judged as the camera always is: a jump, an abrupt start or stop of its position or of its zoom. A keyed zoom is measured as a ratio, because that is what it is to the eye: a zoom from 10 to 20 is the change that one from 1 to 2 is.
@@ -225,7 +226,7 @@ The spacing of the dots is the reading:
 
 ## Reading a graph
 
-A graph is one picture of one subject over time. The large panel is its speed in px per frame. Small panels below show whatever else changes on it: position, rotation, scale, opacity. Every panel has its own scale; the time axis at the bottom gives seconds and frames. A yellow band marks the frames of a finding, with its kind and frames above the first panel. A dark band marks frames at which the node is not drawn.
+A graph is one picture of one subject over time. The large panel is its speed in px per frame. Small panels below show whatever else changes on it: position, rotation, scale, opacity, the width of a stroke. Every panel has its own scale; the time axis at the bottom gives seconds and frames. A yellow band marks the frames of a finding, with its kind and frames above the first panel. A dark band marks frames at which the node is not drawn.
 
 For a node that is attached to something, the speed panel has two lines: its speed on the stage with the camera frozen, and its speed against what it is attached to, which is what the strobing check measures.
 

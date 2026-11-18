@@ -3,14 +3,19 @@
 //
 // Which finding applies to what:
 //
-//                   timeline nodes   rigid bodies      particles     links        camera
-//   jump                 yes         size, opacity         -        appearance     yes
-//   abrupt start/stop    yes             size              -            -          yes
-//   mechanical           yes             size              -            -          no
-//   too-fast             yes              yes          per emitter    pulses        no
+//                   timeline nodes   rigid bodies      particles        links          camera
+//   jump                 yes         size, opacity         -       appearance, width    yes
+//   abrupt start/stop    yes             size              -            width           yes
+//   mechanical           yes             size              -              -             no
+//   too-fast             yes              yes          per emitter      pulses          no
 //
 // A light that runs along a stroke is judged as the pulse of a link is: too
 // fast when it covers half of its own length per frame or more.
+//
+// A line whose width is keyed (a link or a stroke with a widthTo) is judged on
+// the travel of its edge: for a jump, and for a start or a stop without an
+// ease. A key of the width has no steady speed, so there is no mechanical
+// change of width to look for.
 //
 // A rigid body gets its place and its turn from a solver: a contact is a
 // legitimate change of velocity within a frame, a nudge from a neighbour moves
@@ -39,7 +44,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'particles' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'particles' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -69,7 +74,7 @@ export const FINDING_KINDS: Readonly<Record<MotionFindingKind, { readonly means:
   },
   'abrupt-start': {
     means: 'a move that is at full speed within two frames of rest',
-    fix: 'give the move an ease-in: an overshoot or an anticipation above 0 (with both at 0 a moveTo, turnTo or scaleTo is a plain ease-out that starts at full speed), or a longer duration',
+    fix: 'give the move an ease-in: an overshoot or an anticipation above 0 (with both at 0 a moveTo, turnTo, scaleTo or widthTo is a plain ease-out that starts at full speed), or a longer duration',
   },
   'abrupt-stop': {
     means: 'a move that is still at full speed two frames before it rests',
@@ -119,7 +124,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -200,6 +205,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   scale: { moved: 'changed size by', what: 'scale (travel of its edge)' },
   level: { moved: 'moved', what: 'level (travel of its surface)' },
   outline: { moved: 'changed by', what: 'outline (travel of its points)' },
+  width: { moved: 'changed by', what: 'width (travel of its edge)' },
 };
 
 
@@ -300,7 +306,7 @@ const NO_FRAMES: ReadonlySet<number> = new Set<number>();
 function abrupt(
   subject: string,
   ch: Chan,
-  st: Steps,
+  st: Pick<Steps, 'seen' | 'inFrame'>,
   frames: number,
   onsets: ReadonlySet<number>,
   out: Finding[],
@@ -562,6 +568,24 @@ function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out:
   }
 }
 
+// --- The width of a line ---------------------------------------------------------------------------
+
+/**
+ * The width of a line over the shot as a channel: the travel of its edge,
+ * which is half the change of its width, in px. null when it never changes
+ * enough for a detector to have anything to say.
+ */
+function widthSteps(width: Float32Array, zoom: ArrayLike<number>, frames: number, quiet: number): Chan | null {
+  const ch = chan('width', frames);
+  let largest = 0;
+  for (let f = 1; f < frames; f++) {
+    ch.b[f] = ((width[f]! - width[f - 1]!) / 2) * zoom[f]!;
+    ch.d[f] = Math.abs(ch.b[f]!);
+    if (ch.d[f]! > largest) largest = ch.d[f]!;
+  }
+  return largest >= quiet ? ch : null;
+}
+
 // --- Everything on placed nodes, links, emitters and the camera -----------------------------------
 
 /** Jumps, abrupt starts and stops, mechanical moves and strobing speed of every node, link, emitter and the camera. */
@@ -658,6 +682,12 @@ export function detectMotion(series: MotionSeries): Finding[] {
           mechanical(s.id, form, st, s, F, flat);
         }
       }
+      // A stroke whose width is keyed: the travel of its edge is judged for a jump and for its ease.
+      const wide = s.width ? widthSteps(s.width, series.views[s.node.layer]!.zoom, F, quiet) : null;
+      if (wide) {
+        jumps(s.id, wide, okSeen, F, mine);
+        abrupt(s.id, wide, st, F, NO_FRAMES, eased);
+      }
       // A constant-speed move starts and stops abruptly by nature, and a jump is
       // a start and a stop at once: one finding says it.
       const leaps = mine.filter((j) => j.kind === 'jump');
@@ -689,6 +719,24 @@ export function detectMotion(series: MotionSeries): Finding[] {
         finding('jump', l.id, 'opacity', f - 1, f, step, T.jumpOpacity, 'opacity in one frame',
           `the link ${l.presence[f]! > l.presence[f - 1]! ? 'appears' : 'vanishes'} within one frame (drawn share times opacity changes by ${step.toFixed(2)} between frames ${f - 1} and ${f})`),
       );
+    }
+    // A link whose width is keyed: the travel of its edge, judged as on a stroke while the link is seen.
+    const wide = l.width ? widthSteps(l.width, series.views[n.layer]!.zoom, F, quiet) : null;
+    if (wide) {
+      const seen = new Uint8Array(F);
+      const inFrame = new Uint8Array(F);
+      const ok = new Uint8Array(F);
+      for (let f = 1; f < F; f++) {
+        seen[f] = l.presence[f - 1]! >= T.visibleAlpha && l.presence[f]! >= T.visibleAlpha ? 1 : 0;
+        inFrame[f] = ((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) !== 0 ? 1 : 0;
+        ok[f] = seen[f] && inFrame[f] ? 1 : 0;
+      }
+      const leaps: Finding[] = [];
+      const eased: Finding[] = [];
+      jumps(l.id, wide, ok, F, leaps);
+      abrupt(l.id, wide, { seen, inFrame }, F, NO_FRAMES, eased);
+      // A jump is a start and a stop at once: one finding says it.
+      out.push(...leaps, ...eased.filter((e) => !leaps.some((j) => e.from <= j.to && e.to >= j.from)));
     }
     const limit = 1 / (T.fastRatio * PULSE_LENGTH);
     for (const p of n.link!.pulses) {

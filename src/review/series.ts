@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
@@ -108,6 +108,8 @@ export interface PlacedSeries {
    * in the layer's units. It only grows; null for other nodes.
    */
   readonly outline: Float32Array | null;
+  /** Strokes whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other nodes. */
+  readonly width: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -124,9 +126,11 @@ export interface LinkSeries {
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly half: Float32Array;
-  /** 1 while a pulse travels along it, it is being drawn on, or its bend changes. */
+  /** 1 while a pulse travels along it, it is being drawn on, or its bend or its width changes. */
   readonly active: Uint8Array;
   readonly flags: Uint8Array;
+  /** Links whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other links. */
+  readonly width: Float32Array | null;
 }
 
 /** What the particles of an emitter do, frame by frame. Only particles in frame are counted. */
@@ -330,7 +334,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         const table = pathTable(path);
         for (let i = 0; i < table.xs.length; i++) far = Math.max(far, Math.hypot(table.xs[i]!, table.ys[i]!));
       }
-      radius[n.index] = far + node.width / 2;
+      // A stroke whose width is keyed: the widest it comes to rest at.
+      radius[n.index] = far + Math.max(node.width, ...(n.width ? n.width.segs.map((seg) => seg.to) : [])) / 2;
       turnRadius[n.index] = radius[n.index]!;
     } else if (node.type === 'label' || node.type === 'text') {
       const box = node.type === 'label' ? labelLayout(c, n, lang).geometry.box : textLayout(c, n, lang).block.box;
@@ -377,6 +382,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       n.stretch !== null ||
       n.axis !== null ||
       n.outline !== null ||
+      n.width !== null ||
       (n.count !== null && n.count.segs.length > 0) ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length + n.stroke.pulses.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
@@ -411,13 +417,14 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
       life: type === 'stroke' || n.count !== null ? f32() : null,
       outline: n.outline ? f32() : null,
+      width: n.width ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
   });
   const links: LinkSeries[] = c.nodes
     .filter((n) => n.node.type === 'link')
-    .map((n) => ({ node: n, id: n.id, presence: f32(), x: f32(), y: f32(), half: f32(), active: new Uint8Array(frames), flags: new Uint8Array(frames) }));
+    .map((n) => ({ node: n, id: n.id, presence: f32(), x: f32(), y: f32(), half: f32(), active: new Uint8Array(frames), flags: new Uint8Array(frames), width: n.width ? f32() : null }));
   const springs: SpringSeries[] = c.springs.map((index) => {
     const n = c.nodes[index]!;
     return { node: n, id: n.id, kind: n.springKind!, params: n.springParams!, restX: f32(), restY: f32(), x: f32(), y: f32() };
@@ -609,6 +616,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.life[f] = life * xf.scale;
       }
       if (s.outline && n.outline) s.outline[f] = outlineTravel(n.outline, t) * xf.scale;
+      if (s.width && n.width) s.width[f] = sampleWidth(n.width, t) * xf.scale;
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;
@@ -629,6 +637,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       s.x[f] = (from.x + to.x) / 2;
       s.y[f] = (from.y + to.y) / 2;
       s.half[f] = half;
+      if (s.width && n.width) s.width[f] = sampleWidth(n.width, t);
       const reveal = sampleReveal(n.link!, t);
       const isDrawn = own[n.index]! > FAINT && from.scale > HIDDEN && to.scale > HIDDEN && reveal > 0 && half > 0.5;
       if (!isDrawn) continue;
@@ -647,6 +656,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       if (!active && n.link!.bends.length > 0 && n.node.type === 'link') {
         active = Math.abs(sampleBend(n.link!, n.node.bend, t) - sampleBend(n.link!, n.node.bend, t - 1 / FPS)) * 2 * half * zoom >= T.alivePx;
       }
+      // A width that changes moves the edge of the line by half the change.
+      if (!active && n.width) active = (Math.abs(sampleWidth(n.width, t) - sampleWidth(n.width, t - 1 / FPS)) / 2) * zoom >= T.alivePx;
       s.active[f] = active ? 1 : 0;
     }
   }

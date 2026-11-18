@@ -13,7 +13,7 @@ import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
-import { itemPath, itemShape, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import { itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
@@ -277,15 +277,16 @@ function drawPulses(
 
 /** A link and the pulses travelling along it. */
 export function drawLink(ctx: CanvasRenderingContext2D, item: LinkItem, paint: Paint): void {
-  const node = item.node.node as LinkNode;
+  // The width the link has at this frame: the lights along it are as large as the line is now.
+  const width = itemWidth(item);
   ctx.save();
   ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
-  ctx.lineWidth = node.width;
+  ctx.lineWidth = width;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   strokeQuad(ctx, item.curve, 0, item.reveal);
   const pulse = item.node.colors['pulseColor']!;
-  drawPulses(ctx, item, node.width * 1.5, node.width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
+  drawPulses(ctx, item, width * 1.5, width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
   ctx.restore();
 }
 
@@ -296,17 +297,18 @@ export function drawLink(ctx: CanvasRenderingContext2D, item: LinkItem, paint: P
 export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, paint: Paint): void {
   const node = item.node.node as LinkNode;
   if (item.pulses.length === 0 && node.glow <= 0) return;
+  const width = itemWidth(item);
   ctx.save();
   if (node.glow > 0) {
     ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
-    ctx.lineWidth = node.width;
+    ctx.lineWidth = width;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     strokeQuad(ctx, item.curve, 0, item.reveal);
   }
   if (item.pulses.length > 0) {
     const pulse = paint.tone('base', item.node.colors['pulseColor']!);
-    drawPulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
+    drawPulses(ctx, item, width * 2.1, width * 1.5, pulse, pulse, item.alpha);
   }
   ctx.restore();
 }
@@ -314,7 +316,9 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
 /**
  * Strokes the drawn part of a stroke in the current colour. The dashes are
  * anchored at the first point of the line, so they stay where they are while
- * the line is drawn on; closing the gaps lengthens every dash in place.
+ * the line is drawn on; closing the gaps lengthens every dash in place. They
+ * are laid out by the width the stroke was given: a width that is keyed makes
+ * every dash thicker where it is, and moves none.
  */
 function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   const node = item.node.node as StrokeNode;
@@ -326,7 +330,7 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   ctx.translate(xf.x, xf.y);
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
-  ctx.lineWidth = node.width;
+  ctx.lineWidth = itemWidth(item);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (node.dash && item.solid < 1 - 1e-6) {
@@ -426,9 +430,9 @@ export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, pain
   ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
   strokeLine(ctx, item);
   if (item.pulses) {
-    const node = item.node.node as StrokeNode;
+    const width = itemWidth(item);
     const pulse = item.node.colors['pulseColor'] ?? item.node.colors['color']!;
-    drawStrokePulses(ctx, item, node.width * 1.5, node.width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
+    drawStrokePulses(ctx, item, width * 1.5, width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
   }
 }
 
@@ -444,7 +448,8 @@ export function drawStrokeGlow(ctx: CanvasRenderingContext2D, item: StrokeItem, 
   }
   if (item.pulses) {
     const pulse = paint.tone('base', item.node.colors['pulseColor'] ?? item.node.colors['color']!);
-    drawStrokePulses(ctx, item, node.width * 2.1, node.width * 1.5, pulse, pulse, item.alpha);
+    const width = itemWidth(item);
+    drawStrokePulses(ctx, item, width * 2.1, width * 1.5, pulse, pulse, item.alpha);
   }
 }
 

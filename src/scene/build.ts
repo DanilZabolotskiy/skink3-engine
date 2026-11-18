@@ -22,7 +22,7 @@ import {
 import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
-import { FINDING_KINDS_ALL } from './types.ts';
+import { FINDING_KINDS_ALL, LINK_MAX_WIDTH } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -410,7 +410,7 @@ export function link(o: {
     from: idOf(where, o.from),
     to: idOf(where, o.to),
     bend: o.bend === undefined ? 0.12 : num(where, 'bend', o.bend, -1, 1),
-    width: o.width === undefined ? 7 : num(where, 'width', o.width, 0.5, 80),
+    width: o.width === undefined ? 7 : num(where, 'width', o.width, 0.5, LINK_MAX_WIDTH),
     color: c,
     pulseColor: o.pulseColor === undefined ? c : color(where, 'pulseColor', o.pulseColor),
     gap: o.gap === undefined ? 6 : num(where, 'gap', o.gap, 0, 400),

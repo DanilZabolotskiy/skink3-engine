@@ -516,7 +516,7 @@ A curved line between two nodes of the same layer. It follows them as they move.
 | `color` | required | |
 | `pulseColor` | `color` | colour of the pulses |
 | `bend` | `0.12` | sideways bulge as a fraction of the length; negative bends the other way; 0 is straight |
-| `width` | `7` | |
+| `width` | `7` | thickness in units, 0.5 to 80; `widthTo` changes it over time |
 | `gap` | `6` | free space between the link's end and the node's edge |
 | `opacity` | `1` | 0..1 at the start |
 | `glow` | `0` | 0..1: the line itself glows, with a halo around it. Pulses glow whatever this is |
@@ -542,6 +542,26 @@ bendTo('line', { at: 6.2, to: 0.22, dur: 1.2 }),   // and sags again, to the oth
 - The ends of the link stay on its two nodes; only its middle moves. A `bendTo` makes no event; the motion review counts a line whose bend changes as life in the frame.
 - It is a look: there is no rope and no weight. For a line that hangs between more than two points, use a `stroke`; a `pulse` runs along a stroke too.
 
+#### A line whose width changes
+
+The `width` of a link or of a stroke is set once; `widthTo` changes it over time, where the line lies: a hair between two nodes grows thick, and thins again.
+
+```ts
+link({ id: 'tie', from: 'left', to: 'right', color: 'mid.mist', pulseColor: 'accent.amber', width: 3 }),   // a hair
+// timeline
+widthTo('tie', { at: 2, to: 22 }),            // it grows thick: a little past 22, back, and 22
+pulse('tie', { at: 2.8, dur: 1.2 }),          // the light along it is as large as the line is now
+widthTo('tie', { at: 6, to: 3, dur: 1 }),     // and it is a hair again
+```
+
+- `to` is the new width in units, as for `width`: 0.5 to 80 for a link, 0.5 to 200 for a stroke. `dur` (0.6) is the time it takes.
+- **It shoots past the new width** by `overshoot` (0.15 of the change) and settles; `overshoot: 0` only arrives, and starts at full speed. A line that thins never dips below half of its new width.
+- **Keys chain:** each starts from the width reached at its moment, also when the one before is still under way.
+- **Only the width changes.** The ends of a link stay on its two nodes, and the line of a stroke stays where it is; the lines beside it are not touched. What is drawn from the width follows it: the round ends, the glow of the line, and the lights of `pulse`, which are as large as the line is at that moment.
+- **A dashed stroke keeps its dashes where they are:** each grows thicker, so the clear gap between two narrows by what the width gained. To close the gaps, use `solidTo`.
+- A stroke that is scaled (`scale`, `scaleTo`, a parent) scales its width with it, keyed or not. `widthTo` is for a line that changes its width and not its size.
+- A `widthTo` makes no event. The motion review judges it on a channel of its own, `width` (the travel of the edge of the line): a width that changes within a frame or two is a `jump`, and a large, quick change with `overshoot: 0` an `abrupt-start`. While its width changes, a line counts as life in the frame.
+
 ### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, sound? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
@@ -550,7 +570,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 |---|---|---|
 | `points` | required | at least two points `[x, y]` the line runs through, the first being where it starts |
 | `color` | required | palette reference |
-| `width` | `7` | thickness in units |
+| `width` | `7` | thickness in units, 0.5 to 200; `widthTo` changes it over time |
 | `closed` | `false` | back to the first point after the last (at least three points) |
 | `smooth` | `1` | `1` joins the points with a smooth curve, `0` with straight lines; between them the corners are partly rounded. The same as the path of a `travel` |
 | `dash` | none | `[dash, gap]` in units: the straight part of a dash and the clear gap between two. The dashes have round ends, so a dash of `0` is a dot as wide as the line |
@@ -578,7 +598,7 @@ drawOn('share', { at: 2, dur: 1.6, to: 0.62 }),        // 62 % of the way round
 - **Dashes** are anchored at the first point: they stay where they are while the line is drawn on. `solidTo(id, { at, to?, dur? })` closes the gaps (`to: 1`, the default) or opens them again (`to: 0`): every dash grows where it is until the dashes join.
 - **A route with an uncertain end** is two strokes: a solid one, and a dashed one from where it ends.
 - **`arcPoints(center, r, from, to, { step? })`** returns the points of an arc of a circle: from the angle `from` to the angle `to` in degrees (0 is right of the centre, 90 below it; a larger `to` runs clockwise), a point every `step` degrees (15). A smooth stroke through them is the arc; with `closed: true` and the last point left out it is a ring. A share of a ring is an arc drawn on with `to`.
-- A stroke moves, turns, grows, pops and fades like a shape (`moveTo`, `turnTo`, `scaleTo`, `popIn`, `fadeTo` and the rest), and may be the child of a shape or a group. It has no children, no light and no physics. Its width scales with it.
+- A stroke moves, turns, grows, pops and fades like a shape (`moveTo`, `turnTo`, `scaleTo`, `popIn`, `fadeTo` and the rest), and may be the child of a shape or a group. It has no children, no light and no physics. Its width scales with it; `widthTo` changes its width alone (see A line whose width changes).
 - The motion review knows a stroke as a node: a move of it is judged like any move, and a line that is being drawn, or whose dashes close, keeps its part of the frame alive.
 
 #### A light that runs along a stroke
@@ -766,6 +786,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
+| `widthTo(id, { at, to, ... })` | link, stroke | `dur` (0.6), `overshoot` (0.15) | changes the width of the line where it lies: it grows thick or thins, shoots past the new width and settles (see A line whose width changes) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
 | `pulse(strokeId, { at, ... })` | stroke | `dur` (0.7), `from` (0), `to` (1), `profile`, `ramp` (0.3), `length`, `node`, `bump` (0.14) | sends the same light along the stroke, between two shares of its length; the node it names gets the bump (see A light that runs along a stroke) |
 | `openTo(eyeId, { at, to, ... })` | eye | `dur` (0.3), `overshoot` (0.12) | opens or closes the lids to `to` (1 = open, 0 = shut and not drawn). The change lasts. With an overshoot the eye opens a little too wide first |
@@ -1098,7 +1119,7 @@ Nobody has to watch the video to find out whether the motion is smooth. `skink3 
 
 | Finding | What it is |
 |---|---|
-| `jump` | a teleport or a pop: position, rotation, size, opacity or level out of line with the frames around it |
+| `jump` | a teleport or a pop: position, rotation, size, opacity, level or the width of a line out of line with the frames around it |
 | `abrupt-start`, `abrupt-stop` | a move with no ease at one end |
 | `mechanical` | a move between two rests at constant speed |
 | `too-fast` | travel of half the node's own size per frame or more, sustained: it strobes at 60 fps |
@@ -1120,7 +1141,7 @@ The report also describes the life of the background, findings or not: the media
 
 Things to know when you write a scene:
 
-- With `anticipation: 0` and `overshoot: 0` a `moveTo` is a plain ease-out: it starts at full speed. The same holds for `turnTo`, `scaleTo` and `openTo` with `overshoot: 0`. The review reports that as `abrupt-start`. Keep one of the two above 0 unless the start is hidden or meant, or use the profile `'ease'`.
+- With `anticipation: 0` and `overshoot: 0` a `moveTo` is a plain ease-out: it starts at full speed. The same holds for `turnTo`, `scaleTo`, `openTo` and `widthTo` with `overshoot: 0`. The review reports that as `abrupt-start`. Keep one of the two above 0 unless the start is hidden or meant, or use the profile `'ease'`.
 - Keep a small thing slow: under half of its own size per frame.
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
@@ -1268,7 +1289,7 @@ An event has these fields:
 
 - **Seen** means what it means in the motion review: drawn, at least 5 % opaque, reaching into the frame, and not wholly behind a `cover` or outside the shape it is clipped to. A contact is seen when its body is seen and the place where the two touch is in the frame; a burst when it is in the frame. A placed sound counts as seen.
 - **A move** is the `move` of a `moveTo`, of a `travel` and of the take-off of a `hop`. It carries its motion; its last frame is the end of its `dur`, or the last frame of the shot when that comes first.
-- A `solidTo`, a `countTo`, a `bendTo`, a `reshape`, a `cameraTo`, a `zoomTo` and a `backgroundTo` are no events.
+- A `solidTo`, a `countTo`, a `bendTo`, a `widthTo`, a `reshape`, a `cameraTo`, a `zoomTo` and a `backgroundTo` are no events.
 - **What is no event:** the camera, springs, idle wander, particles in flight (the `rate` of an emitter), and the blinks an eye makes by itself. They make no sound. A fade, a turn, the lids of an eye and a blink the timeline asks for are events, of kinds that are silent unless a bank maps them to a sound.
 - A key that starts before the shot has no start in it: a travel that is under way at frame 0 is no `move`. An arrival after the last frame is no event either.
 

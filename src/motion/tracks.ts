@@ -38,6 +38,7 @@ import type {
   SquashKey,
   TravelKey,
   TurnToKey,
+  WidthToKey,
 } from './intents.ts';
 import { pathAt, pathTable, type PathSpec } from './paths.ts';
 
@@ -627,6 +628,44 @@ export function sampleReveal(track: LinkTrack, t: number): number {
   if (!track.drawOn) return 1;
   const u = (t - track.drawOn.at) / track.drawOn.dur;
   return u <= 0 ? 0 : u >= 1 ? 1 : ease('inOutCubic', u);
+}
+
+/** The width of a line (a link or a stroke) over time. A line without a widthTo has no such track. */
+export interface WidthTrack {
+  /** The width before the first widthTo: the one the line was given. */
+  readonly base: number;
+  /** Changes of the width, each from the width reached before it. */
+  readonly segs: readonly LidSeg[];
+}
+
+/** A line that thins dips below its new width as it settles, and never below this share of that width. */
+const THINNEST = 0.5;
+
+/** The width of a line at time t, in its own units. */
+export function sampleWidth(track: WidthTrack, t: number): number {
+  let seg: LidSeg | null = null;
+  for (const s of track.segs) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) return track.base;
+  const u = (t - seg.at) / seg.dur;
+  if (u >= 1) return seg.to;
+  return seg.from + (seg.to - seg.from) * overshootStep(u, seg.overshoot, 0.5);
+}
+
+/** The track of the width of a line. Keys chain: each starts from the width reached at its moment. */
+export function buildWidthTrack(base: number, keys: readonly WidthToKey[]): WidthTrack {
+  const segs: LidSeg[] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    // A widthTo takes over from the width reached at its moment, also when the one before is still under way.
+    const from = sampleWidth({ base, segs }, k.at);
+    // The overshoot is a share of the change, and a line that thins to a hair has no room for it: it is held so
+    // that the line is never thinner than half of what it becomes.
+    const overshoot = from > k.to ? Math.min(k.overshoot, (THINNEST * k.to) / (from - k.to)) : k.overshoot;
+    segs.push({ at: k.at, dur: k.dur, from, to: k.to, overshoot });
+  }
+  return { base, segs };
 }
 
 /** How much of a stroke is drawn, and how far its dashes are closed, over time. */

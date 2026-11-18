@@ -32,6 +32,7 @@ import {
   stagger,
   travel,
   turnTo,
+  widthTo,
   zoomTo,
 } from '../src/index.ts';
 
@@ -54,6 +55,7 @@ const INTENTS: Record<string, (extra: object) => unknown> = {
   drawOn: (x) => drawOn('a', { at: 1, ...x }),
   solidTo: (x) => solidTo('a', { at: 1, ...x }),
   bendTo: (x) => bendTo('a', { at: 1, to: 0, ...x }),
+  widthTo: (x) => widthTo('a', { at: 1, to: 20, ...x }),
   reshape: (x) => reshape('a', { at: 1, points: [[0, 0], [10, 0], [0, 10]], ...x }),
   pulse: (x) => pulse('a', { at: 1, ...x }),
   openTo: (x) => openTo('a', { at: 1, to: 1, ...x }),
