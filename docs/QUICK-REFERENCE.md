@@ -15,7 +15,7 @@ const palette = definePalette({
   mid: { mist: hsv(250, 0.46, 0.74) }, accent: { amber: hsv(40, 0.86, 0.99), aqua: hsv(176, 0.72, 0.93) },
   light: { cream: hsv(52, 0.34, 0.99) },
 });
-const dawn = definePalette({ ...palette.spec, deep: { ...palette.spec.deep, night: hsv(214, 0.7, 0.34) }, rules: [{ roles: ['accent'], saturation: [0.6, 1] }], tones: { shadowHue: 250 } }); // a variant: same names, other colours; a shot names its own
+const dawn = definePalette({ ...palette.spec, deep: { ...palette.spec.deep, night: hsv(214, 0.7, 0.34) }, rules: [{ roles: ['accent'], saturation: [0.6, 1] }], tones: { shadowHue: 250 } }); // a variant: same names, other colours
 const scene = shot({
   id: 'minimal', seconds: 4, seed: 1, palette, strings: { en: { 'label.dot': 'A dot' } },
   background: { inner: 'deep.night', outer: 'deep.abyss' }, atmosphere: 'mid.mist',
@@ -27,7 +27,7 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette references only. On-screen text: keys of `strings`, every key in every language. Random numbers: `Rng` only. A mistake or an unknown option is refused, with what to change.
+- Colours: palette references only. On-screen text: keys of `strings`, every key in every language. Random numbers: `Rng` only. A mistake or unknown option is refused, with what to change.
 - The engine has no colour rule. `rules`: the palette's own, held by `check` (per `roles`: `lightness`, `saturation`, `value`, `meanSaturation`, `hue` + `share`; `pairs`). `tones`: where shadows and lights lean (`null`: nowhere).
 
 ## Shot, camera, layers
@@ -41,8 +41,8 @@ backgroundTo({ at: 3, inner: 'deep.abyss', /* = */ dur: 2, profile: 'ease', ramp
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 ```
 
-- `drift.speed`: units per frame along `heading` (norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
-- A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units per frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers it once.
+- `drift.speed`: units/frame along `heading` (norm: 0.3 to 0.7 px). `wander`: units; `period`: seconds; `focus`: blur per unit of depth.
+- A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units/frame) the camera rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])` holds a subject); without, it covers it once.
 - Keys chain. `cameraTo`: `zoom`: times the authored view; `to`: where it looks at the end; path and drift wait meanwhile. Under `zoomTo` they run on.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted toward `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after their parent.
 
@@ -77,7 +77,7 @@ circle({ id: 'ball', fill: 'accent.amber', r: 30, body: { kind: 'dynamic', relea
 shot({ ...scene, /* = */ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
-A dynamic body waits, touching nothing, until `release` (seconds; down to minus `prewarm`, simulated before frame 0); then only the simulation moves it. `velocity`: units per second; `spin`: degrees per second; `appear: 'release'`: undrawn until then. The shape is the collider.
+A dynamic body waits, touching nothing, until `release` (seconds; down to minus `prewarm`, simulated before frame 0); then only the simulation moves it. `velocity`: units/s; `spin`: degrees/s; `appear: 'release'`: undrawn until then. The shape is the collider.
 
 ## Motion and timing
 
@@ -85,9 +85,10 @@ A dynamic body waits, touching nothing, until `release` (seconds; down to minus 
 moveTo('dot', { at: 1.2, to: [260, -40], /* = */ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance
 moveTo('dot', { arrive: 6, to: [0, 0] }); // arrive, instead of at: when it first reaches `to`
 hop('buddy', { at: 4, to: [610, 130], /* = */ dur: 0.6, height: 80 }); // a parabola; or land: instead of at:
-travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units per second (or dur: or speeds: [[s, speed], ...]); + roll: r, a wheel's radius
-turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); instead of to: speed (degrees per second) or speeds: [[s, speed], ...]
+travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /* = */ profile: 'steady', closed: false, orient: false, only: false }); // speed: units/s (or dur: or speeds: [[s, speed], ...]); + roll: r, a wheel's radius
+turnTo('hex', { at: 2, to: 90, /* = */ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); instead of to: speed (degrees/s) or speeds: [[s, speed], ...]
 scaleTo('hex', { at: 3, to: 1.5, /* = */ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes (a bar from one end)
+scaleTo('hex', { at: 5, to: 3, profile: 'in' }); // no overshoot; in step with a move of that at, dur, profile, ramp
 fadeTo('hex', { at: 4, to: 0.3, /* = */ dur: 0.5 });
 popIn('c', { at: 0.3, /* = */ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /* = */ dur: 0.35 });
@@ -107,7 +108,7 @@ stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + o
 ```
 
 - A negative `at` (to -600): under way at frame 0.
-- `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles: it first arrives at 0.52 of `dur`, peaking at 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). These arrive at `at + dur` exactly.
+- `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles: first there at 0.52 of `dur`, peak 5.6 times the mean speed. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). These arrive at `at + dur` exactly.
 
 ## Effects (opt-in)
 
@@ -116,7 +117,7 @@ emitter({ id: 'fizz', colors: ['accent.aqua'], size: [4, 8], life: 4, rate: 9, s
 rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { amp: 5, length: 160, speed: 40 } } });
 ```
 
-- An emitter needs `rate` (per second), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units per second): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
+- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (seconds), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
 - `cover`: glow drawn before it does not shine through. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape. `level` (or a number, 0 to 1): it fills from the bottom, `wave` ripples it, its children ride on the surface.
 
 ## Sound (opt-in)
@@ -131,7 +132,7 @@ sfx('chime', { at: 6, /* = */ gain: 1 }); // placed by hand, as on a word; + nod
 
 ## Words, generated content
 
-No key is anchored to a word: work out `at` from the narration's word times; `arrive`, `land` and `at + dur` are exact.
+No key is anchored to a word: work out `at` from the word times; `arrive`, `land` and `at + dur` are exact.
 
 ```ts
 new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuffle, next, sign, gauss, stream
@@ -156,7 +157,7 @@ sfx     the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 48
 common  --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
-Output: `./out/<shot id>/`; cache: `./cache/`; commands bake when they must. `check` fails on a broken palette rule, a missing string, a character no bundled font has, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left corner.
+Output: `./out/<shot id>/`; cache: `./cache/`; commands bake as needed. `check` fails on a broken palette rule, a missing string, a character no bundled font has, and a text that overflows, leaves the frame or overlaps another; the rest are warnings. `--crop`: stage units from the top-left.
 
 ## Reading the reviews
 

@@ -209,8 +209,15 @@ export interface ScaleToKey extends Voiced {
   /** New size as a multiple of the node's authored size (1 = as authored). 1 in a key that has `axes`. */
   readonly to: number;
   readonly dur: number;
-  /** How far it shoots past the new size, as a fraction of the change. */
+  /** How far it shoots past the new size, as a fraction of the change. 0 in a key that has a `profile`. */
   readonly overshoot: number;
+  /**
+   * How the speed of the change is spread over its duration: 'ease', 'steady',
+   * 'in' or 'out', without an overshoot, the size running evenly between its
+   * two values. Left out: the change that shoots past the size and settles.
+   */
+  readonly profile?: Exclude<MoveProfile, 'settle'>;
+  readonly ramp?: number;
   /**
    * A change along the node's own axes instead: its width and its height as
    * multiples of the authored ones. Left out in a key that changes the size evenly.
@@ -786,22 +793,41 @@ function turnAtSpeeds(w: string, id: string, opts: Parameters<typeof turnTo>[1])
  * themselves, and play on top of the even size.
  *
  *   scaleTo('bar', { at: 2, to: [1, 2.5], pivot: [0, 40] })   // 2.5 times as high, its lower edge in place
+ *
+ * With a `profile` the change has no overshoot and its speed is spread as a
+ * move's is: 'steady' at one speed, 'ease' from rest to rest, 'in' from rest
+ * and on at speed, 'out' in at speed and down to rest. The size then runs
+ * evenly between its two values, as a place does along a move: with the `at`,
+ * `dur`, `profile` and `ramp` of the node's straight move, a thing that comes
+ * nearer or falls away changes its size in step with its place.
+ *
+ *   moveTo('crate', { at: 2, to: [0, 120], dur: 1.8, profile: 'ease', arc: 0 })
+ *   scaleTo('crate', { at: 2, to: 3, dur: 1.8, profile: 'ease' })
  */
-export function scaleTo(id: string, opts: { at: number; to: number | Vec2; pivot?: Vec2; dur?: number; overshoot?: number; sound?: string | false }): ScaleToKey {
+export function scaleTo(
+  id: string,
+  opts: { at: number; to: number | Vec2; pivot?: Vec2; dur?: number; overshoot?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number; sound?: string | false },
+): ScaleToKey {
   const w = `scaleTo("${id}")`;
-  only(w, opts, ['at', 'to', 'pivot', 'dur', 'overshoot', 'sound']);
+  only(w, opts, ['at', 'to', 'pivot', 'dur', 'overshoot', 'profile', 'ramp', 'sound']);
   const axes = Array.isArray(opts.to);
   if (!axes && opts.pivot !== undefined) throw new IntentError(`${w}: pivot goes with to: [sx, sy]; an even change of size is about the node's origin`);
   if (axes && (opts.to as readonly unknown[]).length !== 2) throw new IntentError(`${w}: to must be a number, or [sx, sy]`);
+  const profile = opts.profile === undefined ? undefined : profileOf(w, opts.profile, RAMPED, 'ease');
+  if (profile !== undefined && (opts.overshoot ?? 0) !== 0) throw new IntentError(`${w}: a change of size with a profile has no overshoot; leave overshoot out`);
+  if (opts.ramp !== undefined && (profile === undefined || profile === 'steady')) throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  const ramp = num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5);
   return {
     kind: 'scaleTo',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: axes ? 1 : num(w, 'to', opts.to, 0.01, 100),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
-    overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+    overshoot: profile === undefined ? num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5) : 0,
     ...(axes ? { axes: [num(w, 'to[0]', (opts.to as Vec2)[0], 0.01, 100), num(w, 'to[1]', (opts.to as Vec2)[1], 0.01, 100)] as Vec2 } : {}),
     ...(opts.pivot === undefined ? {} : { pivot: point(w, 'pivot', opts.pivot) }),
+    // A change of size without a profile is the key it always was.
+    ...(profile === undefined ? {} : { profile, ...(profile === 'steady' ? {} : { ramp }) }),
     ...voiced(w, opts),
   };
 }

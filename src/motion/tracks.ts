@@ -293,6 +293,9 @@ export interface GrowSeg {
   readonly from: number;
   readonly to: number;
   readonly overshoot: number;
+  /** How its speed is spread, without an overshoot; null: the change that shoots past the size and settles. */
+  readonly profile: Exclude<MoveProfile, 'settle'> | null;
+  readonly ramp: number;
 }
 
 export interface ScaleTrack {
@@ -312,6 +315,12 @@ function sampleGrow(segs: readonly GrowSeg[], t: number): number {
   if (!seg) return 1;
   const u = (t - seg.at) / seg.dur;
   if (u >= 1) return seg.to;
+  // On a profile the size runs evenly between its two values, as a place does
+  // along a move: with the profile of its move, a thing nears or recedes in step.
+  if (seg.profile !== null) {
+    const [a, b] = profileRamps(seg.profile, seg.ramp);
+    return seg.from + (seg.to - seg.from) * rampProgress(u, a, b);
+  }
   // Sizes are interpolated as ratios, so growing and shrinking overshoot alike
   // and the size can never pass through zero.
   return seg.from * (seg.to / seg.from) ** overshootStep(u, seg.overshoot, 0.5);
@@ -344,7 +353,7 @@ export function buildScaleTrack(
   // previous one is still under way.
   const grows: GrowSeg[] = [];
   for (const k of scales.slice().sort((a, b) => a.at - b.at)) {
-    grows.push({ at: k.at, dur: k.dur, from: sampleGrow(grows, k.at), to: k.to, overshoot: k.overshoot });
+    grows.push({ at: k.at, dur: k.dur, from: sampleGrow(grows, k.at), to: k.to, overshoot: k.overshoot, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP });
   }
   return { pops, grows, bumps: bumps.slice().sort((a, b) => a.at - b.at) };
 }
@@ -416,6 +425,9 @@ export interface AxisSeg {
   readonly from: Vec2;
   readonly to: Vec2;
   readonly overshoot: number;
+  /** How its speed is spread, without an overshoot; null: the change that shoots past and settles. */
+  readonly profile: Exclude<MoveProfile, 'settle'> | null;
+  readonly ramp: number;
   /** The point that stays in place during this change, in the node's own units. */
   readonly pivot: Vec2;
   /** What the changes before this one, about other points, have moved the picture by: it does not jump when the pivot changes. */
@@ -440,10 +452,20 @@ export function sampleAxis(track: AxisTrack, t: number): { readonly sx: number; 
   }
   if (!seg) return null;
   const u = (t - seg.at) / seg.dur;
-  // As for an even size: ratios, so that growing and shrinking overshoot alike and no side passes through nothing.
-  const p = u >= 1 ? 1 : overshootStep(u, seg.overshoot, 0.5);
-  const sx = seg.from[0] * (seg.to[0] / seg.from[0]) ** p;
-  const sy = seg.from[1] * (seg.to[1] / seg.from[1]) ** p;
+  let sx: number;
+  let sy: number;
+  if (seg.profile !== null) {
+    // As for an even size on a profile: each side runs evenly between its two values.
+    const [a, b] = profileRamps(seg.profile, seg.ramp);
+    const p = u >= 1 ? 1 : rampProgress(u, a, b);
+    sx = p >= 1 ? seg.to[0] : seg.from[0] + (seg.to[0] - seg.from[0]) * p;
+    sy = p >= 1 ? seg.to[1] : seg.from[1] + (seg.to[1] - seg.from[1]) * p;
+  } else {
+    // As for an even size: ratios, so that growing and shrinking overshoot alike and no side passes through nothing.
+    const p = u >= 1 ? 1 : overshootStep(u, seg.overshoot, 0.5);
+    sx = seg.from[0] * (seg.to[0] / seg.from[0]) ** p;
+    sy = seg.from[1] * (seg.to[1] / seg.from[1]) ** p;
+  }
   const cx = (1 - sx) * seg.pivot[0] + seg.shift[0];
   const cy = (1 - sy) * seg.pivot[1] + seg.shift[1];
   if (Math.abs(sx - 1) < 1e-9 && Math.abs(sy - 1) < 1e-9 && Math.abs(cx) < 1e-9 && Math.abs(cy) < 1e-9) return null;
@@ -457,7 +479,7 @@ export function buildAxisTrack(keys: readonly ScaleToKey[]): AxisTrack {
     const now = sampleAxis({ segs }, k.at) ?? { sx: 1, sy: 1, cx: 0, cy: 0 };
     const pivot = k.pivot ?? [0, 0];
     // The picture at this moment is (s * p + c). With the new pivot it must be the same picture.
-    segs.push({ at: k.at, dur: k.dur, from: [now.sx, now.sy], to: k.axes!, overshoot: k.overshoot, pivot, shift: [now.cx - (1 - now.sx) * pivot[0], now.cy - (1 - now.sy) * pivot[1]] });
+    segs.push({ at: k.at, dur: k.dur, from: [now.sx, now.sy], to: k.axes!, overshoot: k.overshoot, profile: k.profile ?? null, ramp: k.ramp ?? DEFAULT_RAMP, pivot, shift: [now.cx - (1 - now.sx) * pivot[0], now.cy - (1 - now.sy) * pivot[1]] });
   }
   return { segs };
 }

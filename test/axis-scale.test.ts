@@ -86,7 +86,7 @@ test('axis scale: the key of an even scaleTo is what it was; with to: [sx, sy] i
   bad({ at: 1, to: [1, 2, 3] }, /to must be a number, or \[sx, sy\]/);
   bad({ at: 1, to: [1, 0] }, /to\[1\] must be a number in 0\.01\.\.100/);
   bad({ at: 1, to: [1, 2], pivot: [0] }, /pivot must be \[x, y\]/);
-  bad({ at: 1, to: [1, 2], axis: 'y' }, /scaleTo\("a"\): unknown option "axis" \(allowed: at, to, pivot, dur, overshoot, sound\)/);
+  bad({ at: 1, to: [1, 2], axis: 'y' }, /scaleTo\("a"\): unknown option "axis" \(allowed: at, to, pivot, dur, overshoot, profile, ramp, sound\)/);
   // In a shot: not for a label, and not for a rigid body.
   const pointed = [circle({ id: 'c', r: 20, fill: 'accent.aqua' }), label({ id: 'l', text: 'label.a', target: 'c', fill: 'light.cream', ink: 'deep.abyss' })];
   assert.throws(() => make(pointed, [scaleTo('l', { at: 1, to: [1, 2] })]), /scaleTo\("l"\) with to: \[sx, sy\] cannot target a label/);

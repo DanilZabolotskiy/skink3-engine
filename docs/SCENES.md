@@ -774,8 +774,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `turnTo(id, { at, speed, ... })` | shape, group, stroke, text | `dur` (0.8), `profile` (`'steady'`), `ramp` (0.3) | turns at a speed, with a profile (see A turn at a speed) |
 | `turnTo(id, { at, speeds, ... })` | shape, group, stroke, text | `dur` (up to its last key) | turns at a speed that is keyed over time (see A turn whose speed changes) |
 | `turnTo(id, { at, to, ... })` | shape, group, stroke, text | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
-| `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
-| `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps |
+| `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
+| `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
 | `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
@@ -800,7 +800,7 @@ Rules:
 - **A key may start before the shot:** `at` runs from -600 to 3600 seconds. What it does is then under way, or over, at frame 0: a light that is already on, a node that is already half-way, a flow that already runs. A key may not start after the shot ends.
 - `seconds` of a shot is rounded to the nearest frame, and frame *n* shows the moment *n*/60.
 - `scaleTo`, `fadeTo` and `levelTo` chain: each starts from the size, opacity or level the node has at that moment, also when the previous one is still under way.
-- Size is a product: the authored `scale` × pops × the lasting size from `scaleTo` × bumps. So a node can pop in, grow in steps, and still react with a bump (also the bump a pulse gives on arrival) at any size. `scaleTo` overshoots in proportion: growing to 2 with `overshoot: 0.15` peaks near 2.2, shrinking to 0.5 dips to 0.45.
+- Size is a product: the authored `scale` × pops × the lasting size from `scaleTo` × bumps. So a node can pop in, grow in steps, and still react with a bump (also the bump a pulse gives on arrival) at any size. `scaleTo` overshoots in proportion: growing to 2 with `overshoot: 0.15` peaks near 2.2, shrinking to 0.5 dips to 0.45. With a `profile` it does not overshoot (see Size on a profile).
 - A rigid body cannot be the target of `moveTo`, `hop`, `travel`, `turnTo` or `scaleTo`; it can pop, bump, squash and fade.
 - `bump` takes an `amount` between -0.5 and 0.5; a negative one is a quick shrink.
 - `scaleTo` and `bump` change the size evenly in every direction; `squash` is the one that changes the proportions.
@@ -959,6 +959,34 @@ scaleTo('drop', { at: 7, to: [1.25, 0.8], pivot: [0, 40] }),        // it sags: 
 - A label points at the edge the shape has now, and a link ends there. What else reads the outline of the node keeps its authored proportions: a shape that others are clipped to, a cover, the frame checks.
 - For shapes, groups, eyes, strokes and texts; not for a label, and not for a rigid body.
 - The motion review judges the change as a change of size: with `overshoot: 0` it starts at full speed and is reported as an `abrupt-start`.
+
+### Size on a profile
+
+`scaleTo` by itself is a thing that grows by itself: it is at its new size after a third of `dur`, shoots past it and settles. A thing that comes nearer, or falls away from the viewer, changes its size as it changes its place. Keyed with a move, the size that settles reads as a thing that inflates and then slides. With a `profile` the change has no overshoot and its speed is spread as a move's is.
+
+```ts
+// It comes nearer: its place and its size from rest to rest, together.
+moveTo('crate', { at: 2, to: [-120, 160], dur: 1.8, profile: 'ease', arc: 0 }),
+scaleTo('crate', { at: 2, to: 3, dur: 1.8, profile: 'ease' }),
+// It falls away from a viewer above: slowly at first, then faster, and it is gone when the change ends.
+scaleTo('leaf', { at: 5, to: 0.15, dur: 1.4, profile: 'in', ramp: 0.5 }),
+fadeTo('leaf', { at: 6, to: 0, dur: 0.4 }),
+// A bar that fills at one speed, under way when the shot starts.
+scaleTo('bar', { at: -1, to: [1, 4], pivot: [0, 30], dur: 9, profile: 'steady' }),
+```
+
+| Option of `scaleTo` | Default | Meaning |
+|---|---|---|
+| `profile` | none | `'ease'`: from rest to rest. `'in'`: from rest, and on at speed. `'out'`: in at speed, and down to rest. `'steady'`: one speed from the first frame to the last. A change of size with a profile has no `overshoot` |
+| `ramp` | `0.3` | the share of `dur` an eased end takes, for `'ease'`, `'in'` and `'out'` (0.02 to 0.5) |
+
+- **The size runs evenly between its two values,** along the profile: half-way through a `'steady'` change from 1 to 3 it is 2. It is at `to` exactly at `at + dur`, and never past it. (Without a profile the size runs as a ratio.)
+- **In step with a move.** Give the `scaleTo` the `at`, `dur`, `profile` and `ramp` of the node's `moveTo` or `travel`: at every frame the node has covered the same share of its way and of its change of size. With `arc: 0` every point of the node then goes along a straight line, toward one vanishing point or away from it, which is what coming nearer looks like.
+- It cannot follow a move that settles (`'settle'`, the profile of a `moveTo` that names none), a `hop`, or a `travel` with `speeds`: give the move a plain profile.
+- **Keys chain** as any `scaleTo`: each starts from the size reached at its moment, and keys with and without a profile mix. Two keys join without a step where their steady stretches change the size as fast: `(to - from) / dur / (1 - ramp / 2)` a second for `'in'` and `'out'`, `(to - from) / dur` for `'steady'`. An `'in'` key and then an `'out'` key is a change with two eased ends of different lengths.
+- With `to: [sx, sy]` each side runs evenly on the profile, about `pivot`.
+- The change is the `grow` or the `shrink` event that any `scaleTo` is.
+- The motion review judges it as any change of size, by the travel of the edge of the node. `'ease'` between two rests is clean, unless a small `ramp` leaves most of the change at one speed. `'steady'`, `'in'` and `'out'` between two rests in view are reported: as `mechanical` where most of the change is at one speed, as an `abrupt-start` or an `abrupt-stop` where a short one starts or stops at its top speed. They are for a thing that enters, leaves, appears or vanishes while it changes; where a stop at speed is the point (it lands), mark it with `intended`.
 
 ### An outline that changes
 
@@ -1582,4 +1610,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.

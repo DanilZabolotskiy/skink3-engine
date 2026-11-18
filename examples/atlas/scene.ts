@@ -11,15 +11,17 @@
 // island with a bay, one shape with one light. In the ring a cog spins, and
 // slows to rest. A scout runs the last stretch, faster and then slower. A
 // line between two posts hangs slack, pulls taut and grows thick, then thins
-// as it sags again.
+// as it sags again. A kite comes nearer from far off: its place and its size
+// change together, from rest to rest.
 //
 // It shows: stroke() with points, dash and glow, drawOn() with a share and a
 // profile, solidTo(), arcPoints(), cameraTo(), text() in the frame's own layer
 // and on a shape, scaleTo() along one axis with a pivot, a counter with
 // countTo(), region(), a free-form outline, turnTo() with a speed and a
-// profile, travel() with keys of speed, bendTo() and widthTo().
+// profile, travel() with keys of speed, bendTo(), widthTo(), and scaleTo()
+// with the profile of a move.
 
-import { arcPoints, bendTo, cameraTo, circle, countTo, drawOn, fadeTo, layer, link, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, widthTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
+import { arcPoints, bendTo, cameraTo, circle, countTo, drawOn, fadeTo, layer, link, moveTo, polygon, popIn, popOut, rect, region, Rng, scaleTo, shot, solidTo, stagger, stroke, text, travel, turnTo, widthTo, type Key, type StringTables, type Vec2 } from 'skink3-engine';
 import { palette } from '../demo/palette.ts';
 
 const SEED = 20261117;
@@ -71,6 +73,9 @@ const timeline: Key[] = [
   ...stagger(['bar0', 'bar1', 'bar2'], { at: 2.4, each: 0.25 }, (id, at, i) => scaleTo(id, { at, to: [1, [1.7, 2.8, 2.2][i]!], pivot: [0, 30], dur: 0.7 })),
   scaleTo('bar1', { at: 4.4, to: [1, 2], pivot: [0, 30], dur: 0.5 }),
   scaleTo('bar1', { at: 5, to: [1, 1.2], pivot: [0, 30], dur: 0.5 }),
+  // The kite comes nearer: its move and its size share a start, a length and a profile, so it grows as it comes.
+  moveTo('kite', { at: 1.6, to: [330, -150], dur: 2.6, profile: 'ease', ramp: 0.5, arc: 0 }),
+  scaleTo('kite', { at: 1.6, to: 3.4, dur: 2.6, profile: 'ease', ramp: 0.5 }),
   // The camera: in on the stretch ahead while it closes, and back out to everything.
   cameraTo({ at: 5.6, zoom: 1.7, to: [470, 90], dur: 1.4 }),
   cameraTo({ at: 8.3, zoom: 1, to: [0, 0], dur: 1.3 }),
@@ -106,6 +111,7 @@ export default shot({
         circle({ id: 'post0', at: [-760, -120], r: 14, fill: 'mid.rose' }),
         circle({ id: 'post1', at: [-480, -150], r: 14, fill: 'mid.rose' }),
         ...[0, 1, 2].map((i) => rect({ id: `bar${i}`, at: [762 + i * 58, 440], w: 46, h: 60, radius: 8, fill: 'mid.ocean' })),
+        polygon({ id: 'kite', at: [860, -385], sides: 4, r: 11, fill: 'accent.pink' }),
         polygon({ id: 'cog', at: [-180, -300], sides: 6, r: 38, fill: 'mid.violet' }),
         stroke({ id: 'ring', at: [-180, -300], points: arcPoints([0, 0], 70, 0, 360), closed: true, color: 'dark.haze', width: 16 }),
         stroke({ id: 'share', at: [-180, -300], points: arcPoints([0, 0], 70, -90, 270), color: 'accent.aqua', width: 16, glow: 0.4 }),
