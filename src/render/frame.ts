@@ -4,7 +4,7 @@
 //
 // No texture, no grain: flat fills and gradients only.
 
-import { Canvas, DOMMatrix, type CanvasRenderingContext2D } from 'skia-canvas';
+import { Canvas, type CanvasRenderingContext2D } from 'skia-canvas';
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
@@ -29,6 +29,7 @@ import {
   clipToShape,
   type Paint,
 } from './draw.ts';
+import { applyPlane, planeContext, seesPlane } from './plane.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -136,7 +137,7 @@ function drawItems(
           if (s.kind === 'plane') applyPlane(gx, s);
           else applyStretch(gx, s);
         }
-        drawItems(gx, item.items, paint, target, stretches);
+        drawItems(stretches.some((s) => s.kind === 'plane') ? planeContext(gx) : gx, item.items, paint, target, stretches);
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = item.opacity;
@@ -159,7 +160,7 @@ function drawItems(
       case 'plane':
         ctx.save();
         applyPlane(ctx, item);
-        if (seesPlane(ctx)) drawItems(ctx, item.items, paint, target, [...stretches, item]);
+        if (seesPlane(ctx)) drawItems(planeContext(ctx), item.items, paint, target, [...stretches, item]);
         ctx.restore();
         break;
     }
@@ -167,51 +168,6 @@ function drawItems(
 }
 
 const NO_STRETCH: readonly StretchItem[] = [];
-
-/**
- * The least 1/w at which skia maps a point through a perspective: it clips what lies nearer the plane w = 0 than this,
- * that is, farther than 16384 times as deep as the origin of the plane.
- */
-const PLANE_NEAR_W0 = 1 / (1 << 14);
-
-/**
- * Whether the canvas of a context that has just been set to draw through a plane can show anything of that plane.
- * When the shot camera has pushed in so far that every corner of the canvas lies beyond the horizon of the plane,
- * nothing of the plane can be seen there. Worse, skia then maps the canvas into the plane as an empty rectangle at
- * its origin, and an opaque fill that holds that origin is taken to cover the whole canvas: everything drawn on the
- * canvas before it was thrown away. Such a plane is left out. A plane any part of the canvas sees is drawn as it was.
- */
-function seesPlane(ctx: CanvasRenderingContext2D): boolean {
-  const t = ctx.getTransform();
-  // The transform as a 3 x 3 matrix [a c e; b d f; g h i] of the plane into the canvas.
-  const [a, b, c, d, e, f, g, h, i] = [t.m11, t.m12, t.m21, t.m22, t.m41, t.m42, t.m14, t.m24, t.m44];
-  const det = a * (d * i - f * h) - c * (b * i - f * g) + e * (b * h - d * g);
-  if (!Number.isFinite(det) || det === 0) return true;
-  // The last row of its inverse gives, at a point of the canvas, 1/w of the point of the plane drawn there. It is
-  // linear across the canvas, so it is largest at one of the corners.
-  const r0 = (b * h - d * g) / det;
-  const r1 = -(a * h - c * g) / det;
-  const r2 = (a * d - c * b) / det;
-  const width = ctx.canvas.width;
-  const height = ctx.canvas.height;
-  const most = Math.max(r2, r0 * width + r2, r1 * height + r2, r0 * width + r1 * height + r2);
-  return most >= PLANE_NEAR_W0;
-}
-
-/** Draws what comes next through the picture the camera of a perspective layer has of a plane. */
-function applyPlane(ctx: CanvasRenderingContext2D, item: PlaneItem): void {
-  const m = item.map;
-  const matrix = new DOMMatrix();
-  matrix.m11 = m.a;
-  matrix.m12 = m.b;
-  matrix.m14 = m.g;
-  matrix.m21 = m.c;
-  matrix.m22 = m.d;
-  matrix.m24 = m.h;
-  matrix.m41 = m.e;
-  matrix.m42 = m.f;
-  ctx.transform(matrix);
-}
 
 /** Squashes or stretches what is drawn next: `height` times as high, 1 / `height` times as wide, about a point. */
 function applyStretch(ctx: CanvasRenderingContext2D, s: StretchItem): void {
@@ -264,7 +220,7 @@ function drawGlow(
       case 'plane':
         ctx.save();
         applyPlane(ctx, item);
-        if (seesPlane(ctx)) drawGlow(ctx, item.items, paint, covers, seen, state);
+        if (seesPlane(ctx)) drawGlow(planeContext(ctx), item.items, paint, covers, seen, state);
         ctx.restore();
         break;
       default: {

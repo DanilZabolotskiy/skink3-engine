@@ -47,7 +47,7 @@ perspectiveTo('room', { at: 2, tilt: 50, /* = */ dur: 1.6, profile: 'ease', ramp
 - A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units/frame) it rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])`); without, it covers it once.
 - Keys chain. `cameraTo`: `zoom`: times the authored view; `to`: where it looks at the end; path and drift wait. Under `zoomTo` they run on.
 - `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted to `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after the parent.
-- A listed node's `depth` (larger: behind) orders any layer. Perspective layer: listed nodes take `at: [x, y, z]` and face the camera, `region` and `stroke` `points` of three, a `group` with `plane` lies in the space; near over far.
+- A listed node's `depth` (larger: behind) orders any layer. Perspective layer: listed nodes take `at: [x, y, z]` and face the camera, `region` and `stroke` `points` of three, a `group` with `plane` lies in the space; near over far; behind the camera: cut.
 
 ## Nodes
 
@@ -66,7 +66,7 @@ text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, max
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
-- Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false` (no highlight stroke), `lift` (0..1 of the glow's sky lift). All but `region` are convex; a `group` composes them.
+- Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's lift). All but `region` are convex; a `group` composes them.
 - `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `label`: its tail points at `target`'s edge on `side`; the text wraps, then shrinks, never cut. `text`: free-standing; a child of a shape lies on it; in a `layer` with `parallax: 0` it belongs to the frame.
 

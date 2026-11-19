@@ -40,6 +40,8 @@ import {
   type Vec2,
   type Vec3,
 } from '../src/index.ts';
+import { Canvas, DOMMatrix, Path2D, type CanvasRenderingContext2D } from 'skia-canvas';
+import { planeContext } from '../src/render/plane.ts';
 import { hingedAxes, PLANES } from '../src/scene/space.ts';
 
 // A perspective layer: a camera in a space of three dimensions, places of three numbers, groups that lie
@@ -296,6 +298,146 @@ test('perspective: when the shot camera pushes past the horizon of a plane, the 
   const seen = evaluate(c, await bakeShot(c), 180, 'en').layers[0]!.view;
   const post = await drawn(withWall, 'post', 180);
   assert.ok((await red(withWall, 180, post.x * seen.zoom + seen.tx - 960, post.y * seen.zoom + seen.ty - 540)) > 150, 'the post is drawn');
+});
+
+test('perspective: what of a plane lies behind the camera is not drawn; the rest of it is', async () => {
+  // A camera low and close over a floor: strokes and a strip of the floor run from far in front of the eye to far
+  // behind it. What lies behind the eye used to come back from the other side of it, as lines up into the sky.
+  const view = { aim: [0, 300, 0] as Vec3, distance: 1000, tilt: 8 };
+  const map = planeMap(eyeOf(camera(view)), [0, 300, 0], PLANES.floor)!;
+  const w = (v: number): number => map.h * v + 1;
+  const [far, behind] = [-3000, 3000].map((v) => Math.sign(map.h) * -v) as [number, number];
+  assert.ok(w(far) > 1 && w(behind) < 0, 'the far end lies in front of the eye and the near end behind it');
+  const floor = (child: ReturnType<typeof stroke> | ReturnType<typeof rect>): ReturnType<typeof group> => group({ id: 'floor', at: [0, 300, 0], plane: 'floor', depth: 6000, children: [child] });
+  const along = (extra: object = {}): ReturnType<typeof stroke> => stroke({ id: 'along', points: [[0, far], [0, behind]], color: 'accent.pink', width: 48, smooth: 0, ...extra });
+  const strip = rect({ id: 'strip', at: [0, (far + behind) / 2], w: 120, h: Math.abs(behind - far), radius: 0, fill: 'accent.pink', lit: false });
+  // On screen, the far end and the horizon of the floor, above it.
+  const top = planePoint(map, [0, far])[1];
+  const horizon = planePoint(map, [0, far * 1000])[1];
+  assert.ok(horizon < top - 20, 'the horizon is above the far end');
+  // Points in front of the eye, along a stretch longer than a dash and a gap.
+  const inFront = Array.from({ length: 9 }, (_, i) => planePoint(map, [0, far / 6 + (i - 4) * 12]));
+  for (const [name, child] of [['a stroke', along()], ['a dashed stroke', along({ dash: [40, 30] })], ['a fill of the plane', strip]] as const) {
+    const spec = make([floor(child)], [], view);
+    // What lies in front of the eye is drawn as the camera sees it.
+    const reds = await Promise.all(inFront.map(([x, y]) => red(spec, 0, x, y)));
+    assert.ok(Math.max(...reds) > 150, `${name}: drawn in front`);
+    // Nothing of it is drawn between its far end and the horizon, or above the horizon.
+    for (const y of [top - 12, (top + horizon) / 2, horizon - 12, horizon - 120]) assert.ok((await red(spec, 0, 0, y)) < 100, `${name}: nothing at ${Math.round(y)}`);
+  }
+  // As the camera rises and looks straight down, all of it comes in front and is drawn whole.
+  const risen = make([floor(along())], [perspectiveTo('room', { at: 0.5, dur: 3, tilt: 90, distance: 6000 })], view);
+  const down = planeMap(eyeOf(perspAt(compileShot(risen).layers[0]!.persp!, 5)), [0, 300, 0], PLANES.floor)!;
+  for (const v of [far * 0.8, 0, behind * 0.8]) {
+    const [x, y] = planePoint(down, [0, v]);
+    assert.ok((await red(risen, 300, x, y)) > 150, `drawn at ${v} from above`);
+  }
+});
+
+test('perspective: the context of a plane cuts a current path that reaches behind the camera, leaves one in front as it was, and what it refuses', async () => {
+  // A plane seen through w = 1 - v / 120, about the point (100, 150) of the canvas: in front of the eye where v < 120,
+  // behind it where v > 120. Its horizon is the row y = 30, and the point v = -120 is drawn at y = 90. The paths below
+  // run from there to behind the eye; drawn as they were given, they wrap round between y = 90 and the horizon.
+  const canvas = (through: boolean): { canvas: Canvas; ctx: CanvasRenderingContext2D } => {
+    const c = new Canvas(200, 200, { gpu: false });
+    const raw = c.getContext('2d');
+    raw.fillStyle = '#000000';
+    raw.fillRect(0, 0, 200, 200);
+    const m = new DOMMatrix();
+    m.m24 = -1 / 120;
+    raw.translate(100, 150);
+    raw.transform(m);
+    raw.strokeStyle = '#ff0000';
+    raw.fillStyle = '#ff0000';
+    raw.lineWidth = 12;
+    return { canvas: c, ctx: through ? planeContext(raw) : raw };
+  };
+  // The most red in a band of rows.
+  const most = async (c: Canvas, from: number, to: number): Promise<number> => {
+    const raw = await c.toBuffer('raw', { colorType: 'rgba' });
+    let m = 0;
+    for (let i = from * 200; i < to * 200; i++) m = Math.max(m, raw[i * 4]!);
+    return m;
+  };
+  // Above the far end of the paths, and in front of the eye.
+  const above = (c: Canvas): Promise<number> => most(c, 0, 72);
+  const inFront = (c: Canvas): Promise<number> => most(c, 160, 200);
+  const bytes = async (c: Canvas): Promise<string> => createHash('sha256').update(await c.toBuffer('raw', { colorType: 'rgba' })).digest('hex');
+  const draws: Record<string, (ctx: CanvasRenderingContext2D) => void> = {
+    stroke: (ctx) => {
+      ctx.beginPath();
+      ctx.moveTo(0, -120);
+      ctx.lineTo(0, 300);
+      ctx.stroke();
+    },
+    dashes: (ctx) => {
+      ctx.setLineDash([12, 8]);
+      ctx.beginPath();
+      ctx.moveTo(0, -120);
+      ctx.lineTo(0, 300);
+      ctx.stroke();
+    },
+    fill: (ctx) => {
+      ctx.beginPath();
+      ctx.rect(-6, -120, 12, 420);
+      ctx.fill();
+    },
+    arc: (ctx) => {
+      ctx.beginPath();
+      ctx.arc(0, -20, 150, 0, 2 * Math.PI);
+      ctx.fill();
+    },
+  };
+  for (const [name, draw] of Object.entries(draws)) {
+    // Drawn as it was given, what lies behind the eye wraps round beyond the far end.
+    const plain = canvas(false);
+    draw(plain.ctx);
+    assert.ok((await above(plain.canvas)) > 128, `${name}: wraps on a plain canvas`);
+    // Through the context of the plane, nothing is drawn beyond the far end, and what is in front still is.
+    const cut = canvas(true);
+    draw(cut.ctx);
+    assert.ok((await above(cut.canvas)) < 8, `${name}: nothing beyond its far end`);
+    assert.ok((await inFront(cut.canvas)) > 128, `${name}: drawn in front`);
+  }
+  // What lies wholly in front of the eye is drawn as it always was, to the byte.
+  const front: ((ctx: CanvasRenderingContext2D) => void)[] = [
+    (ctx) => {
+      ctx.setLineDash([12, 8]);
+      ctx.beginPath();
+      ctx.moveTo(-60, -200);
+      ctx.bezierCurveTo(0, -100, 40, 0, 20, 60);
+      ctx.lineTo(-30, 80);
+      ctx.closePath();
+      ctx.stroke();
+    },
+    (ctx) => {
+      ctx.beginPath();
+      ctx.arc(0, 40, 30, 0, 2 * Math.PI);
+      ctx.ellipse(-50, -80, 20, 10, 0.3, 0, 2 * Math.PI);
+      ctx.fill('evenodd');
+    },
+  ];
+  for (const draw of front) {
+    const [plain, through] = [canvas(false), canvas(true)];
+    draw(plain.ctx);
+    draw(through.ctx);
+    assert.equal(await bytes(through.canvas), await bytes(plain.canvas));
+  }
+  // A current path is begun in the context and built and drawn under one transform.
+  assert.throws(() => canvas(true).ctx.stroke(), /must be begun there/);
+  const moved = canvas(true).ctx;
+  moved.beginPath();
+  moved.moveTo(0, 0);
+  moved.translate(10, 0);
+  moved.lineTo(0, 50);
+  assert.throws(() => moved.stroke(), /under one transform/);
+  // A path given whole is skia's to cut, and is passed on.
+  const given = canvas(true);
+  const path = new Path2D();
+  path.moveTo(0, -120);
+  path.lineTo(0, 300);
+  given.ctx.stroke(path);
+  assert.ok((await above(given.canvas)) < 8 && (await inFront(given.canvas)) > 128);
 });
 
 test('perspective: a hinge turns a plane about its own axis, out of its plane', async () => {
