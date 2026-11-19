@@ -35,6 +35,7 @@ import type {
   PopOutKey,
   PulseKey,
   ReshapeKey,
+  RiseToKey,
   ScaleToKey,
   SolidToKey,
   SquashKey,
@@ -52,6 +53,7 @@ import {
   buildLinkTrack,
   buildOpacityTrack,
   buildPosTrack,
+  buildRiseTrack,
   buildRotTrack,
   buildScaleTrack,
   buildStretchTrack,
@@ -65,6 +67,7 @@ import {
   type LinkTrack,
   type OpacityTrack,
   type PosTrack,
+  type RiseTrack,
   type RotTrack,
   type ScaleTrack,
   type StretchTrack,
@@ -114,6 +117,8 @@ export interface CNode {
   readonly outline: OutlineTrack | null;
   /** Links and strokes with a widthTo: their width over time; null for a line that keeps the width it was given. */
   readonly width: WidthTrack | null;
+  /** Shapes and strokes with a rise: the height of the body over time; null for a node that lies flat. */
+  readonly rise: RiseTrack | null;
   /** Shapes with a fillTo: their fill over time; null for a shape that keeps the fill it was given. */
   readonly fill: FillTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
@@ -202,6 +207,8 @@ export interface CompiledShot {
   readonly backgroundTrack: BackgroundTrack | null;
   /** True when some layer of the shot is a perspective layer. */
   readonly spatial: boolean;
+  /** True when a node of the shot is a body with a height (a rise). */
+  readonly risen: boolean;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 'text' }>;
@@ -307,6 +314,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const counts = new Map<number, CountToKey[]>();
   const bends = new Map<number, BendToKey[]>();
   const widths = new Map<number, WidthToKey[]>();
+  const rises = new Map<number, RiseToKey[]>();
   const fills = new Map<number, FillToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
@@ -491,7 +499,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         need(node.type === 'link' || node.type === 'stroke', 'links and strokes');
         // The key may be as wide as a stroke may be; a link is held to its own limit.
         if (node.type === 'link' && key.to > LINK_MAX_WIDTH) fail(`${where}: widthTo("${node.id}"): to is ${key.to}, and a link is at most ${LINK_MAX_WIDTH} wide`);
+        if (node.type === 'stroke' && node.least !== undefined) fail(`${where}: widthTo("${node.id}"): the stroke has least, which gives its width at every zoom; leave least out, or leave the widthTo out`);
         push(widths, index, key);
+        break;
+      case 'riseTo':
+        if ((node.type !== 'shape' && node.type !== 'stroke') || node.rise === undefined) {
+          fail(`${where}: riseTo cannot target ${node.type} "${node.id}"; it applies to a shape or a stroke with a rise (give it the option rise; 0 lies flat until it is raised)`);
+        }
+        push(rises, index, key);
         break;
       case 'fillTo':
         need(node.type === 'shape', 'shapes');
@@ -598,6 +613,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'shape':
         colors['fill'] = col(node, 'fill', node.fill);
         if (node.rimLight) colors['rimLight'] = col(node, 'rimLight', node.rimLight);
+        if (node.side) colors['side'] = col(node, 'side', node.side);
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
           if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
@@ -651,6 +667,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'stroke':
         colors['color'] = col(node, 'color', node.color);
         if (node.pulseColor) colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
+        if (node.side) colors['side'] = col(node, 'side', node.side);
+        if (node.rise !== undefined && node.dash) fail(`${where}: stroke "${node.id}" has a rise and dashes; a wall is a solid line: leave dash out`);
         break;
       case 'text':
         colors['ink'] = col(node, 'ink', node.ink);
@@ -843,6 +861,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       outline,
       // A line without a widthTo has no track: it is as wide as it was made.
       width: (node.type === 'link' || node.type === 'stroke') && widths.has(d.index) ? buildWidthTrack(node.width, widths.get(d.index)!) : null,
+      // A node without a rise has no track: it lies flat, as it always did.
+      rise: (node.type === 'shape' || node.type === 'stroke') && node.rise !== undefined ? buildRiseTrack(node.rise, rises.get(d.index) ?? []) : null,
       // A shape without a fillTo has no track: it keeps the fill it was given.
       fill:
         node.type === 'shape' && fills.has(d.index)
@@ -987,6 +1007,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,
     backgroundTrack,
     spatial: perspTracks.some((track) => track !== null),
+    risen: nodes.some((n) => n.rise !== null),
   };
 }
 

@@ -390,6 +390,8 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 
 `blur` (units), `parallax` and `tint` (0..1) override the derived values. Nodes are drawn in the order listed; children are drawn after their parent. Layers are drawn farthest first; two layers of the same depth are drawn in the order they are listed.
 
+**A `blur` softens everything its layer draws,** a perspective layer included: a soft ground under a sharp layer of lines is a layer of its own. It is in the units of the layer (0 to 200), so under a zoom of the camera it grows with the picture, up to 400 px of a 1080p frame. A layer that is seen after a zoom of 40 and should be blurred by 8 units of the frame there takes `blur: 8 / 40`. To soften one node or one group there is `soft` (see A soft edge).
+
 **A `depth` on a node changes the draw order.** Every placed node listed directly in a layer's `nodes` (a shape, a group, an eye, a stroke, a text) takes `depth`, a number, 0 when left out. The node with the larger depth is drawn first, behind the others; nodes of one depth keep the order of the list. A `drive` may set it over time (see A node that follows a function of time), so that a thing passes in front of another and then behind it. A link is drawn at the mean of the depths of the two nodes it joins; a label and an emitter keep their place in the list, among the nodes of depth 0. Inside a parent the order of the children is the draw order, and a `depth` there is refused. A layer in which no node has a depth is drawn exactly as listed.
 
 `perspective` makes the layer a space of three dimensions with a camera of its own: see A perspective layer.
@@ -427,6 +429,9 @@ All shape factories take these options:
 | `backdrop` | `false` | labels may lie over it without a covers-node warning: ground, a wall, a backdrop |
 | `clipTo` | none | id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline (see Clipping) |
 | `level` | none | makes the shape a content that fills its outline from the bottom (see Levels) |
+| `soft` | none | 0 to 200 units: the shape and what is in it are drawn as one picture and blurred this far, so its edge fades out (see A soft edge) |
+| `rise` | none | 0 to 2000 units: the shape is the top of a body that stands this high on the ground; `riseTo` changes it (see A height: bodies that stand on the ground) |
+| `side` | a shadow tone of the fill | palette colour of the side of a shape with a `rise` |
 | `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
 | `depth` | `0` | for a shape listed directly in a layer: its place in the draw order; the larger depth is drawn first (see `layer`) |
 
@@ -470,6 +475,7 @@ emitter({ id: 'snow', at: [0, -200], area: [600, 10], rate: 40, life: 6, size: 5
 - The shape that clips is not changed and may be invisible (`opacity: 0`), may move, turn and grow.
 - Glow is clipped as well, and a glowing node lifts the background only by the share of it that is inside. Wholly outside its clip a node leaves nothing in the picture.
 - Clipped to a shape with a `level`, a node is drawn only in the filled part of it: fizz in a drink.
+- Clipped to a shape with `soft`, a node fades out across the edge of that shape instead of being cut there (see A soft edge).
 - A node cannot be clipped to itself or to something inside it. Labels and eyes take no `clipTo`; put an eye in a group and clip that.
 
 #### Levels
@@ -493,6 +499,57 @@ levelTo('content', { at: 2, to: 0.8, dur: 6 }),
 - The shape keeps its light, its glow and its opacity; a pale line marks the surface when the shape is `lit`.
 - The vessel is a shape of its own, drawn before or after the content; the content is usually a little smaller.
 - A rigid body cannot have a level.
+
+#### A soft edge
+
+`soft` on a shape or on a group blurs it: the node and everything in it are drawn as one picture, and that picture is blurred by `soft` units. The edge fades out over about that distance to each side of the outline: half there at the outline, whole that far inside it, gone that far outside it.
+
+```ts
+circle({ id: 'meadow', at: [-400, 200], r: 260, fill: 'mid.jade', lit: false, soft: 40 }),   // a patch of ground without a hard edge
+group({ id: 'shadows', soft: 10, opacity: 0.5, children: [                                   // soft shadows, as one picture
+  rect({ id: 'shadow-a', at: [16, 14], w: 110, h: 70, fill: 'deep.abyss', lit: false }),
+  rect({ id: 'shadow-b', at: [166, 14], w: 110, h: 70, fill: 'deep.abyss', lit: false }),
+] }),
+```
+
+- `soft` is 0 to 200, **in the units of the node**. A node that is drawn smaller or larger, through its own scale or its parents', is blurred by as much less or more, and under a zoom of the camera the blur grows with the picture: a soft edge keeps its look through a zoom. It is never wider than 400 px of a 1080p frame.
+- **One picture.** A soft group is blurred as a whole and then composited at its `opacity`, so shadows that overlap inside it are no darker where they do. A stroke, a link, an eye and a text take no `soft` of their own: put them in a soft group.
+- **What is clipped to a soft shape fades out across its edge.** A `clipTo` that names a shape with `soft` keeps the clipped node whole in the middle of that shape, half there at its outline, and gone a little way out: lines that fade toward the edge of an area. The shape may be invisible (`opacity: 0`), as any shape that clips. Glow is still cut at the outline.
+
+```ts
+circle({ id: 'view', r: 420, fill: 'deep.ink', opacity: 0, soft: 80 }),
+stroke({ id: 'road', points: [[-900, 40], [-300, -20], [300, 30], [900, -40]], color: 'light.cream', width: 12, clipTo: 'view' }),   // it fades out toward both ends
+```
+
+- **In a plane of a perspective layer** a soft node is blurred in the picture, by its units as they are seen at its place.
+- **It costs a picture of the size of the frame for every soft node.** Many soft things go into one soft group, which is one picture; do not give each its own `soft`.
+- **The whole of a layer** is blurred by its `blur` (see `layer`), a perspective layer included.
+- `soft: 0` is no blur: the node is drawn as one without the option. The motion review and the contrast review read a soft node as if it were sharp.
+
+#### A height: bodies that stand on the ground
+
+`rise` makes a shape the top of a body that stands on the ground: a block, a plateau, a tower, seen from above at an angle. Its `at` is where it stands. The shape itself is drawn `rise` units higher, and the side of the body is drawn under it, down to the ground.
+
+```ts
+region({ id: 'plateau', points: [[-520, -260], [420, -250], [560, 60], [380, 330], [-560, 250]], smooth: 0.6, fill: 'dark.plum', lit: false, rise: 36, side: 'deep.ink', children: [
+  rect({ id: 'block', at: [-120, 40], w: 110, h: 70, radius: 6, fill: 'accent.coral', lit: false, rise: 0 }),    // it lies flat until it is raised
+  stroke({ id: 'wall', points: [[-470, -210], [390, -210], [500, 50]], color: 'light.cream', width: 12, rise: 22 }),   // a wall: the line is its top
+] }),
+// timeline
+riseTo('block', { at: 1, to: 34 }),             // it grows out of the ground
+riseTo('block', { at: 5, to: 0, dur: 0.5 }),    // and sinks back into it
+```
+
+- `rise` is 0 to 2000, in the units of the node. A height of 0 is no body: the shape is drawn as a flat one, pixel for pixel.
+- **In a flat layer up is up the screen.** The top is drawn `rise` units above the place where the body stands, at its own size, however the node is turned: a view from above at an angle, the same for every body of the frame.
+- **In a plane of a perspective layer** (a group with `plane`) the body stands on the front of the plane, and the camera of the layer sees it as it sees everything: the top is nearer to the camera, so it is drawn larger and farther from the point the camera stands over, and the side shows on the side that is turned away from that point. A body right under the camera shows no side. `perspectiveTo` changes the view of every body with it. The height is at most 0.9 of the height of the camera over the plane.
+- **The side** is one flat tone: the colour `side`, or, left out, a shadow tone of the fill as it is at the frame (of the `color`, for a stroke).
+- **What is inside a body rides on its top:** the `at` of a child is a place on the top, so bodies stack. A block on a plateau stands at the height of the plateau and has its own height above that.
+- **The order of the list is the draw order,** as everywhere: list first what is farther from the viewer (in a flat layer: higher up the screen), so that a nearer body covers the foot of the one behind it. A wall that goes round other things is two strokes: its far half before them, its near half after them.
+- **A stroke with a `rise` is a wall:** the line is its top, as wide as ever, and its side reaches down to where it stands. It may be closed, drawn on (`drawOn`: the wall is built along its line) and hold a least width on screen (`least`). It takes no `dash`.
+- **`riseTo(id, { at, to, dur?, profile?, ramp? })`** changes the height at a moment: `to` is the new height (0 to 2000), `dur` is 0.8 s unless given, `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each starts from the height reached at its moment. The node has a `rise`: `rise: 0` for one that lies flat until it is raised. With `stagger` a row of blocks grows one after another; a key back to 0 takes a body down again.
+- **What it is not.** A body has no light of a space and casts no shadow: draw shadows as dark shapes on the ground, in a soft group (see A soft edge). The automatic light, a glow, a cover, a clip and the contrast review read the top alone, and a label points at the top. A rigid body, a content with a `level`, and a region or a stroke through points of the space (`[x, y, z]`) take no `rise`.
+- The motion review judges a height that changes as the move of the top that it is on screen (see Motion review). `riseTo` makes no sound event: place a sound with `sfx` where one belongs.
 
 #### `region({ id, fill, points, smooth?, ... })`
 
@@ -518,13 +575,15 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 - Its outline can change over time: `reshape` runs every point to a new place (see An outline that changes).
 - **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back? })`
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, soft? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
 Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a group has no picture of its own, so it can hold a detail of a wide view at its true size there, for a zoom into it (see Camera, a zoom into a detail).
 
 `depth` is its place in the draw order of its layer (see `layer`). `plane` and `back` are for a group listed in a perspective layer: the group and all it holds lie in a plane of the space (see A perspective layer). A group with nothing in it also serves as a corner: a place that a `drive` moves and that `link`s hold on to (see A node that follows a function of time).
+
+`soft` (0 to 200 units) blurs the group and all it holds as one picture: soft shadows, a haze, a cloud and its shadow (see A soft edge).
 
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
@@ -589,7 +648,7 @@ widthTo('tie', { at: 6, to: 3, dur: 1 }),     // and it is a hair again
 - A stroke that is scaled (`scale`, `scaleTo`, a parent) scales its width with it, keyed or not. `widthTo` is for a line that changes its width and not its size.
 - A `widthTo` makes no event. The motion review judges it on a channel of its own, `width` (the travel of the edge of the line): a width that changes within a frame or two is a `jump`, and a large, quick change with `overshoot: 0` an `abrupt-start`. While its width changes, a line counts as life in the frame.
 
-### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, sound?, depth? })`
+### `stroke({ id, points, color, width?, least?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, rise?, side?, sound?, depth? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
 
@@ -598,6 +657,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 | `points` | required | at least two points `[x, y]` the line runs through, the first being where it starts |
 | `color` | required | palette reference |
 | `width` | `7` | thickness in units, 0.5 to 200; `widthTo` changes it over time |
+| `least` | none | 0.5 to 200: the least width the line has on screen, in units of the frame, at any zoom (see A line that keeps its width on screen) |
 | `closed` | `false` | back to the first point after the last (at least three points) |
 | `smooth` | `1` | `1` joins the points with a smooth curve, `0` with straight lines; between them the corners are partly rounded. The same as the path of a `travel` |
 | `dash` | none | `[dash, gap]` in units: the straight part of a dash and the clear gap between two. The dashes have round ends, so a dash of `0` is a dot as wide as the line |
@@ -607,6 +667,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 | `glow` | `0` | `0` to `1`: the line glows, with a halo around it |
 | `pulseColor` | `color` | colour of the lights that `pulse` sends along the stroke |
 | `clipTo` | none | id of a shape of the same layer: the stroke is drawn only inside it |
+| `rise`, `side` | none | 0 to 2000 units: the stroke is the top of a wall that stands this high, and the colour of the side of that wall (see A height: bodies that stand on the ground) |
 | `sound` | none | key of the stroke's voice: what its `drawOn` sounds like (see Sound) |
 
 ```ts
@@ -655,6 +716,25 @@ pulse('ring', { at: 1, dur: 6, to: 3, profile: 'steady', node: 'lamp' }),       
 - The arrival is a `pulse` event (see Sound), at the place where the light arrives.
 - The motion review holds a light against its own length, as it does on a link: one that covers half of its length per frame or more is `too-fast`. Give it a longer `dur`, or a longer `length`. While a light runs, the stroke counts as life in the frame.
 - The options of this table are for a stroke: on a link a pulse runs from its first node to its second, which gets the bump.
+
+#### A line that keeps its width on screen
+
+A line of a detail that is drawn small (a river inside a group at a fortieth of its size, before the camera zooms into it) is too thin to be seen in the wide view. `least` gives a stroke a least width **on screen**, in units of the frame:
+
+```ts
+group({ id: 'detail', scale: 1 / 40, children: [
+  stroke({ id: 'river', points: [[-12000, 300], [-2000, -200], [9000, 400]], color: 'mid.ocean', width: 4, least: 3 }),   // 4 units of the detail; never under 3 units of the frame
+] }),
+// timeline
+cameraTo({ at: 1, zoom: 40, dur: 4 }),
+```
+
+- At every frame the line is as wide as the wider of the two is on screen: its own `width`, through the scale of its parents and the zoom of the camera in its layer, or `least` units of the frame. So through a zoom it holds its width until its own width takes over, without a key.
+- `least` is 0.5 to 200. A stroke with `least` takes no `widthTo`: its width is given at every zoom.
+- Two lines with different `least` keep their order of width in the wide view: a main road over a lane, a verge under its way.
+- What is drawn from the width follows it: the round ends, the glow, the lights of `pulse`, the side of a wall (`rise`). Dashes stay laid out by the authored `width`.
+- In a plane of a perspective layer the width is held as the plane is seen at the place of the stroke; along a line that runs into the distance the perspective still narrows it.
+- The motion review reads the zoom on the camera: such a line has no width of its own that changes.
 
 ### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
 
@@ -795,6 +875,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `hop(id, { at, to, ... })` | placed | `dur` (0.6), `height` (80), `land` instead of `at` | a jump: leaves at `at`, flies a parabola `height` units high, lands at `at + dur`. See Moves |
 | `travel(id, { at, path, ... })` | placed | `speed`, `dur` or `speeds`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
+| `riseTo(id, { at, to, ... })` | a shape or a stroke with a `rise` | `dur` (0.8), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the body to the height `to`, in units: it grows out of the ground or sinks back; keys chain. See A height: bodies that stand on the ground |
 | `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
@@ -1253,10 +1334,10 @@ turnTo('card', { at: 5, to: 90, about: 'x', dur: 1.6, profile: 'ease' }),    // 
 
 **What it does not do.**
 
-- The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space and no cast shadow: draw a shadow as links or as a region on the ground and drive it.
+- The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space and no cast shadow: draw a shadow as links or as a region on the ground and drive it. A shape or a stroke in a plane may stand up from it with `rise`, as the top of a body with one flat side (see A height: bodies that stand on the ground).
 - Nothing but a plane is cut at the camera. A node whose place, or one of whose points of the space, is nearer than 2 % of the lens in front of the camera, or behind it, is not drawn at that frame.
 - Rigid bodies are refused in a perspective layer: the physics bake is flat. Springs (`follow`, `sway`) work on the picture, so a move of the layer's camera sets them swinging.
-- No blur by distance: the `blur` of the layer applies to all of it.
+- No blur by distance: the `blur` of the layer applies to all of it. One node or one group, also in a plane, is blurred by its own `soft`.
 
 `examples/space/scene.ts` shows a floor with a map, a wire cube of driven corners with its shadow, a moon that passes in front of a globe and behind it, a card on a hinge, a ramp, and a camera that rises, goes round and moves in.
 
@@ -1388,6 +1469,7 @@ Things to know when you write a scene:
 - Keep a small thing slow: under half of its own size per frame.
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
+- A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 
@@ -1828,4 +1910,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other and no light in the space of a perspective layer. See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer. See the roadmap in the README.

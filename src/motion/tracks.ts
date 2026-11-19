@@ -33,6 +33,7 @@ import type {
   PopInKey,
   PopOutKey,
   PulseKey,
+  RiseToKey,
   ScaleToKey,
   SolidToKey,
   SquashKey,
@@ -749,6 +750,23 @@ export function buildWidthTrack(base: number, keys: readonly WidthToKey[]): Widt
     // that the line is never thinner than half of what it becomes.
     const overshoot = from > k.to ? Math.min(k.overshoot, (THINNEST * k.to) / (from - k.to)) : k.overshoot;
     segs.push({ at: k.at, dur: k.dur, from, to: k.to, overshoot });
+  }
+  return { base, segs };
+}
+
+/** The height of a body (a shape or a stroke with a rise) over time, in its own units. `base` is the height it was given. */
+export type RiseTrack = LevelTrack;
+
+/** The height of a body at time t, in its own units. */
+export function sampleRise(track: RiseTrack, t: number): number {
+  return Math.max(0, sampleLevel(track, t));
+}
+
+/** The track of the height of a body. Keys chain: each starts from the height reached at its moment. */
+export function buildRiseTrack(base: number, keys: readonly RiseToKey[]): RiseTrack {
+  const segs: LevelSeg[] = [];
+  for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
+    segs.push({ at: k.at, dur: k.dur, from: sampleLevel({ base, segs }, k.at), to: k.to, profile: k.profile, ramp: k.ramp });
   }
   return { base, segs };
 }

@@ -25,7 +25,7 @@ import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
-import { FINDING_KINDS_ALL, LINK_MAX_WIDTH } from './types.ts';
+import { FINDING_KINDS_ALL, LINK_MAX_WIDTH, RISE_MAX } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -263,14 +263,41 @@ export interface ShapeOptions {
    * surface, wave: { amp, length?, speed? }. Animate it with levelTo().
    */
   level?: number | { at: number; wave?: { amp: number; length?: number; speed?: number } };
+  /** Units, up to 200: the shape and what is in it are drawn as one picture, blurred this far: a soft edge, a soft shadow. */
+  soft?: number;
+  /**
+   * Units, 0 to 2000: the shape is the top of a body this high, standing on its place: the top is drawn that far up
+   * the screen, the side of the body under it, and its children ride on the top. In a plane of a perspective layer
+   * the body stands on the plane and is seen in perspective. 0 lies flat until a riseTo() raises it.
+   */
+  rise?: number;
+  /** With rise: the colour of the side of the body; default a shadow tone of the fill. */
+  side?: ColorRef;
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side',
 ];
+
+/** The widest blur of a soft node, in its units. */
+const SOFT_MAX = 200;
+
+/** A soft node: written only when it is given, so that a node without it is the data it always was. */
+function softness(where: string, value: unknown): { soft?: number } {
+  return value === undefined ? {} : { soft: num(where, 'soft', value, 0, SOFT_MAX) };
+}
+
+/** A body with a height: written only when it is given, so that a node without it is the data it always was. */
+function risen(where: string, o: { rise?: number; side?: ColorRef }, what: string): { rise?: number; side?: ColorRef } {
+  if (o.rise === undefined) {
+    if (o.side !== undefined) fail(where, `side is the colour of the side of a ${what} with a height: give rise, or leave side out`);
+    return {};
+  }
+  return { rise: num(where, 'rise', o.rise, 0, RISE_MAX), ...(o.side === undefined ? {} : { side: color(where, 'side', o.side) }) };
+}
 
 function flag(where: string, name: string, value: unknown): boolean {
   if (typeof value !== 'boolean') fail(where, `${name} must be true or false, got ${JSON.stringify(value)}`);
@@ -324,9 +351,13 @@ function lightExtras(where: string, o: ShapeOptions): { highlight?: boolean; lif
 
 function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: SpringSpec | null): ShapeNode {
   if (o.level !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a level');
+  if (o.rise !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a rise: the simulation knows its outline alone');
+  if (o.rise !== undefined && o.level !== undefined) fail(where, 'a shape with a level cannot have a rise: a content fills an outline that lies flat');
   return {
     ...extras(where, o),
     ...lightExtras(where, o),
+    ...softness(where, o.soft),
+    ...risen(where, o, 'shape'),
     ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'shape',
@@ -414,6 +445,7 @@ export function region(o: ShapeOptions & { points: readonly Vec2[] | readonly Ve
   const solid = spacePoints(where, o.points);
   if (o.back !== undefined && !solid) fail(where, 'back is for a region of points of the space of a perspective layer, [x, y, z] each');
   if (solid && o.level !== undefined) fail(where, 'a region of points [x, y, z] cannot have a level');
+  if (solid && o.rise !== undefined) fail(where, 'a region of points [x, y, z] cannot have a rise: its points give its place in the space; put a flat region with a rise into a group that lies in a plane');
   const shape = wrapShape(where, () => regionShape(solid ? seenStraightOn(solid).flat : o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1), most));
   const node = shapeNode(where, o, shape, null);
   return solid ? { ...node, points3: solid, ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) } : node;
@@ -464,11 +496,13 @@ export function group(o: {
   plane?: 'floor' | 'wall' | 'side' | { x: Vec3; y: Vec3 };
   /** With plane: false does not draw the group when the camera sees the back of its plane; default true. */
   back?: boolean;
+  /** Units, up to 200: the group is drawn as one picture, blurred this far: soft shadows, a haze, a cloud. */
+  soft?: number;
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'soft']);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   if (o.back !== undefined && o.plane === undefined) fail(where, 'back is for a group that lies in a plane of a perspective layer: give plane');
   return {
@@ -476,6 +510,7 @@ export function group(o: {
     ...order(where, o.depth),
     // Written only when it is given: a group without a plane is the data it always was.
     ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) }),
+    ...softness(where, o.soft),
     ...voice(where, o.sound),
     type: 'group',
     id: idOf(where, o.id),
@@ -575,11 +610,20 @@ export function stroke(o: {
   pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
   clipTo?: string;
+  /**
+   * Units of the frame, 0.5 to 200: the line is never thinner on screen than this, however far the camera has pulled
+   * back and however small its parents are drawn: a river or a road stays a line through a deep zoom.
+   */
+  least?: number;
+  /** Units, 0 to 2000: the line is the top of a wall this high, standing on its place, as the rise of a shape. */
+  rise?: number;
+  /** With rise: the colour of the side of the wall; default a shadow tone of the line's colour. */
+  side?: ColorRef;
   /** Key of the node's voice in the bank of sounds. */
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side']);
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
   // Points of three numbers: a line of the space of a perspective layer. Its path is then the line seen straight on.
   const solid = spacePoints(where, o.points);
@@ -594,7 +638,11 @@ export function stroke(o: {
     dash = [num(where, 'dash[0]', o.dash[0], 0, 1e4), num(where, 'dash[1]', o.dash[1], 0.5, 1e4)];
   }
   if (o.solid !== undefined && dash === null) fail(where, 'solid is for a dashed stroke: give dash');
+  if (solid && o.rise !== undefined) fail(where, 'a stroke of points [x, y, z] cannot have a rise: its points give its place in the space; put a flat stroke with a rise into a group that lies in a plane');
   return {
+    // Written only when they are given: a stroke without them is the data it always was.
+    ...(o.least === undefined ? {} : { least: num(where, 'least', o.least, 0.5, 200) }),
+    ...risen(where, o, 'stroke'),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
     // Written only when it is given: a stroke without it is the data it always was.

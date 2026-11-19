@@ -13,9 +13,9 @@ import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
-import { itemFill, itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import { itemFill, itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
-import { shapeExtent } from '../shape/geometry.ts';
+import { cornerOutline, shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 
@@ -105,9 +105,89 @@ export function clipToShape(ctx: CanvasRenderingContext2D, item: ClipItem): void
   }
 }
 
-/** A shape with its automatic light. A content with a level is drawn below its surface only. */
+/**
+ * The side of a body, as one path in the units of its top: everything its outline passes over on the way from the
+ * top down to the foot. Each stretch of the outline sweeps a piece with four corners; with `top`, the outline itself
+ * is one more piece. All of them wind one way, so together they fill the whole silhouette without a seam or a hole.
+ */
+function sidePath(points: readonly Vec2[], closed: boolean, foot: Foot, top: boolean): Path2D {
+  const path = new Path2D();
+  const n = points.length;
+  if (top && n > 2) {
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+      const a = points[i]!;
+      const b = points[(i + 1) % n]!;
+      area += a[0] * b[1] - b[0] * a[1];
+    }
+    for (let i = 0; i < n; i++) {
+      const p = points[area >= 0 ? i : n - 1 - i]!;
+      if (i === 0) path.moveTo(p[0], p[1]);
+      else path.lineTo(p[0], p[1]);
+    }
+    path.closePath();
+  }
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % n]!;
+    const ax = foot.k * a[0] + foot.x;
+    const ay = foot.k * a[1] + foot.y;
+    const bx = foot.k * b[0] + foot.x;
+    const by = foot.k * b[1] + foot.y;
+    // Twice the area of the piece a, b, b', a': its sign says which way it winds.
+    const area = a[0] * b[1] - b[0] * a[1] + (b[0] * by - bx * b[1]) + (bx * ay - ax * by) + (ax * a[1] - a[0] * ay);
+    path.moveTo(a[0], a[1]);
+    if (area >= 0) {
+      path.lineTo(b[0], b[1]);
+      path.lineTo(bx, by);
+      path.lineTo(ax, ay);
+    } else {
+      path.lineTo(ax, ay);
+      path.lineTo(bx, by);
+      path.lineTo(b[0], b[1]);
+    }
+    path.closePath();
+  }
+  return path;
+}
+
+/** The tone of the side of a body: the colour it was given, or a shadow tone of the colour of its top. */
+function sideTone(colors: Readonly<Record<string, string>>, top: string, paint: Paint): string {
+  const given = colors['side'];
+  return given ? paint.tone('base', given) : paint.tone('shadow2', top);
+}
+
+/** The side of a shape that stands up, in one flat tone. Its top is drawn over it. */
+function fillSide(ctx: CanvasRenderingContext2D, item: ShapeItem, foot: Foot, paint: Paint): void {
+  const { xf } = item;
+  ctx.save();
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  ctx.fillStyle = sideTone(item.node.colors, itemFill(item), paint);
+  ctx.fill(sidePath(cornerOutline(itemShape(item)), true, foot, true));
+  ctx.restore();
+}
+
+/**
+ * Fills the outline things are clipped to (for a content with a level, its filled part) with the fill the context has:
+ * the mask of a clip with a soft edge.
+ */
+export function fillClipShape(ctx: CanvasRenderingContext2D, item: ClipItem): void {
+  ctx.save();
+  if (item.level) {
+    const below = polygonPath(item.level);
+    below.closePath();
+    ctx.clip(below);
+  }
+  ctx.fill(placedPath(item));
+  ctx.restore();
+}
+
+/** A shape with its automatic light. A content with a level is drawn below its surface only; a body that stands up, over its side. */
 export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
   if (!item.level) {
+    if (item.foot) fillSide(ctx, item, item.foot, paint);
     fillShape(ctx, item, paint);
     return;
   }
@@ -430,8 +510,48 @@ function drawStrokePulses(ctx: CanvasRenderingContext2D, item: StrokeItem, width
   ctx.restore();
 }
 
-/** A stroke: a line along a path, solid or dashed, as far as it is drawn, and the lights that run along it. */
+/**
+ * The side of a line that stands up as a wall, in one flat tone: what the drawn part of the line, as wide as it is,
+ * passes over on the way from its top down to its foot. The line itself is drawn over it.
+ */
+function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot, paint: Paint): void {
+  const node = item.node.node as StrokeNode;
+  const table = pathTable(itemPath(item));
+  const upTo = table.length * item.drawn;
+  const points: Vec2[] = [[table.xs[0]!, table.ys[0]!]];
+  const m = table.cum.length;
+  for (let i = 1; i < m; i++) {
+    if (table.cum[i]! <= upTo) {
+      points.push([table.xs[i]!, table.ys[i]!]);
+      continue;
+    }
+    // The line ends between two samples.
+    const span = table.cum[i]! - table.cum[i - 1]!;
+    const u = span > 1e-12 ? (upTo - table.cum[i - 1]!) / span : 0;
+    if (u > 1e-9) points.push([table.xs[i - 1]! + (table.xs[i]! - table.xs[i - 1]!) * u, table.ys[i - 1]! + (table.ys[i]! - table.ys[i - 1]!) * u]);
+    break;
+  }
+  if (points.length < 2) return;
+  const { xf } = item;
+  const path = sidePath(points, item.drawn >= 1 - 1e-9 && node.path.closed, foot, false);
+  const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
+  ctx.save();
+  ctx.translate(xf.x, xf.y);
+  ctx.rotate(xf.rot);
+  ctx.scale(xf.scale, xf.scale);
+  ctx.fillStyle = tone;
+  ctx.strokeStyle = tone;
+  ctx.lineWidth = itemWidth(item);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.fill(path);
+  ctx.stroke(path);
+  ctx.restore();
+}
+
+/** A stroke: a line along a path, solid or dashed, as far as it is drawn, and the lights that run along it. A wall that stands up is drawn over its side. */
 export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
+  if (item.foot) strokeSide(ctx, item, item.foot, paint);
   ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
   strokeLine(ctx, item);
   if (item.pulses) {

@@ -3,7 +3,7 @@
 // draws without further decisions.
 
 import { cameraAt, layerView, type CameraState, type LayerView } from '../camera/camera.ts';
-import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
+import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { sampleDriven } from '../motion/drive.ts';
@@ -15,6 +15,7 @@ import {
   sampleCount,
   sampleDrawn,
   sampleLevel,
+  sampleRise,
   sampleLid,
   sampleOpacity,
   samplePathTurn,
@@ -40,7 +41,7 @@ import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts'
 import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
-import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneMap } from './space.ts';
+import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
 import type { LabelSide } from './types.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
@@ -215,6 +216,23 @@ export function newPlaces(c: CompiledShot): Places {
 }
 
 /**
+ * Where a body with a height stands. The transform of such a node is that of
+ * its top; a point p of the top, in the node's own units, stands on the ground
+ * at k p + (x, y), in those units and through that transform. In a flat layer
+ * the foot is the top moved down the screen (k is 1); in a plane of a
+ * perspective layer it is the top drawn smaller or larger about the point of
+ * the plane the camera stands over.
+ */
+export interface Foot {
+  readonly k: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A body in a plane never rises nearer the camera than this share of the camera's own height over the plane. */
+const RISE_NEAR = 0.9;
+
+/**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
  * Nodes without a place of their own (links, emitters) get the identity.
@@ -223,12 +241,17 @@ export function newPlaces(c: CompiledShot): Places {
  * layer draws it: its place, and its size there. For a node that lies in a
  * plane that is its place exactly and its size and its turn as they are at
  * that place; what such a node is in its plane goes to `places`.
+ *
+ * The transform of a body with a height (a rise) is that of its top, and what
+ * is inside it rides on that top; where its foot stands goes to `feet`.
  */
-export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, places?: Places): Xf[] {
+export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, places?: Places, feet?: Map<number, Foot>): Xf[] {
   const t = frame / FPS;
   const out: Xf[] = new Array<Xf>(c.nodes.length).fill(XF_IDENTITY);
   // The children of a shape with a level ride on its surface: their frame is the middle of the surface.
   let surfaces: Map<number, Xf> | null = null;
+  // By the index of a group that lies in a plane, in a shot with bodies: where the camera stands in that plane, and how high over it.
+  let stands: Map<number, Vec3> | null = null;
   // A shot with a perspective layer: the cameras of this frame, and the planes as they are found.
   const space = c.spatial ? places ?? newPlaces(c) : null;
   if (space) {
@@ -272,6 +295,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
         const axes = n.hinge ? hingedAxes(node.plane, n.hinge.x ? sampleRot(n.hinge.x, t) : 0, n.hinge.y ? sampleRot(n.hinge.y, t) : 0) : node.plane;
         let map = planeMap(eye, [x, y, z], axes);
         if (map && !map.front && node.back === false) map = null;
+        if (c.risen) (stands ??= new Map<number, Vec3>()).set(n.index, standOf(eye, [x, y, z], axes));
         const flat: Xf = { x: 0, y: 0, rot, scale };
         space.flat[n.index] = flat;
         space.planes.set(n.index, map);
@@ -302,6 +326,30 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       const lever = (node.shape.length - 2 * node.shape.r) * Math.max(xf.scale, 0.05);
       xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
+    if (n.rise) {
+      // A body with a height: from here on its transform is that of its top.
+      const rise = sampleRise(n.rise, t);
+      if (rise > RISE_FLAT) {
+        const stand = inPlane ? stands?.get(n.plane) : undefined;
+        if (stand) {
+          // In a plane the body stands on the plane, toward its front. Seen from the camera, a point that high over a
+          // place of the plane lies on the line from the point the camera stands over through that place, farther
+          // out the higher it is: the top is the foot drawn larger about that point.
+          const height = stand[2] > 0 ? Math.min(rise * xf.scale, RISE_NEAR * stand[2]) : rise * xf.scale;
+          const grow = stand[2] / (stand[2] - height);
+          const gx = xf.x - stand[0];
+          const gy = xf.y - stand[1];
+          const back = vrot([(gx * (1 - grow)) / (xf.scale * grow), (gy * (1 - grow)) / (xf.scale * grow)], -xf.rot);
+          feet?.set(n.index, { k: 1 / grow, x: back[0], y: back[1] });
+          xf = { x: stand[0] + gx * grow, y: stand[1] + gy * grow, rot: xf.rot, scale: xf.scale * grow };
+        } else {
+          // In a flat layer the top is the foot moved up the screen.
+          const down = vrot([0, rise], -xf.rot);
+          feet?.set(n.index, { k: 1, x: down[0], y: down[1] });
+          xf = { ...xf, y: xf.y - rise * xf.scale };
+        }
+      }
+    }
     if (inPlane) {
       space.flat[n.index] = xf;
       const map = space.planes.get(n.plane);
@@ -327,6 +375,18 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
   return out;
 }
 
+/** A body lower than this, in its units, lies flat: it is drawn as the shape or the line it is. */
+const RISE_FLAT = 1e-6;
+
+/** Where the camera stands in a plane: the point of the plane it is over, in the units of the plane, and how high it is over the front of the plane. */
+function standOf(eye: Eye, origin: Vec3, axes: PlaneAxes): Vec3 {
+  const o: Vec3 = [eye.pos[0] - origin[0], eye.pos[1] - origin[1], eye.pos[2] - origin[2]];
+  const along = (a: Vec3): number => o[0] * a[0] + o[1] * a[1] + o[2] * a[2];
+  // The front of a plane is the side its picture reads from: y x x.
+  const front: Vec3 = [axes.y[1] * axes.x[2] - axes.y[2] * axes.x[1], axes.y[2] * axes.x[0] - axes.y[0] * axes.x[2], axes.y[0] * axes.x[1] - axes.y[1] * axes.x[0]];
+  return [along(axes.x), along(axes.y), along(front)];
+}
+
 /**
  * Every drawn item carries `alpha`: the product of its own opacity and the
  * opacities of everything it is nested in. The picture itself gets that opacity
@@ -347,6 +407,8 @@ export interface ShapeItem {
   readonly shape?: ShapeSpec;
   /** A shape whose fill is keyed (fillTo): the fill it has at this frame (#RRGGBB). Left out: the fill of its node. */
   readonly fill?: string;
+  /** A body that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
+  readonly foot?: Foot;
 }
 
 export interface EyeItem {
@@ -390,8 +452,10 @@ export interface StrokeItem {
   readonly pulses?: readonly { readonly head: number; readonly tail: number; readonly length: number }[];
   /** A stroke whose line is keyed (reshape): the path it has at this frame. Left out: the path of its node. */
   readonly path?: PathSpec;
-  /** A stroke whose width is keyed (widthTo): the width it has at this frame, in its own units. Left out: the width of its node. */
+  /** A stroke whose width is keyed (widthTo) or held on screen (least): the width it has at this frame, in its own units. Left out: the width of its node. */
   readonly width?: number;
+  /** A wall that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
+  readonly foot?: Foot;
 }
 
 export interface TextItem {
@@ -438,6 +502,8 @@ export interface GroupItem {
   readonly node: CNode;
   readonly opacity: number;
   readonly items: readonly Item[];
+  /** A soft node: how far that one picture is blurred, in the units of the layer. Left out: it is sharp. */
+  readonly soft?: number;
 }
 
 /**
@@ -453,6 +519,8 @@ export interface ClipItem {
   readonly level?: readonly Vec2[];
   /** When the outline of the shape is keyed (reshape): the shape it has at this frame. */
   readonly shape?: ShapeSpec;
+  /** When the shape is soft: how far the edge of the clip is blurred, in the units of the layer, so the items fade out across it. Left out: a sharp edge. */
+  readonly soft?: number;
   readonly items: readonly Item[];
 }
 
@@ -730,7 +798,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const t = frame / FPS;
   // A shot with a perspective layer also says where its nodes lie in their planes and in the space.
   const places = c.spatial ? newPlaces(c) : undefined;
-  const world = computeWorld(c, frame, posesFromBake(bake), places);
+  // A shot with bodies also says where each of them stands.
+  const feet = c.risen ? new Map<number, Foot>() : undefined;
+  const world = computeWorld(c, frame, posesFromBake(bake), places, feet);
   const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames, c.cameraTrack);
 
   const { own, alpha } = opacities(c, t);
@@ -741,8 +811,14 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
   // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
   const placeOf = (index: number): Xf => places?.flat[index] ?? world[index]!;
+  // A body that stands up carries where its foot stands; any other item is what it always was.
+  const standing = (index: number): { foot?: Foot } => {
+    const foot = feet?.get(index);
+    return foot ? { foot } : {};
+  };
 
   const layers = c.layers.map((layer): LayerState => {
+    const view = layerView(camera, layer.parallax);
     const root: Item[] = [];
     // Open groups: the items of a faded node and of its subtree go into its group.
     const open: { end: number; items: Item[] }[] = [];
@@ -783,6 +859,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         // Drawn only inside the outline of a shape. Neighbours clipped to the same shape share one clip.
         const clipNode = c.nodes[n.clipIndex]!;
         const last = items[items.length - 1];
+        // What is clipped to a soft shape fades out across its edge, as the shape does.
+        const softness = clipNode.node.type === 'shape' && clipNode.node.soft ? { soft: clipNode.node.soft * world[n.clipIndex]!.scale } : {};
         let inner: Item[];
         if (last && last.kind === 'clip' && last.node === clipNode) {
           inner = last.items as Item[];
@@ -794,11 +872,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             continue;
           }
           inner = [];
-          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), level: levelClip(g), ...reshaped(clipNode), items: inner });
-          else items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), items: inner });
+          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), level: levelClip(g), ...reshaped(clipNode), ...softness, items: inner });
+          else items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), ...softness, items: inner });
         } else {
           inner = [];
-          items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), items: inner });
+          items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), ...softness, items: inner });
         }
         open.push({ end: n.subtreeEnd, items: inner });
         items = inner;
@@ -823,7 +901,14 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           items = inner;
         }
       }
-      if (own[index]! < OPAQUE) {
+      // A soft node is one picture, as a faded one is; its blur is that of its units where it is drawn.
+      const soft = (node.type === 'shape' || node.type === 'group') && node.soft !== undefined ? node.soft * world[index]!.scale : 0;
+      if (soft > 0) {
+        const group: Item[] = [];
+        items.push({ kind: 'group', node: n, opacity: Math.min(1, own[index]!), items: group, soft });
+        open.push({ end: n.subtreeEnd, items: group });
+        items = group;
+      } else if (own[index]! < OPAQUE) {
         const group: Item[] = [];
         items.push({ kind: 'group', node: n, opacity: own[index]!, items: group });
         open.push({ end: n.subtreeEnd, items: group });
@@ -845,7 +930,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
               break;
             }
           }
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...standing(index) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -888,7 +973,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           if (n.form && formAt(n, t).hidden) break;
           // A stroke without a pulse is the item it always was.
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
+          // A line with a least width is as wide, in its own units, as it takes to be that wide on screen; never thinner than it was made.
+          const held = node.least === undefined ? {} : { width: Math.max(node.width, node.least / Math.max(world[index]!.scale * view.zoom, 1e-9)) };
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...standing(index) });
           break;
         }
         case 'link': {
@@ -931,7 +1018,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
       }
     }
-    return { layer, view: layerView(camera, layer.parallax), items: prune(root) };
+    return { layer, view, items: prune(root) };
   });
 
   // A shot whose background is not keyed is the state it always was.

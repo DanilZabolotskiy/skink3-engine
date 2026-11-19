@@ -6,6 +6,7 @@ import type { Vec2, Vec3 } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDistance, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
 import { pathLength, type PathSpec } from './paths.ts';
+import { RISE_MAX } from '../scene/types.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
 
 /**
@@ -190,6 +191,18 @@ export interface WidthToKey extends Voiced {
   readonly dur: number;
   /** How far it shoots past the new width, as a fraction of the change. */
   readonly overshoot: number;
+}
+
+/** Raise or lower a body: change the height of a shape or of a stroke that has a rise. */
+export interface RiseToKey extends Voiced {
+  readonly kind: 'riseTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new height, in the node's units. */
+  readonly to: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
 }
 
 /** Change the fill of a shape to another colour of the palette over time: a colour key. */
@@ -449,6 +462,7 @@ export type Key =
   | SolidToKey
   | BendToKey
   | WidthToKey
+  | RiseToKey
   | FillToKey
   | PulseKey
   | OpenToKey
@@ -1100,6 +1114,33 @@ export function widthTo(id: string, opts: { at: number; to: number; dur?: number
     to: num(w, 'to', opts.to, 0.5, 200),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+  };
+}
+
+/**
+ * Raise or lower a body: `to` is the new height of a shape or of a stroke
+ * that has a `rise`, in its units. Its foot stays where it stands; its top
+ * and what rides on it go up or down, and its side grows or shrinks with
+ * them, so a block grows out of the ground and sinks back into it. The
+ * height arrives exactly at `at + dur`. Several keys chain from the height
+ * reached at that moment.
+ */
+export function riseTo(
+  id: string,
+  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): RiseToKey {
+  const w = `riseTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'riseTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, 0, RISE_MAX),
+    dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 3600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
 }
 

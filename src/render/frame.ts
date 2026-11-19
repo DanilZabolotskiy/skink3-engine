@@ -27,6 +27,7 @@ import {
   eraseGlow,
   makePaint,
   clipToShape,
+  fillClipShape,
   type Paint,
 } from './draw.ts';
 import { applyPlane, planeContext, seesPlane } from './plane.ts';
@@ -131,26 +132,60 @@ function drawItems(
       case 'stroke': drawStroke(ctx, item, paint); break;
       case 'text': drawText(ctx, item, paint); break;
       case 'group': {
-        const { canvas, ctx: gx } = layerCanvas(target);
+        // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
+        const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
+        const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) } : target;
+        const { canvas, ctx: gx } = layerCanvas(inner);
         // A canvas of its own starts without the stretches and the planes it is nested in.
         for (const s of stretches) {
           if (s.kind === 'plane') applyPlane(gx, s);
           else applyStretch(gx, s);
         }
-        drawItems(stretches.some((s) => s.kind === 'plane') ? planeContext(gx) : gx, item.items, paint, target, stretches);
+        drawItems(stretches.some((s) => s.kind === 'plane') ? planeContext(gx) : gx, item.items, paint, inner, stretches);
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = item.opacity;
-        ctx.drawCanvas(canvas, 0, 0);
+        if (softPx > 0.05) ctx.filter = `blur(${softPx.toFixed(3)}px)`;
+        ctx.drawCanvas(canvas, target.pad - inner.pad, target.pad - inner.pad);
         ctx.restore();
         break;
       }
-      case 'clip':
+      case 'clip': {
+        const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
+        if (softPx > 0.05) {
+          // A clip with a soft edge: the items are drawn whole into a picture of their own, and that picture is kept
+          // as far as the blurred outline of the shape is there.
+          const inner = { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) };
+          const own = (): { canvas: Canvas; ctx: CanvasRenderingContext2D } => {
+            const made = layerCanvas(inner);
+            for (const s of stretches) {
+              if (s.kind === 'plane') applyPlane(made.ctx, s);
+              else applyStretch(made.ctx, s);
+            }
+            return made;
+          };
+          const { canvas, ctx: gx } = own();
+          drawItems(stretches.some((s) => s.kind === 'plane') ? planeContext(gx) : gx, item.items, paint, inner, stretches);
+          const { canvas: mask, ctx: mx } = own();
+          fillClipShape(mx, item);
+          gx.save();
+          gx.setTransform(1, 0, 0, 1, 0, 0);
+          gx.globalCompositeOperation = 'destination-in';
+          gx.filter = `blur(${softPx.toFixed(3)}px)`;
+          gx.drawCanvas(mask, 0, 0);
+          gx.restore();
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawCanvas(canvas, target.pad - inner.pad, target.pad - inner.pad);
+          ctx.restore();
+          break;
+        }
         ctx.save();
         clipToShape(ctx, item);
         drawItems(ctx, item.items, paint, target, stretches);
         ctx.restore();
         break;
+      }
       case 'stretch':
         ctx.save();
         applyStretch(ctx, item);

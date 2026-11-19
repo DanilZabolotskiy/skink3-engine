@@ -420,6 +420,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       n.axis !== null ||
       n.outline !== null ||
       n.width !== null ||
+      // A body whose height is keyed: its top moves, and what rides on it.
+      (n.rise !== null && n.rise.segs.length > 0) ||
       n.fill !== null ||
       // A drive, a hinge that turns, and the camera of a perspective layer: where the node is drawn changes with each.
       n.driven ||

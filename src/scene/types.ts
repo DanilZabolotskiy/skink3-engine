@@ -138,6 +138,16 @@ export interface ShapeNode extends NodeBase {
   readonly points3?: readonly Vec3[];
   /** Such a region: false does not draw it when the camera sees its back. Left out: it is drawn from both sides. */
   readonly back?: boolean;
+  /** Units: the shape and what is in it are drawn as one picture, blurred this far, so its edge is soft. Left out: sharp. */
+  readonly soft?: number;
+  /**
+   * Units: the shape is the top of a body this high. Its place is its foot on the ground; the top is drawn that far
+   * up the screen (in a plane of a perspective layer: that far off the plane, toward its front), with the side of the
+   * body under it, and its children ride on the top. riseTo animates it. Left out: a flat shape.
+   */
+  readonly rise?: number;
+  /** The colour of that side. Left out: a shadow tone of the fill. */
+  readonly side?: ColorRef;
 }
 
 export interface GroupNode extends NodeBase {
@@ -161,10 +171,15 @@ export interface GroupNode extends NodeBase {
   readonly plane?: PlaneAxes;
   /** Such a group: false does not draw it when the camera sees the back of its plane. Left out: it is drawn from both sides. */
   readonly back?: boolean;
+  /** Units: the group is drawn as one picture, blurred this far. Left out: sharp. */
+  readonly soft?: number;
 }
 
 /** The widest a link can be, in units: the limit of its `width`, and of a `widthTo` on it. */
 export const LINK_MAX_WIDTH = 80;
+
+/** The highest a body may rise, in its units: the limit of its `rise`, and of a `riseTo` on it. */
+export const RISE_MAX = 2000;
 
 /** A curved line between two nodes of the same layer; it follows them as they move. */
 export interface LinkNode {
@@ -229,6 +244,15 @@ export interface StrokeNode extends NodeBase {
    * they make seen straight on, and the camera of the layer gives the one that is drawn.
    */
   readonly points3?: readonly Vec3[];
+  /**
+   * Units of the frame: the line is never thinner on screen than this, however far the camera has pulled back and
+   * however small its parents are drawn. Left out: it is as wide as `width` says, at every zoom.
+   */
+  readonly least?: number;
+  /** Units: the line is the top of a wall this high, as the rise of a shape. Left out: a flat line. */
+  readonly rise?: number;
+  /** The colour of the side of that wall. Left out: a shadow tone of the line's colour. */
+  readonly side?: ColorRef;
 }
 
 /**

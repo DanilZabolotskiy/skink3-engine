@@ -495,6 +495,25 @@ export function outline(spec: ShapeSpec, n = 96): Vec2[] {
   return out;
 }
 
+const sideCache = new WeakMap<ShapeSpec, Vec2[]>();
+
+/**
+ * The outline of a shape with every corner in it, for what is built on the outline itself (the side of a body with a
+ * height): a region with straight sides is its own points, one with curved sides has six points to each of them, any
+ * other shape its dense outline. Computed once per spec object.
+ */
+export function cornerOutline(spec: ShapeSpec): readonly Vec2[] {
+  let pts = sideCache.get(spec);
+  if (!pts) {
+    const dense = denseOutline(spec);
+    // A region has 24 points to each of its sides.
+    const step = isRegion(spec) ? (spec.smooth > 0 ? 4 : 24) : 1;
+    pts = step === 1 ? dense : dense.filter((_, i) => i % step === 0);
+    sideCache.set(spec, pts);
+  }
+  return pts;
+}
+
 const outlineCache = new WeakMap<ShapeSpec, Vec2[]>();
 
 /** The 96-point outline of a shape, computed once per spec object. */
