@@ -5,6 +5,7 @@
 import { Path2D } from 'skia-canvas';
 import { LABEL_PROPORTIONS } from './label.ts';
 import type { TextLayout } from './layout.ts';
+import type { RunSpan } from './runs.ts';
 
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -15,8 +16,8 @@ export interface TextBlock {
   readonly box: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
   /** The rounded box behind the lines, or null. */
   readonly path: Path2D | null;
-  /** Centre x and baseline y of each line, relative to the origin. */
-  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number }[];
+  /** Centre x and baseline y of each line, relative to the origin; a line with a run of the second ink has its spans (see runs.ts). */
+  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[] }[];
   readonly size: number;
   readonly weight: number;
 }

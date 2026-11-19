@@ -209,6 +209,20 @@ test('contrast: a line, the letters of a text and a label are held too', async (
   assert.deepEqual(brief(await findings(make(tagged('light.cream', 'light.mint'), { nodes: ['tag'], lightness: 10, colour: 40 }))), ['tag letters against (its own box)']);
 });
 
+test('contrast: the runs of a second ink are held as a part of their own', async () => {
+  const strings = { en: { word: 'Word', dated: '2.0 · [Aug–Oct 2026]' } };
+  // A label: the runs lie on its box. A second ink in the colour of the box is found; the ink of the rest is not.
+  const tagged = (runInk: ColorRef): LayerSpec['nodes'] => [rect({ id: 'ground', at: [0, 0], w: 1800, h: 1000, fill: 'dark.indigo', lit: false, backdrop: true }), group({ id: 'spot', at: [-300, 200] }), label({ id: 'tag', text: 'dated', target: 'spot', fill: 'light.cream', ink: 'deep.night', runInk })];
+  assert.deepEqual(await findings(make(tagged('dark.indigo'), { nodes: ['tag'], ...ASKED }, [], { strings })), []);
+  assert.deepEqual(brief(await findings(make(tagged('light.mint'), { nodes: ['tag'], lightness: 10, colour: 40 }, [], { strings }))), ['tag run against (its own box)']);
+  // A text: the runs are probed along themselves, against what lies under them, or against its box.
+  const words = (runInk: ColorRef, box?: ColorRef): LayerSpec['nodes'] => [ground(), text({ id: 'word', text: 'dated', ink: 'light.cream', runInk, at: [0, 300], size: 80, ...(box ? { box } : {}) })];
+  assert.deepEqual(await findings(make(words('accent.amber'), { nodes: ['word'], ...ASKED }, [], { strings })), []);
+  assert.deepEqual(brief(await findings(make(words('dark.haze'), { nodes: ['word'], ...ASKED }, [], { strings }))), ['word run against ground']);
+  assert.deepEqual(brief(await findings(make(words('dark.haze', 'dark.indigo'), { nodes: ['word'], ...ASKED }, [], { strings }))), ['word run against (its own box)']);
+  assert.match((await findings(make(words('dark.haze'), { nodes: ['word'], ...ASKED }, [], { strings })))[0]!.detail, /the letters of its runs/);
+});
+
 test('contrast: the checks show it, an intended exception is honoured, and what a shot may not ask is refused', async () => {
   const nodes = [ground(), disc('hero', 'dark.indigo', [-300, 300]), disc('ghost', 'dark.plum', [300, 300])];
   const c = compileShot(make(nodes, { nodes: ['hero', 'ghost'], ...ASKED }, [], { intended: [intended('ghost', 'low-contrast', 'it is a ghost'), intended('hero', 'low-contrast', 'not at this time', { from: 10, to: 12 })] }));

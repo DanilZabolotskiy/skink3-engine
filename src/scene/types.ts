@@ -381,6 +381,11 @@ export interface TextNode extends NodeBase {
   /** Key into the shot's string tables. Never the text itself. */
   readonly text: string;
   readonly ink: ColorRef;
+  /**
+   * The ink of the runs its string marks with "[" and "]", in every language: they are drawn in this colour, the
+   * rest in `ink`. The marks are not drawn and take no room. Left out: a bracket is a bracket.
+   */
+  readonly runInk?: ColorRef;
   /** Preferred font size in units; the layout may go down to `minSize`. */
   readonly size: number;
   readonly minSize: number;
@@ -427,6 +432,11 @@ export interface LabelNode {
   readonly maxLines: number;
   readonly fill: ColorRef;
   readonly ink: ColorRef;
+  /**
+   * The ink of the runs its string marks with "[" and "]", in every language: they are drawn in this colour, the
+   * rest in `ink`. The marks are not drawn and take no room. Left out: a bracket is a bracket.
+   */
+  readonly runInk?: ColorRef;
   /** 0..1 at the start. */
   readonly opacity: number;
   readonly follow: SpringSpec | null;

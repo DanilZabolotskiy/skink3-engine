@@ -36,6 +36,7 @@ import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
 import { layoutText, type TextLayout } from '../text/layout.ts';
+import { parseRuns, runSpans, type RunSpan } from '../text/runs.ts';
 import { resolveString } from '../text/strings.ts';
 import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
@@ -511,8 +512,11 @@ export interface TextItem {
   readonly alpha: number;
   readonly block: TextBlock;
   readonly layout: TextLayout;
-  /** What is drawn at this frame: pieces of text, each with the x of its middle and the y of its baseline. For a counter: the line with its number as it is now. */
-  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number }[];
+  /**
+   * What is drawn at this frame: pieces of text, each with the x of its middle and the y of its baseline, and on a
+   * line with a run of the second ink its spans. For a counter: the line with its number as it is now.
+   */
+  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[] }[];
   /** A counter: the number it shows at this frame, as it is written. */
   readonly number?: string;
   /** How far its pops and its lasting size have grown it: 1 at its authored size. */
@@ -721,14 +725,18 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
   let hit = cache.get(key);
   if (!hit) {
     const node = n.node;
-    const layout = layoutText(resolveString(c.spec.strings, lang, node.text), {
+    const words = resolveString(c.spec.strings, lang, node.text);
+    // With a second ink the marks of the runs are taken out first: the label is laid out as the text without them.
+    const marked = node.runInk ? parseRuns(words) : null;
+    const layout = layoutText(marked ? marked.text : words, {
       size: node.size,
       minSize: node.minSize,
       weight: LABEL_PROPORTIONS.weight,
       maxWidth: node.maxWidth,
       maxLines: node.maxLines,
     });
-    hit = { layout, geometry: labelGeometry(layout, node.side) };
+    const geometry = labelGeometry(layout, node.side);
+    hit = { layout, geometry: marked ? { ...geometry, lines: withRuns(geometry.lines, runSpans(layout, marked)) } : geometry };
     cache.set(key, hit);
   }
   return hit;
@@ -754,6 +762,9 @@ export function textLayout(c: CompiledShot, n: CNode, lang: string): { layout: T
     const node = n.node;
     const style = { size: node.size, minSize: node.minSize, weight: node.weight, maxWidth: node.maxWidth, maxLines: node.maxLines };
     let words = resolveString(c.spec.strings, lang, node.text);
+    // With a second ink the marks of the runs are taken out first (a counter has none): it is laid out as the text without them.
+    const marked = node.runInk ? parseRuns(words) : null;
+    if (marked) words = marked.text;
     let widest: string | null = null;
     if (node.count && n.count) {
       // Every value the counter starts from or is sent to; what lies between them is never wider.
@@ -761,10 +772,16 @@ export function textLayout(c: CompiledShot, n: CNode, lang: string): { layout: T
       words = words.replace(COUNT_MARK, widest);
     }
     const layout = layoutText(words, style);
-    hit = { layout, block: textBlock(layout, node.align, node.box !== null), slot: widest === null ? null : countSlot(layout, widest) };
+    const block = textBlock(layout, node.align, node.box !== null);
+    hit = { layout, block: marked ? { ...block, lines: withRuns(block.lines, runSpans(layout, marked)) } : block, slot: widest === null ? null : countSlot(layout, widest) };
     cache.set(key, hit);
   }
   return hit;
+}
+
+/** The lines of a layout with the spans of their runs; a line without a run is left as it is. */
+function withRuns<L extends { readonly text: string }>(lines: readonly L[], spans: readonly (readonly RunSpan[])[]): L[] {
+  return lines.map((line, i) => (spans[i]!.length > 0 ? { ...line, runs: spans[i]! } : line));
 }
 
 /** Scale below which a node is treated as hidden. */

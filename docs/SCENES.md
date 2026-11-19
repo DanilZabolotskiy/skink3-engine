@@ -182,6 +182,7 @@ strings: {
 - Every key a scene uses must exist in **every** table, or `shot()` throws.
 - A render uses one language (`--lang`, default: the first table). Labels and texts size and wrap themselves to that language's string.
 - Lines break at spaces only. Right-to-left text and scripts that need shaping are not implemented yet.
+- **A run in a second ink** is marked in the string itself, `'2.0 · [Aug–Oct 2026]'`, for a label or a text with `runInk` (see A run in a second ink). Every language marks its own; for any other node `[` and `]` are ordinary characters.
 - Text never influences the bake: adding a language re-renders without re-baking.
 
 ### Fonts
@@ -818,7 +819,7 @@ cameraTo({ at: 1, zoom: 40, dur: 4 }),
 - In a plane of a perspective layer the width is held as the plane is seen at the place of the stroke; along a line that runs into the distance the perspective still narrows it.
 - The motion review reads the zoom on the camera: such a line has no width of its own that changes.
 
-### `label({ id, text, target, fill, ink, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
+### `label({ id, text, target, fill, ink, runInk?, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
 
 A rounded rectangle with a pointer tail aimed at `target`.
 
@@ -827,6 +828,7 @@ A rounded rectangle with a pointer tail aimed at `target`.
 | `text` | required | string-table **key** |
 | `target` | required | id of the node to point at; the label follows it |
 | `fill`, `ink` | required | box colour and text colour |
+| `runInk` | none | palette reference: the colour of the runs the string marks with `[` and `]` (see A run in a second ink) |
 | `side` | `'top'` | where the label sits relative to the target: `'top'`, `'bottom'`, `'left'`, `'right'` |
 | `gap` | `14` | distance from the target's edge to the tip of the tail |
 | `size` | `38` | preferred font size |
@@ -845,7 +847,28 @@ The layout wraps the string, balances the lines, and shrinks the font if needed.
 - A label and its target must be in the same layer.
 - A label over ground or a wall gives a covers-node warning unless that shape is marked `backdrop: true`.
 
-### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, count?, clipTo?, sound?, depth? })`
+#### A run in a second ink
+
+A part of the string drawn in another colour: the date after a value, the unit after a number, a word set apart. The string of the table marks it between `[` and `]`, so every language marks its own, where its words fall:
+
+```ts
+strings: {
+  en: { 'tag.now': '2.0 · [Aug–Oct 2026]', 'tag.peak': '[record] 2.4 · [1982–83]' },
+  de: { 'tag.now': '2,0 · [Aug.–Okt. 2026]', 'tag.peak': '[Rekord] 2,4 · [1982–83]' },
+},
+label({ id: 'now', text: 'tag.now', target: 'spot', fill: 'light.cream', ink: 'deep.night', runInk: 'dark.haze' }),
+text({ id: 'peak', text: 'tag.peak', ink: 'light.cream', runInk: 'mid.mist', at: [0, -400] }),
+```
+
+- **The marks only choose a colour.** They are taken out before the string is measured: the lines, the size, the box, the place of every glyph, the pop and the fade are those of the same label with the text `2.0 · Aug–Oct 2026`. A glyph is drawn in one ink, never parted; a run that a line break cuts goes on in the next line.
+- **A string may mark several runs,** and a run may be one character (`12[%]`). Runs do not nest. A space between a run and the words round it is drawn in neither ink, so it does not matter on which side of the bracket it stands.
+- **A node with `runInk` reads the marks; any other node draws a bracket as a bracket.** In a node with `runInk`, a bracket of the text itself cannot be written.
+- **The marks are held in every language when the shot is built:** a `[` never closed, a `]` that closes nothing, a run inside a run, an empty run, and a language whose string marks no run at all (a translation that lost its marks) throw, with the node, the key, the language, the string and the place of the mistake.
+- **The checks read the text without its marks:** the text fit sizes the string the viewer sees, and the glyph check holds the characters of the runs as well.
+- **The contrast review holds the runs as a part of their own** (`run`), against the box of the label or of the text, or against what lies under the letters of a text without a box.
+- A counter takes no `runInk`: its line is set anew at every value. Put the words of the second ink in a text of their own.
+
+### `text({ id, text, ink, runInk?, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, count?, clipTo?, sound?, depth? })`
 
 Free-standing text: a title, a caption, a source line in a corner, a quotation, words on a card. It is a block of lines without a pointer. A `label` points at a thing; a `text` belongs to the frame, or to the shape it lies on.
 
@@ -853,6 +876,7 @@ Free-standing text: a title, a caption, a source line in a corner, a quotation, 
 |---|---|---|
 | `text` | required | a key of the shot's string tables, never the words themselves |
 | `ink` | required | palette reference: the colour of the letters |
+| `runInk` | none | palette reference: the colour of the runs the string marks with `[` and `]` (see A run in a second ink) |
 | `at`, `rotation`, `scale`, `opacity` | `[0, 0]`, `0`, `1`, `1` | as for a shape |
 | `size`, `minSize` | `38`, 62 % of `size` | preferred and smallest font size, in units |
 | `maxWidth`, `maxLines` | `600`, `3` | the widest a line may get before the text wraps, and the most lines |
@@ -1506,7 +1530,7 @@ Other helpers a scene may call:
 |---|---|
 | palette | a rule that the palette declares for itself is broken (see Rules of a palette); a palette without rules has none to break |
 | strings | a used key is missing or empty in a language |
-| glyphs | a string that is used holds, in a language, a character that none of the bundled fonts has (see Fonts) |
+| glyphs | a string that is used holds, in a language, a character that none of the bundled fonts has (see Fonts); the marks of a run in a second ink are not characters of the text |
 | text fit: overflow | the string of a label or of a text does not fit its `maxWidth` and `maxLines` even at `minSize` |
 | text fit: off-frame | a shown label or text comes closer than 12 units to the frame edge at any sampled frame |
 | text fit: overlap | two shown labels or texts overlap at any sampled frame |
@@ -1616,7 +1640,7 @@ shot({
 | `seconds` | `0.5` | how long it has to last |
 
 - **A node blends** where it differs from what is seen beside it by less than `lightness` **and** by less than `colour`. Either difference alone tells two things apart: a light thing on a dark ground, or a red thing on a green ground of one lightness.
-- **What is behind** is what a viewer sees next to the outline of the node: the topmost thing drawn there, in its layer or in another, each in the haze of its depth; or the background of the frame, with its gradient and its vignette, as a `backgroundTo` has made it by then. A stroke and the letters of a text are held against what lies under them; letters on a box of their own, and the letters of a label, against that box. A label is held twice: its box against what is round it, its letters against its box.
+- **What is behind** is what a viewer sees next to the outline of the node: the topmost thing drawn there, in its layer or in another, each in the haze of its depth; or the background of the frame, with its gradient and its vignette, as a `backgroundTo` has made it by then. A stroke and the letters of a text are held against what lies under them; letters on a box of their own, and the letters of a label, against that box. A label is held twice: its box against what is round it, its letters against its box. The runs of a second ink (`runInk`) are held as a part of their own, `run`, against the same ground as the other letters.
 - **Only what is seen is judged:** not a node that is hidden or outside the frame, and not the part of its outline that something drawn later covers. A node that is not opaque shows its ground through itself, and is judged as it looks.
 - `skink3 check` prints the review after the other two (`contrast: ok (3 node(s) held: lightness 18, colour 24)`) and each finding as a warning of the kind `low-contrast`, with the share of the outline, the two colours, their two differences and the frames. Findings never fail the checks.
 - **To choose the thresholds,** `colourDistance(hexA, hexB)` returns `{ lightness, colour }` for two colours, and `resolveColor(palette, 'dark.ground')` the colour of a reference. Two neighbouring dark blues are about 3 and 16 apart; an amber accent on a dark ground about 60 and 130. Where the line runs between what must pass and what must not is the production's rule.

@@ -110,6 +110,19 @@ function wrap(words: readonly string[], size: number, weight: number, maxWidth: 
  */
 const BREAKABLE = /[ \t\n\r\f\v]+/;
 
+/** A word of the layout: what lies between two places where a line may break. */
+const WORD = /[^ \t\n\r\f\v]+/g;
+
+/**
+ * The words of a string as the layout takes them, in order, each with where
+ * it starts in the string (in UTF-16 units): the words of the trimmed string,
+ * cut where a line may break.
+ */
+export function wordsOf(text: string): { readonly word: string; readonly start: number }[] {
+  const lead = text.length - text.trimStart().length;
+  return [...text.trim().matchAll(WORD)].map((m) => ({ word: m[0], start: lead + m.index }));
+}
+
 /** Lays a string out within the style's limits, shrinking the font if it has to. */
 export function layoutText(text: string, style: TextStyle): TextLayout {
   const words = text.trim().split(BREAKABLE).filter((w) => w.length > 0);

@@ -6,8 +6,9 @@
 // the display list of a frame: what is drawn, in which order, in which colour.
 //
 // A named node is probed along its outline (a line and a text: along
-// themselves). At every probe the colour of the node is held against the
-// colour of what a viewer sees next to it there: the topmost thing drawn at
+// themselves; the runs of a second ink, `runInk`, as a part of their own).
+// At every probe the colour of the node is held against the colour of what
+// a viewer sees next to it there: the topmost thing drawn at
 // that place, or the background. The two blend when they differ by less than
 // `lightness` in CIE L* and by less than `colour` in the a*b* plane of CIELAB
 // (hue and saturation): either difference alone is enough to tell them apart.
@@ -45,8 +46,8 @@ export interface ContrastFinding {
   readonly kind: 'low-contrast';
   /** The node that blends. */
   readonly subject: string;
-  /** What of it: its outline, the line itself (a stroke), or its letters. */
-  readonly part: 'outline' | 'line' | 'letters';
+  /** What of it: its outline, the line itself (a stroke), its letters, or the letters of its runs in the second ink (runInk). */
+  readonly part: 'outline' | 'line' | 'letters' | 'run';
   /** First and last frame of the finding. */
   readonly from: number;
   readonly to: number;
@@ -237,7 +238,20 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
       const probes: Probe[] = [];
       for (const fy of [0.3, 0.7]) for (let k = 0; k < PROBES / 2; k++) probes.push({ at: screen(xfApply(item.xf, [b.x + (b.w * (k + 0.5)) / (PROBES / 2), b.y + b.h * fy])), inner: null });
       const box = item.node.colors['box'];
-      return [{ part: 'letters', color: tone(item.node.colors['ink']!), probes, mode: 'on', ground: box ? tone(box) : null }];
+      const letters: Held = { part: 'letters', color: tone(item.node.colors['ink']!), probes, mode: 'on', ground: box ? tone(box) : null };
+      const runInk = item.node.colors['runInk'];
+      if (!runInk) return [letters];
+      // The runs are probed along themselves, half way up their letters.
+      const runProbes: Probe[] = [];
+      const spans = item.lines.flatMap((line) => (line.runs ?? []).map((span) => ({ line, span })));
+      const each = Math.max(1, Math.ceil(PROBES / Math.max(1, spans.length)));
+      for (const { line, span } of spans) {
+        for (let k = 0; k < each; k++) {
+          const x = line.x + span[0] + ((span[1] - span[0]) * (k + 0.5)) / each;
+          runProbes.push({ at: screen(xfApply(item.xf, [x, line.y - item.layout.capHeight / 2])), inner: null });
+        }
+      }
+      return [letters, { part: 'run', color: tone(runInk), probes: runProbes, mode: 'on', ground: letters.ground }];
     }
     case 'label': {
       const g = item.geometry.box;
@@ -249,10 +263,14 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
       for (let k = 0; k < 8; k++) ring.push(corner(1 - k / 8, 1));
       for (let k = 0; k < 8; k++) ring.push(corner(0, 1 - k / 8));
       const fill = tone(item.node.colors['fill']!);
-      return [
+      const held: Held[] = [
         { part: 'outline', color: fill, probes: edgeProbes(ring, PROBES), mode: 'edge', ground: null },
         { part: 'letters', color: tone(item.node.colors['ink']!), probes: [{ at: corner(0.5, 0.5), inner: null }], mode: 'on', ground: fill },
       ];
+      // The letters of its runs lie on its box as well.
+      const runInk = item.node.colors['runInk'];
+      if (runInk) held.push({ part: 'run', color: tone(runInk), probes: [{ at: corner(0.5, 0.5), inner: null }], mode: 'on', ground: fill });
+      return held;
     }
     default:
       return [];
@@ -397,7 +415,7 @@ export function reviewContrast(c: CompiledShot, bake: Bake, opts: { lang?: strin
         if ((to - from + 1) / FPS >= asked.seconds) {
           const worst = run.reduce((a, s) => (s.share > a.share ? s : a));
           const d = colourDistance(worst.own, worst.behind);
-          const what = part === 'outline' ? 'its outline' : part === 'line' ? 'the line' : 'its letters';
+          const what = part === 'outline' ? 'its outline' : part === 'line' ? 'the line' : part === 'run' ? 'the letters of its runs' : 'its letters';
           const where = worst.against === '(background)' ? 'the background' : worst.against === '(its own box)' ? 'its own box' : `"${worst.against}"`;
           all.push({
             kind: 'low-contrast',

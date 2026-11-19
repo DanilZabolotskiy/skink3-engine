@@ -21,6 +21,7 @@ import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHA
 import { shapePath } from '../shape/path.ts';
 import { PLANE_NEAR_W0, planeCanvas } from './plane.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
+import { splitRuns, type RunSpan } from '../text/runs.ts';
 
 export type ToneKind = 'base' | 'shadow1' | 'shadow2' | 'shadow3' | 'rim' | 'highlight' | 'glow' | 'pulse' | 'pulseHead';
 
@@ -1172,6 +1173,48 @@ function textPath(ctx: CanvasRenderingContext2D, text: string, size: number, wei
   return p;
 }
 
+const runPathCache = new Map<string, { plain: Path2D | null; run: Path2D | null }>();
+
+/**
+ * The lines of a text or a label whose node has a second ink. A line with a run is its one outline cut glyph by glyph
+ * into what is in the run and what is not, each filled in its ink, so every glyph stands where the plain line has it.
+ */
+function fillRunLines(
+  ctx: CanvasRenderingContext2D,
+  lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[] }[],
+  size: number,
+  weight: number,
+  ink: string,
+  runInk: string,
+): void {
+  for (const line of lines) {
+    const p = textPath(ctx, line.text, size, weight);
+    if (!p) continue;
+    ctx.save();
+    ctx.translate(line.x, line.y);
+    if (!line.runs) {
+      ctx.fillStyle = ink;
+      ctx.fill(p);
+    } else {
+      const key = `${weight}|${size}|${line.runs.map((r) => r.join(',')).join(';')}|${line.text}`;
+      let parts = runPathCache.get(key);
+      if (!parts) {
+        parts = splitRuns(p, line.runs);
+        runPathCache.set(key, parts);
+      }
+      if (parts.plain) {
+        ctx.fillStyle = ink;
+        ctx.fill(parts.plain);
+      }
+      if (parts.run) {
+        ctx.fillStyle = runInk;
+        ctx.fill(parts.run);
+      }
+    }
+    ctx.restore();
+  }
+}
+
 /** Free-standing text: its box, if it has one, and its lines, placed, turned and scaled as its node is. */
 export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: Paint): void {
   const b = item.block;
@@ -1183,6 +1226,12 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: P
   if (b.path) {
     ctx.fillStyle = paint.tone('base', item.node.colors['box']!);
     ctx.fill(b.path);
+  }
+  const runInk = item.node.colors['runInk'];
+  if (runInk) {
+    fillRunLines(ctx, item.lines, b.size, b.weight, paint.tone('base', item.node.colors['ink']!), paint.tone('base', runInk));
+    ctx.restore();
+    return;
   }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
   for (const line of item.lines) {
@@ -1207,6 +1256,12 @@ export function drawLabel(ctx: CanvasRenderingContext2D, item: LabelItem, paint:
   ctx.scale(item.scale, item.scale);
   ctx.fillStyle = paint.tone('base', item.node.colors['fill']!);
   ctx.fill(g.path);
+  const runInk = item.node.colors['runInk'];
+  if (runInk) {
+    fillRunLines(ctx, g.lines, g.size, g.weight, paint.tone('base', item.node.colors['ink']!), paint.tone('base', runInk));
+    ctx.restore();
+    return;
+  }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
   for (const line of g.lines) {
     const p = textPath(ctx, line.text, g.size, g.weight);

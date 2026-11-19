@@ -5,6 +5,7 @@ import { Path2D } from 'skia-canvas';
 import type { LabelSide } from '../scene/types.ts';
 import { roundPath, unionPath } from '../shape/path.ts';
 import type { TextLayout } from './layout.ts';
+import type { RunSpan } from './runs.ts';
 
 /** Label proportions as multiples of the font size actually used. */
 export const LABEL_PROPORTIONS = {
@@ -21,8 +22,8 @@ export interface LabelGeometry {
   readonly box: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
   /** Box and tail as one outline. */
   readonly path: Path2D;
-  /** Centre x and baseline y of each line, relative to the tip. */
-  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number }[];
+  /** Centre x and baseline y of each line, relative to the tip; a line with a run of the second ink has its spans (see runs.ts). */
+  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[] }[];
   readonly size: number;
   readonly weight: number;
 }

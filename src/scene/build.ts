@@ -828,6 +828,8 @@ export function label(o: {
   target: string;
   fill: ColorRef;
   ink: ColorRef;
+  /** The ink of the runs its string marks with "[" and "]"; default none: a bracket is a bracket. */
+  runInk?: ColorRef;
   /** Default "top". */
   side?: LabelSide;
   /** Default 14. */
@@ -847,7 +849,7 @@ export function label(o: {
   sound?: string;
 }): LabelNode {
   const where = `label("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow', 'sound']);
+  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'runInk', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow', 'sound']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "label.core", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
@@ -856,6 +858,7 @@ export function label(o: {
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 400);
   return {
     ...voice(where, o.sound),
+    ...(o.runInk === undefined ? {} : { runInk: color(where, 'runInk', o.runInk) }),
     type: 'label',
     id: idOf(where, o.id),
     text: o.text,
@@ -886,6 +889,8 @@ export function text(o: {
   /** String-table key, e.g. "title.main". */
   text: string;
   ink: ColorRef;
+  /** The ink of the runs its string marks with "[" and "]"; default none: a bracket is a bracket. Not on a counter. */
+  runInk?: ColorRef;
   /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
   at?: Vec2 | Vec3;
   /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
@@ -919,7 +924,7 @@ export function text(o: {
   sound?: string;
 }): TextNode {
   const where = `text("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'count', 'clipTo', 'sound', 'depth']);
+  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'runInk', 'count', 'clipTo', 'sound', 'depth']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "title.main", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
@@ -936,12 +941,15 @@ export function text(o: {
       if (!Number.isInteger(decimals)) fail(where, `count.decimals must be a whole number, got ${decimals}`);
       count = { from: num(where, 'count.from', o.count.from, -1e15, 1e15), decimals };
     }
+    // The line of a counter is set anew for every number it shows, piece by piece; a run has no place in it.
+    if (o.runInk !== undefined) fail(where, 'a counter takes no runInk: its number is set anew at every value. Put the words of the second ink in a text of their own');
   }
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(count === undefined ? {} : { count }),
     ...order(where, o.depth),
     ...voice(where, o.sound),
+    ...(o.runInk === undefined ? {} : { runInk: color(where, 'runInk', o.runInk) }),
     type: 'text',
     id: idOf(where, o.id),
     text: o.text,

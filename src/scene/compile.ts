@@ -82,7 +82,8 @@ import { buildFillTrack, type FillTrack } from './fill.ts';
 import type { FormTrack } from './form.ts';
 import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
 import { buildPerspTrack, type PerspTrack } from './space.ts';
-import { resolveString } from '../text/strings.ts';
+import { parseRuns, RUN_CLOSE, RUN_OPEN, RunMarkupError } from '../text/runs.ts';
+import { resolveString, type StringTables } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_MAX_WIDTH, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
 export class CompileError extends Error {}
@@ -719,6 +720,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
             fail(`${where}: text "${node.id}" is a counter: its string "${node.text}" [${lang}] must hold ${COUNT_MARK} once, where the number goes; it is ${JSON.stringify(words)}`);
           }
         }
+        if (node.runInk) {
+          colors['runInk'] = col(node, 'runInk', node.runInk);
+          markedRuns(spec.strings, `${where}: text "${node.id}"`, node.text);
+        }
         stringKeys.add(node.text);
         break;
       case 'link':
@@ -738,6 +743,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           } catch (e) {
             fail(`${where}: label "${node.id}": ${(e as Error).message}`);
           }
+        }
+        if (node.runInk) {
+          colors['runInk'] = col(node, 'runInk', node.runInk);
+          markedRuns(spec.strings, `${where}: label "${node.id}"`, node.text);
         }
         stringKeys.add(node.text);
         if (node.follow) {
@@ -1064,6 +1073,24 @@ function detailLevels(nodes: readonly CNode[]): number[] | null {
 /** The name the camera of a perspective layer has in the motion review, and in intended(). */
 export function perspectiveSubject(layerId: string): string {
   return `(perspective:${layerId})`;
+}
+
+/**
+ * A node with a second ink marks its runs in its string, in every language: the marks must be sound, and every
+ * language must mark at least one run, or a translation that lost its marks would be drawn in one ink unseen.
+ */
+function markedRuns(tables: StringTables, what: string, key: string): void {
+  for (const lang of Object.keys(tables)) {
+    const words = resolveString(tables, lang, key);
+    let runs: number;
+    try {
+      runs = parseRuns(words).runs.length;
+    } catch (e) {
+      if (!(e instanceof RunMarkupError)) throw e;
+      return fail(`${what} has runInk: its string "${key}" [${lang}] is ${JSON.stringify(words)}, and ${e.message}. Mark a run as ${RUN_OPEN}words${RUN_CLOSE}; a bracket of the text cannot be written in a node with runInk`);
+    }
+    if (runs === 0) fail(`${what} has runInk, but its string "${key}" [${lang}] marks no run: ${JSON.stringify(words)}. Mark what the second ink draws as ${RUN_OPEN}words${RUN_CLOSE} in every language, or leave runInk out`);
+  }
 }
 
 /** The track of a counter; a key that cannot be is reported as a mistake of the shot. */
