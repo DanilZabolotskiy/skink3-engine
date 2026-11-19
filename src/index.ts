@@ -31,6 +31,11 @@ export type {
   EyeNode,
   GroupNode,
   HazeSpec,
+  RoofSpec,
+  RoofKind,
+  OpeningsSpec,
+  CastSpec,
+  DetailSpec,
   IdleSpec,
   IntendedSpec,
   LabelNode,
@@ -58,7 +63,7 @@ export { ease, EASINGS, type EaseName } from './core/easing.ts';
 // --- Tools: compile, bake, evaluate, check, render -------------------------
 export { compileShot, defaultTint, CompileError, type CompiledShot, type CNode, type CLayer } from './scene/compile.ts';
 export { evaluate, computeWorld, flatItems, labelLayout, posesFromBake, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
-export { levelGeometry, type ClipItem, type LevelGeometry, type ShapeItem, type StretchItem } from './scene/evaluate.ts';
+export { levelGeometry, type CastItem, type CastShadow, type ClipItem, type LevelGeometry, type ShapeItem, type StretchItem, type StrokeItem, type Worth } from './scene/evaluate.ts';
 export { drawOrder, newPlaces, seenThrough, type Places, type PlaneItem } from './scene/evaluate.ts';
 export { eyeOf, perspAt, planeMap, planePoint, project, type Eye, type PerspSpec, type PlaneAxes, type PlaneMap } from './scene/space.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';

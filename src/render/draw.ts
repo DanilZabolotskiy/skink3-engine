@@ -6,20 +6,23 @@
 // compositor fades the whole group as one picture.
 
 import { Path2D, type CanvasRenderingContext2D } from 'skia-canvas';
-import { quadAt, TAU, vrot, type Quad, type Vec2 } from '../core/math.ts';
-import { atmosphereTone, HIGHLIGHT_HUE, lightTone, SHADOW_HUE, shadowTone, withAlpha } from '../look/color.ts';
+import { quadAt, TAU, vrot, type Quad, type Vec2, type Xf } from '../core/math.ts';
+import { atmosphereTone, HIGHLIGHT_HUE, lightTone, mix, SHADOW_HUE, shadowTone, withAlpha } from '../look/color.ts';
 import { litParts } from '../look/light.ts';
 import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE } from '../physics/cache.ts';
-import { pathAt, pathTable } from '../motion/paths.ts';
-import { itemFill, itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
-import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
-import { cornerOutline, shapeExtent } from '../shape/geometry.ts';
+import { pathAt, pathTable, type PathTable } from '../motion/paths.ts';
+import type { CNode } from '../scene/compile.ts';
+import { itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode, StrokeNode } from '../scene/types.ts';
+import { cornerOutline, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
+import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf } from '../shape/solid.ts';
 import { shapePath } from '../shape/path.ts';
+import { PLANE_NEAR_W0, planeCanvas } from './plane.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 
-export type ToneKind = 'base' | 'shadow1' | 'shadow2' | 'rim' | 'highlight' | 'glow' | 'pulse' | 'pulseHead';
+export type ToneKind = 'base' | 'shadow1' | 'shadow2' | 'shadow3' | 'rim' | 'highlight' | 'glow' | 'pulse' | 'pulseHead';
 
 const DEFAULT_HUES: ToneHues = { shadow: SHADOW_HUE, highlight: HIGHLIGHT_HUE };
 
@@ -28,6 +31,7 @@ function derive(kind: ToneKind, hex: string, hues: ToneHues): string {
     case 'base': return hex;
     case 'shadow1': return shadowTone(hex, 1, hues.shadow);
     case 'shadow2': return shadowTone(hex, 2, hues.shadow);
+    case 'shadow3': return shadowTone(hex, 3, hues.shadow);
     case 'rim': return lightTone(hex, 0.36, hues.highlight);
     case 'highlight': return lightTone(hex, 0.7, hues.highlight);
     case 'glow': return lightTone(hex, 0.22, hues.highlight);
@@ -169,6 +173,428 @@ function fillSide(ctx: CanvasRenderingContext2D, item: ShapeItem, foot: Foot, pa
   ctx.restore();
 }
 
+/** What a path is traced on: a path of its own, or the current path of a canvas. */
+interface Tracer {
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  closePath(): void;
+}
+
+/**
+ * Where the pieces of a body are filled: the context the body is drawn with, the canvas under it, and, in a plane,
+ * the weight a point (x, y) of the space the pieces are traced in has there: x * wx + y * wy + w0 (see plane.ts).
+ * No weight: the canvas draws no plane.
+ */
+interface Easel {
+  readonly ctx: CanvasRenderingContext2D;
+  readonly raw: CanvasRenderingContext2D;
+  readonly wx: number;
+  readonly wy: number;
+  readonly w0: number;
+  readonly plane: boolean;
+}
+
+/** The easel of a context, for pieces traced in the space the context is in now. */
+function easelOf(ctx: CanvasRenderingContext2D): Easel {
+  const plane = planeCanvas(ctx);
+  if (!plane) return { ctx, raw: ctx, wx: 0, wy: 0, w0: 1, plane: false };
+  const t = plane.transform();
+  return { ctx, raw: plane.raw, wx: t.m14, wy: t.m24, w0: t.m44, plane: true };
+}
+
+/** The easel for pieces traced in the own space of an item, once the canvas under `easel` has been moved there. */
+function easelAt(easel: Easel, xf: Xf): Easel {
+  if (!easel.plane) return easel;
+  const cos = Math.cos(xf.rot) * xf.scale;
+  const sin = Math.sin(xf.rot) * xf.scale;
+  return { ...easel, wx: easel.wx * cos + easel.wy * sin, wy: easel.wy * cos - easel.wx * sin, w0: easel.wx * xf.x + easel.wy * xf.y + easel.w0 };
+}
+
+/** The current path of a canvas, with the least weight of the points traced on it. One is enough: no two paths are traced at once. */
+const weighed = {
+  raw: null as CanvasRenderingContext2D | null,
+  wx: 0,
+  wy: 0,
+  w0: 1,
+  least: Infinity,
+  moveTo(x: number, y: number): void {
+    const w = x * this.wx + y * this.wy + this.w0;
+    if (w < this.least) this.least = w;
+    this.raw!.moveTo(x, y);
+  },
+  lineTo(x: number, y: number): void {
+    const w = x * this.wx + y * this.wy + this.w0;
+    if (w < this.least) this.least = w;
+    this.raw!.lineTo(x, y);
+  },
+  closePath(): void {
+    this.raw!.closePath();
+  },
+};
+
+/**
+ * Fills what `trace` draws, in the fill style of the canvas. The pieces of a body are many and small, and the canvas
+ * takes its own current path far faster than a path it is handed: in a plane each point is mapped as it is added, and
+ * the path is filled as it lies on the canvas, not through the perspective. Only a path with a point where the plane
+ * passes the camera is traced again as a path of its own, which skia cuts there.
+ */
+function fillTraced(easel: Easel, trace: (to: Tracer) => void): void {
+  const { raw } = easel;
+  raw.beginPath();
+  if (!easel.plane) {
+    trace(raw);
+    raw.fill();
+    return;
+  }
+  weighed.raw = raw;
+  weighed.wx = easel.wx;
+  weighed.wy = easel.wy;
+  weighed.w0 = easel.w0;
+  weighed.least = Infinity;
+  trace(weighed);
+  weighed.raw = null;
+  if (weighed.least >= PLANE_NEAR_W0) {
+    raw.fill();
+    return;
+  }
+  raw.beginPath();
+  const path = new Path2D();
+  trace(path);
+  easel.ctx.fill(path);
+}
+
+/** Traces closed outlines, each a list of x and y pairs. */
+function traceOutlines(to: Tracer, outlines: readonly ArrayLike<number>[]): void {
+  for (const o of outlines) {
+    if (o.length < 6) continue;
+    to.moveTo(o[0]!, o[1]!);
+    for (let i = 2; i < o.length; i += 2) to.lineTo(o[i]!, o[i + 1]!);
+    to.closePath();
+  }
+}
+
+/**
+ * The side of a body of a group that says what detail its bodies are worth, in one flat tone. It covers what fillSide
+ * covers, with far fewer pieces: of the outline, only the corners that can be told on screen at the size of the body.
+ *
+ * A body without a bay is one outline: its foot where its side is turned to the viewer, its top elsewhere. Any other
+ * body is its top and, under each run of the outline that is turned to the viewer, one strip down to the foot; every
+ * piece winds as the top does, so together they are filled whole.
+ */
+function fillSideRuns(ctx: CanvasRenderingContext2D, item: ShapeItem, foot: Foot, unit: number, paint: Paint): void {
+  // A foot behind the eye of the camera: the side as it is drawn anywhere.
+  if (!(foot.k > 0)) return fillSide(ctx, item, foot, paint);
+  const { xf } = item;
+  const ring = sideRing(itemShape(item), unit);
+  const pts = ring.points;
+  const n = pts.length;
+  const runs = seenRuns(ring, foot);
+  // Seen from straight above, the whole side lies behind the top.
+  if (runs.length === 0) return;
+  const cos = Math.cos(xf.rot) * xf.scale;
+  const sin = Math.sin(xf.rot) * xf.scale;
+  const easel = easelOf(ctx);
+  easel.raw.fillStyle = sideTone(item.node.colors, itemFill(item), paint);
+  if (ring.convex && runs.length === 2) {
+    const first = runs[0]!;
+    const len = runs[1]!;
+    fillTraced(easel, (to) => {
+      // The foot along the run; then, unless the run goes all the way round, the top from its end on to its start.
+      for (let j = 0; j <= len && j < n; j++) {
+        const p = pts[(first + j) % n]!;
+        const x = foot.k * p[0] + foot.x;
+        const y = foot.k * p[1] + foot.y;
+        if (j === 0) to.moveTo(xf.x + x * cos - y * sin, xf.y + x * sin + y * cos);
+        else to.lineTo(xf.x + x * cos - y * sin, xf.y + x * sin + y * cos);
+      }
+      for (let j = len; j <= n && len < n; j++) {
+        const p = pts[(first + j) % n]!;
+        to.lineTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+      }
+      to.closePath();
+    });
+    return;
+  }
+  fillTraced(easel, (to) => {
+    // The top itself: the strips end at its outline, and nothing may show between them and the top drawn over them.
+    for (let i = 0; i < n; i++) {
+      const p = pts[i]!;
+      if (i === 0) to.moveTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+      else to.lineTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+    }
+    to.closePath();
+    // The strips: back along the top of a run, then forth along its foot.
+    for (let r = 0; r < runs.length; r += 2) {
+      const first = runs[r]!;
+      const len = runs[r + 1]!;
+      for (let j = len; j >= 0; j--) {
+        const p = pts[(first + j) % n]!;
+        if (j === len) to.moveTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+        else to.lineTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+      }
+      for (let j = 0; j <= len; j++) {
+        const p = pts[(first + j) % n]!;
+        const x = foot.k * p[0] + foot.x;
+        const y = foot.k * p[1] + foot.y;
+        to.lineTo(xf.x + x * cos - y * sin, xf.y + x * sin + y * cos);
+      }
+      to.closePath();
+    }
+  });
+}
+
+/** A body too small for its detail: its top alone, in its fill, with the corners that can be told at its size. */
+function fillPlain(ctx: CanvasRenderingContext2D, item: ShapeItem, unit: number, paint: Paint): void {
+  const { xf } = item;
+  const pts = sideRing(itemShape(item), unit).points;
+  const cos = Math.cos(xf.rot) * xf.scale;
+  const sin = Math.sin(xf.rot) * xf.scale;
+  const easel = easelOf(ctx);
+  easel.raw.fillStyle = paint.tone('base', itemFill(item));
+  fillTraced(easel, (to) => {
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i]!;
+      if (i === 0) to.moveTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+      else to.lineTo(xf.x + p[0] * cos - p[1] * sin, xf.y + p[0] * sin + p[1] * cos);
+    }
+    to.closePath();
+  });
+}
+
+/** The height of a body at its highest: the rise it was given, or the highest a riseTo takes it to. */
+function fullRise(n: CNode): number {
+  let full = n.rise ? n.rise.base : 0;
+  for (const s of n.rise?.segs ?? []) full = Math.max(full, s.to);
+  return full;
+}
+
+/**
+ * Traces the openings of the side of a body, in the units of its top: on every face that is turned to the viewer,
+ * each row as far as the body is high at this frame.
+ */
+function traceOpenings(to: Tracer, shape: ShapeSpec, o: OpeningsSpec, foot: Foot, full: number, turned: boolean): void {
+  const rows = openingRows(o, full);
+  for (const col of openingColumns(shape, o)) {
+    // A face is seen when its foot is drawn on the outward side of its top.
+    const f = upright(foot, col.mx, col.my, 0);
+    const seen = (f[0] - col.mx) * col.nx + (f[1] - col.my) * col.ny;
+    if (turned ? seen >= 0 : seen <= 0) continue;
+    const m = col.across.length / 3;
+    for (const row of rows) {
+      if (foot.h - row.foot <= 1e-6 || row.head - row.foot <= 1e-6) continue;
+      for (let j = 0; j < m; j++) {
+        const q = upright(foot, col.across[3 * j]!, col.across[3 * j + 1]!, row.foot);
+        if (j === 0) to.moveTo(q[0], q[1]);
+        else to.lineTo(q[0], q[1]);
+      }
+      // The head, back again: straight, or the half circle of an arch. The top of the wall cuts what would stand over it.
+      const round = o.shape === 'arch' ? Math.min(o.width / 2, row.head - row.foot) : 0;
+      for (let j = m - 1; j >= 0; j--) {
+        const off = 2 * col.across[3 * j + 2]! - 1;
+        const z = Math.min(foot.h, row.head - round + round * Math.sqrt(Math.max(0, 1 - off * off)));
+        const q = upright(foot, col.across[3 * j]!, col.across[3 * j + 1]!, z);
+        to.lineTo(q[0], q[1]);
+      }
+      to.closePath();
+    }
+  }
+}
+
+/** The corners of the faces of a roof are drawn on a grid of this many steps to a unit of the layer. */
+const ROOF_GRID = 4096;
+
+/** A flat slope takes one of this many tones between two tones of the light: as a body or the camera turns, its tone turns with it and never jumps. */
+const SHADE_STEPS = 8;
+
+const shadeCache = new WeakMap<Paint, Map<string, string>>();
+
+/** The tone of a roof at a step of the scale of SHADES (SHADE_STEPS to each tone of the light). */
+function shadeTone(paint: Paint, fill: string, step: number): string {
+  const lower = Math.min(SHADES.length - 1, Math.floor(step / SHADE_STEPS));
+  const share = step / SHADE_STEPS - lower;
+  if (share <= 0) return paint.tone(SHADES[lower]!, fill);
+  let cache = shadeCache.get(paint);
+  if (!cache) {
+    cache = new Map();
+    shadeCache.set(paint, cache);
+  }
+  const key = `${step}${fill}`;
+  let tone = cache.get(key);
+  if (!tone) {
+    tone = mix(paint.tone(SHADES[lower]!, fill), paint.tone(SHADES[lower + 1]!, fill), share);
+    // A fill that changes gives every frame colours of its own: the cache is emptied before it grows without end.
+    if (cache.size >= 4096) cache.clear();
+    cache.set(key, tone);
+  }
+  return tone;
+}
+
+/**
+ * The roof of a body, in the units of its top: every face of it that is turned to the viewer. Its slopes are the
+ * fill in the tones of the light, by the way they look; its upright ends are the side of the body. A flat slope has
+ * one tone; a round roof has the tones of the light side by side, and they meet along smooth lines.
+ */
+function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpec, foot: Foot, paint: Paint, turned: boolean): void {
+  const light = vrot(paint.light, -item.xf.rot);
+  const view = viewOf(foot);
+  const top = highest(foot);
+  // The slopes that are seen, by tone: the outlines of each tone are one path. All of them are also one path in the
+  // first of the tones, filled first, so that nothing shows between two tones.
+  const tones = new Map<number, number[][]>();
+  const slopes: number[][] = [];
+  const walls: number[][] = [];
+  let first = -1;
+  // Corners are drawn on a grid far finer than a pixel. Where many faces meet (the top of a dome), their corners differ
+  // by the last digits of the arithmetic, and a path with a crowd of such points is not filled at all.
+  const grid = ROOF_GRID * Math.max(item.xf.scale, 1e-9);
+  const outline = (q: readonly number[], stride: number): number[] => {
+    let px = Math.round(q[0]! * grid) / grid;
+    let py = Math.round(q[1]! * grid) / grid;
+    const out = [px, py];
+    for (let j = stride; j < q.length; j += stride) {
+      const x = Math.round(q[j]! * grid) / grid;
+      const y = Math.round(q[j + 1]! * grid) / grid;
+      // Two corners of a face may be one point (the top of a cone): it is drawn once.
+      if (x === px && y === py) continue;
+      out.push(x, y);
+      px = x;
+      py = y;
+    }
+    return out;
+  };
+  const toned = (step: number, o: number[]): void => {
+    if (first < 0) first = step;
+    // The first tone lies under all the slopes already.
+    if (step === first) return;
+    const list = tones.get(step);
+    if (list) list.push(o);
+    else tones.set(step, [o]);
+  };
+  const q: number[] = [];
+  for (const face of roofFaces(shape, roof)) {
+    const m = face.points.length / 3;
+    q.length = 0;
+    for (let j = 0; j < m; j++) {
+      const p = upright(foot, face.points[3 * j]!, face.points[3 * j + 1]!, Math.min(top, foot.h + face.points[3 * j + 2]!));
+      q.push(p[0], p[1]);
+    }
+    // Seen from outside a face runs clockwise on screen; one that runs the other way shows its back.
+    let area = 0;
+    for (let j = 0; j < m; j++) {
+      const k = (j + 1) % m;
+      area += q[2 * j]! * q[2 * k + 1]! - q[2 * k]! * q[2 * j + 1]!;
+    }
+    if (turned ? area >= 0 : area <= 0) continue;
+    const whole = outline(q, 2);
+    if (face.wall) {
+      walls.push(whole);
+      continue;
+    }
+    slopes.push(whole);
+    const ways = face.normals;
+    if (!ways) {
+      toned(Math.round(shadeOf(face.normal[0], face.normal[1], face.normal[2], light, view) * SHADE_STEPS), whole);
+      continue;
+    }
+    // A face of a round roof: its corners are lit each by itself, and it is cut where one tone ends and the next starts.
+    const corners: number[] = [];
+    let least = Infinity;
+    let most = -Infinity;
+    for (let j = 0; j < m; j++) {
+      const shade = shadeOf(ways[3 * j]!, ways[3 * j + 1]!, ways[3 * j + 2]!, light, view);
+      corners.push(q[2 * j]!, q[2 * j + 1]!, shade);
+      least = Math.min(least, shade);
+      most = Math.max(most, shade);
+    }
+    for (let s = Math.round(least); s <= Math.round(most); s++) {
+      const part = s === Math.round(least) && s === Math.round(most) ? corners : between(corners, s - 0.5, s + 0.5);
+      if (part.length >= 9) toned(s * SHADE_STEPS, outline(part, 3));
+    }
+  }
+  const fill = itemFill(item);
+  const { raw } = easel;
+  if (walls.length > 0) {
+    raw.fillStyle = sideTone(item.node.colors, fill, paint);
+    fillTraced(easel, (to) => traceOutlines(to, walls));
+  }
+  if (slopes.length > 0) {
+    raw.fillStyle = shadeTone(paint, fill, first);
+    fillTraced(easel, (to) => traceOutlines(to, slopes));
+  }
+  for (const [step, list] of tones) {
+    raw.fillStyle = shadeTone(paint, fill, step);
+    fillTraced(easel, (to) => traceOutlines(to, list));
+  }
+}
+
+/**
+ * What a body carries beside its plain side and its flat top: the openings of its side, and its roof. True when it
+ * has a roof: that stands in place of the flat top.
+ */
+function fillSolid(ctx: CanvasRenderingContext2D, item: ShapeItem, foot: Foot, paint: Paint): boolean {
+  const node = item.node.node as ShapeNode;
+  if (!node.openings && !node.roof) return false;
+  const { xf } = item;
+  const shape = itemShape(item);
+  // Seen from behind its plane a body shows its other faces.
+  const turned = foot.uh < 0;
+  const easel = easelAt(easelOf(ctx), xf);
+  const { raw } = easel;
+  raw.save();
+  raw.translate(xf.x, xf.y);
+  raw.rotate(xf.rot);
+  raw.scale(xf.scale, xf.scale);
+  if (node.openings) {
+    const o = node.openings;
+    const colors = item.node.colors;
+    const full = fullRise(item.node);
+    raw.fillStyle = colors['openings'] ? paint.tone('base', colors['openings']) : colors['side'] ? paint.tone('shadow2', colors['side']) : paint.tone('shadow3', itemFill(item));
+    fillTraced(easel, (to) => traceOpenings(to, shape, o, foot, full, turned));
+  }
+  if (node.roof) fillRoof(easel, item, shape, node.roof, foot, paint, turned);
+  raw.restore();
+  return node.roof !== undefined;
+}
+
+/** The shadows of the bodies of a group, in the colour of its cast. The group around the item makes one picture of them. */
+export function drawCast(ctx: CanvasRenderingContext2D, item: CastItem, paint: Paint): void {
+  const tone = paint.tone('base', item.node.colors['cast']!);
+  const trace = (path: Path2D, outlines: readonly ArrayLike<number>[]): void => {
+    for (const o of outlines) {
+      if (o.length < 6) continue;
+      path.moveTo(o[0]!, o[1]!);
+      for (let i = 2; i < o.length; i += 2) path.lineTo(o[i]!, o[i + 1]!);
+      path.closePath();
+    }
+  };
+  ctx.save();
+  ctx.fillStyle = tone;
+  ctx.strokeStyle = tone;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // The bodies that are wholly there share one path: where their shadows meet they are one shadow.
+  let plain: Path2D | null = null;
+  for (const s of item.shadows) {
+    if (s.width === 0 && s.alpha >= 0.998) {
+      trace((plain ??= new Path2D()), s.outlines);
+      continue;
+    }
+    const path = new Path2D();
+    trace(path, s.outlines);
+    ctx.globalAlpha = Math.min(1, s.alpha);
+    ctx.fill(path);
+    if (s.width > 0) {
+      ctx.lineWidth = s.width;
+      ctx.stroke(path);
+    }
+  }
+  if (plain) {
+    ctx.globalAlpha = 1;
+    ctx.fill(plain);
+  }
+  ctx.restore();
+}
+
 /**
  * Fills the outline things are clipped to (for a content with a level, its filled part) with the fill the context has:
  * the mask of a clip with a soft edge.
@@ -187,7 +613,16 @@ export function fillClipShape(ctx: CanvasRenderingContext2D, item: ClipItem): vo
 /** A shape with its automatic light. A content with a level is drawn below its surface only; a body that stands up, over its side. */
 export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
   if (!item.level) {
-    if (item.foot) fillSide(ctx, item, item.foot, paint);
+    if (item.detail?.plain) {
+      fillPlain(ctx, item, item.detail.unit, paint);
+      return;
+    }
+    if (item.foot) {
+      if (item.detail) fillSideRuns(ctx, item, item.foot, item.detail.unit, paint);
+      else fillSide(ctx, item, item.foot, paint);
+      // A roof stands in place of the flat top.
+      if (fillSolid(ctx, item, item.foot, paint)) return;
+    }
     fillShape(ctx, item, paint);
     return;
   }
@@ -424,6 +859,16 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
     ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
   }
   ctx.beginPath();
+  if (item.part) {
+    // One stretch of a wall. Its line reaches a little into the stretches beside it, so that the side of none of them shows in the line.
+    const reach = 0.75 * itemWidth(item);
+    const points = stretchPoints(table, Math.max(0, item.part[0] - reach), Math.min(item.part[1] + reach, upTo));
+    ctx.moveTo(points[0]![0], points[0]![1]);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]![0], points[i]![1]);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.moveTo(table.xs[0]!, table.ys[0]!);
   const m = table.cum.length;
   for (let i = 1; i < m; i++) {
@@ -440,6 +885,33 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   if (whole && node.path.closed) ctx.closePath();
   ctx.stroke();
   ctx.restore();
+}
+
+/** The points of a line between two lengths along it: its two ends there, and every sample between them. */
+function stretchPoints(table: PathTable, from: number, to: number): Vec2[] {
+  const { xs, ys, cum } = table;
+  const m = cum.length;
+  // The point at a length that lies between the samples i - 1 and i.
+  const at = (s: number, i: number): Vec2 => {
+    const span = cum[i]! - cum[i - 1]!;
+    const u = span > 1e-12 ? Math.min(1, Math.max(0, (s - cum[i - 1]!) / span)) : 0;
+    return [xs[i - 1]! + (xs[i]! - xs[i - 1]!) * u, ys[i - 1]! + (ys[i]! - ys[i - 1]!) * u];
+  };
+  let lo = 0;
+  let hi = m - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid]! <= from) lo = mid;
+    else hi = mid;
+  }
+  const out: Vec2[] = [at(from, hi)];
+  let i = hi;
+  while (i < m - 1 && cum[i]! < to - 1e-12) {
+    out.push([xs[i]!, ys[i]!]);
+    i++;
+  }
+  out.push(at(to, i));
+  return out;
 }
 
 /**
@@ -518,8 +990,9 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   const node = item.node.node as StrokeNode;
   const table = pathTable(itemPath(item));
   const upTo = table.length * item.drawn;
-  const points: Vec2[] = [[table.xs[0]!, table.ys[0]!]];
-  const m = table.cum.length;
+  let points: Vec2[] = [[table.xs[0]!, table.ys[0]!]];
+  if (item.part) points = stretchPoints(table, item.part[0], Math.min(item.part[1], upTo));
+  const m = item.part ? 0 : table.cum.length;
   for (let i = 1; i < m; i++) {
     if (table.cum[i]! <= upTo) {
       points.push([table.xs[i]!, table.ys[i]!]);
@@ -533,7 +1006,7 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   }
   if (points.length < 2) return;
   const { xf } = item;
-  const path = sidePath(points, item.drawn >= 1 - 1e-9 && node.path.closed, foot, false);
+  const path = sidePath(points, !item.part && item.drawn >= 1 - 1e-9 && node.path.closed, foot, false);
   const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
   ctx.save();
   ctx.translate(xf.x, xf.y);

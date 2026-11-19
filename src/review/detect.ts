@@ -61,7 +61,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -141,7 +141,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width' | 'shadow';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -223,6 +223,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   level: { moved: 'moved', what: 'level (travel of its surface)' },
   outline: { moved: 'changed by', what: 'outline (travel of its points)' },
   width: { moved: 'changed by', what: 'width (travel of its edge)' },
+  shadow: { moved: 'moved', what: 'shadow (travel of its end)' },
 };
 
 
@@ -695,6 +696,23 @@ export function detectMotion(series: MotionSeries): Finding[] {
           jumps(s.id, lvl, okSeen, F, mine);
           abrupt(s.id, lvl, st, F, NO_FRAMES, eased);
           mechanical(s.id, lvl, st, s, F, flat);
+        }
+      }
+      // A body whose height is keyed in a group that casts shadows: the travel of the end of its shadow is judged
+      // like a move. A shadow longer than its body is high travels farther than the body does.
+      if (s.shadow) {
+        const end = chan('shadow', F);
+        const zoomOf = series.views[s.node.layer]!.zoom;
+        let largest = 0;
+        for (let f = 1; f < F; f++) {
+          end.b[f] = (s.shadow[f]! - s.shadow[f - 1]!) * zoomOf[f]!;
+          end.d[f] = Math.abs(end.b[f]!);
+          if (end.d[f]! > largest) largest = end.d[f]!;
+        }
+        if (largest >= quiet) {
+          jumps(s.id, end, okSeen, F, mine);
+          abrupt(s.id, end, st, F, NO_FRAMES, eased);
+          mechanical(s.id, end, st, s, F, flat);
         }
       }
       // A region or a stroke whose outline is keyed: the travel of its points is judged like a move.

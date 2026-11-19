@@ -14,6 +14,7 @@ import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameStat
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
+  drawCast,
   drawEye,
   drawLabel,
   drawLink,
@@ -132,6 +133,7 @@ function drawItems(
       case 'particles': drawParticles(ctx, item, paint); break;
       case 'stroke': drawStroke(ctx, item, paint); break;
       case 'text': drawText(ctx, item, paint); break;
+      case 'cast': drawCast(ctx, item, paint); break;
       case 'group': {
         // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);

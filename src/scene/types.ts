@@ -154,6 +154,10 @@ export interface ShapeNode extends NodeBase {
    * amount. Left out: the shape moves nothing.
    */
   readonly haze?: HazeSpec;
+  /** A body with a rise: the roof that stands on its top, in place of the flat top. Left out: a flat top. */
+  readonly roof?: RoofSpec;
+  /** A body with a rise: rows of openings painted on its side. Left out: a plain side. */
+  readonly openings?: OpeningsSpec;
 }
 
 /** How a heat haze moves the picture behind it. All lengths are in the units of the layer. */
@@ -167,6 +171,68 @@ export interface HazeSpec {
   /** Degrees, 0 right, -90 up: where they drift. */
   readonly direction: number;
 }
+
+/** The kinds of roof a body may carry. */
+export const ROOF_KINDS = ['gable', 'hip', 'cone', 'dome'] as const;
+export type RoofKind = (typeof ROOF_KINDS)[number];
+
+/**
+ * The roof of a body with a height: what stands on its top in place of the flat top. Its slopes are the fill of the
+ * shape in the tones of the light, each by the way it faces; its upright ends are the side of the body.
+ */
+export interface RoofSpec {
+  /** 'gable': two slopes and a ridge; 'hip': four slopes; 'cone': slopes to one point over the middle; 'dome': a round cap. */
+  readonly kind: RoofKind;
+  /** Units: how high the roof stands over the top of the body. */
+  readonly height: number;
+  /** 'gable' and 'hip': where the ridge runs, in degrees in the shape's own space (0 along its x). Left out: along the longer side of the shape. */
+  readonly ridge?: number;
+}
+
+/** The outlines an opening may have. */
+export const OPENING_SHAPES = ['rect', 'arch'] as const;
+
+/**
+ * Rows of openings on the side of a body with a height: windows, arches, the gaps of a colonnade. They are painted on
+ * each face of the side the viewer sees, and follow its length, its height and the camera. A face runs from one sharp
+ * corner of the outline to the next; a round outline is one face all the way round.
+ */
+export interface OpeningsSpec {
+  /** 'rect', or 'arch': a rect with a round head. */
+  readonly shape: (typeof OPENING_SHAPES)[number];
+  /** Units: the width and the height of one opening. */
+  readonly width: number;
+  readonly height: number;
+  /** Units: from the middle of one opening to the middle of the next along a face. */
+  readonly step: number;
+  /** How many rows, one over the other: they share the height of the body at its highest. */
+  readonly rows: number;
+  /** Units: how far the foot of an opening is over the foot of its row. Left out: the opening sits in the middle of its row. */
+  readonly sill?: number;
+  /** Units: the least plain wall between a sharp corner and the first opening. */
+  readonly inset: number;
+  /** The colour of the openings. Left out: a deep shadow tone of the side. */
+  readonly color?: ColorRef;
+}
+
+/**
+ * The shadows of the bodies of a group on the ground the group lies on: every shape and stroke with a rise inside
+ * it casts one, as long as the body is high. They are one picture, drawn before everything else of the group.
+ */
+export interface CastSpec {
+  readonly color: ColorRef;
+  /** 0..1: how strong that one picture is. */
+  readonly opacity: number;
+  /** Degrees: where the shadows fall (0 to the right, 90 down). Left out: away from the light of the shot. */
+  readonly dir?: number;
+  /** How long a shadow is, in units to each unit of the height of its body. */
+  readonly length: number;
+  /** Units: how far the picture of the shadows is blurred. 0 is sharp. */
+  readonly soft: number;
+}
+
+/** The longest shadow a body may cast, in units to each unit of its height. */
+export const CAST_MAX_LENGTH = 8;
 
 export interface GroupNode extends NodeBase {
   readonly type: 'group';
@@ -191,7 +257,33 @@ export interface GroupNode extends NodeBase {
   readonly back?: boolean;
   /** Units: the group is drawn as one picture, blurred this far. Left out: sharp. */
   readonly soft?: number;
+  /**
+   * 'depth': the children of the group are drawn far to near at every frame, whatever order they were listed in.
+   * In a plane of a perspective layer the far ones are those far from the camera; in a flat layer, those higher up
+   * the screen. A stroke with a rise among them is taken stretch by stretch. Left out: they are drawn as listed.
+   */
+  readonly sort?: 'depth';
+  /** The bodies in the group cast shadows on the ground it lies on. Left out: no shadows. */
+  readonly cast?: CastSpec;
+  /**
+   * How much detail the bodies inside the group are worth. A body that is smaller on screen than `min` is drawn
+   * plain: its top alone. Every other body is drawn with everything it has, its side as one outline. Left out: every
+   * body is drawn as it is anywhere.
+   */
+  readonly detail?: DetailSpec;
 }
+
+/** How much detail the bodies of a group are drawn with. */
+export interface DetailSpec {
+  /**
+   * Units on screen: those of the stage, the pixels of a frame 1920 wide. A body that is smaller than this both
+   * across and in height is drawn plain. 0: none is.
+   */
+  readonly min: number;
+}
+
+/** The largest `min` of a `detail`, in units on screen: a body larger than this is never drawn plain. */
+export const DETAIL_MAX = 200;
 
 /** The widest a link can be, in units: the limit of its `width`, and of a `widthTo` on it. */
 export const LINK_MAX_WIDTH = 80;

@@ -25,7 +25,7 @@ const RULE = `add it to ${REFERENCE} in the commit that adds the feature`;
 const MAX_CHARS = 16_000;
 
 /** In an example, the options after this mark may be left out: the values written there are their defaults. */
-const DEFAULTS_MARK = '/* = */';
+const DEFAULTS_MARK = '/**/';
 
 /** A file of the repository as text, with the line ends of the repository whatever the checkout has. */
 const read = (path: string): string => readFileSync(join(ROOT, path), 'utf8').replace(/\r\n/g, '\n');
@@ -133,7 +133,7 @@ test('quick reference: every example in it runs, and the defaults it shows are t
     .replace(/^export default .*$/gm, '');
   assert.ok(body.includes('shot('), 'the reference holds a whole scene among its ts blocks');
   // A call with the mark is run twice, as written and without what follows the mark: both must give the same data.
-  const call = /^(.*?)(,?) \/\* = \*\/ (.*) \}\);( *\/\/.*)?$/;
+  const call = /^(.*?)(,?) \/\*\*\/ (.*) \}\);( *\/\/.*)?$/;
   const lines = body.split('\n');
   const marked = lines.filter((line) => line.includes(DEFAULTS_MARK));
   assert.ok(marked.length > 0, `the reference shows defaults after ${DEFAULTS_MARK}`);

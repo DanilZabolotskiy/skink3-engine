@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import { fillStep } from '../scene/fill.ts';
@@ -119,6 +119,11 @@ export interface PlacedSeries {
   readonly outline: Float32Array | null;
   /** Strokes whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other nodes. */
   readonly width: Float32Array | null;
+  /**
+   * Bodies whose height is keyed (riseTo) in a group that casts shadows (cast): how long the shadow of the body is
+   * on the ground, in the layer's units as the body is seen, per frame; null for other nodes.
+   */
+  readonly shadow: Float32Array | null;
   /**
    * Shapes whose fill is keyed (fillTo): how far the fill changes from the frame before to each frame, as the
    * largest change of a channel, a share of its full range; null for other nodes.
@@ -360,6 +365,18 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
   }
 }
 
+/**
+ * How long the shadow of a node is to each unit of its height: the length of the cast of the nearest group above it
+ * that casts shadows, 0 under none.
+ */
+function castLength(c: CompiledShot, n: CNode): number {
+  for (let p = n.parent; p >= 0; p = c.nodes[p]!.parent) {
+    const above = c.nodes[p]!.node;
+    if (above.type === 'group' && above.cast) return above.cast.length;
+  }
+  return 0;
+}
+
 /** Evaluates the shot at every frame and returns the series of everything in it. */
 export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = {}): MotionSeries {
   if (bake.header.sceneHash !== c.sceneHash || bake.header.frames !== c.frames) {
@@ -483,6 +500,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       life: type === 'stroke' || n.count !== null ? f32() : null,
       outline: n.outline || n.form?.drive ? f32() : null,
       width: n.width ? f32() : null,
+      shadow: n.rise !== null && n.rise.segs.length > 0 && castLength(c, n) > 0 ? f32() : null,
       fill: n.fill ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
@@ -734,6 +752,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
       if (s.open && n.lid) s.open[f] = sampleLid(n.lid, t) * eyeOpen(n.blinks, t);
       if (s.level) s.level[f] = levelGeometry(n, xf, t).y;
+      if (s.shadow && n.rise) s.shadow[f] = castLength(c, n) * Math.max(0, sampleRise(n.rise, t)) * xf.scale;
       if (s.axis && n.axis) {
         const a = sampleAxis(n.axis, t);
         s.axis.sx[f] = a ? a.sx : 1;

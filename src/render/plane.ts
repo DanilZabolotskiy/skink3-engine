@@ -80,6 +80,21 @@ export function reachesBehind(ctx: CanvasRenderingContext2D, path: Path2D): bool
   return false;
 }
 
+/** What a context for what lies in a plane (planeContext) tells of the canvas it draws on. */
+export interface PlaneCanvas {
+  /** The canvas itself. A current path that is built and filled on it is not cut where the plane passes the camera. */
+  readonly raw: CanvasRenderingContext2D;
+  /** The transform the context has now. It is asked of the canvas once, and kept for as long as nothing moves it. */
+  transform(): DOMMatrix;
+}
+
+const planeCanvases = new WeakMap<object, PlaneCanvas>();
+
+/** The canvas of a context made by planeContext; null for any other context. */
+export function planeCanvas(ctx: CanvasRenderingContext2D): PlaneCanvas | null {
+  return planeCanvases.get(ctx) ?? null;
+}
+
 /**
  * A context for what lies in a plane: everything is passed on to `ctx` as it is, and the current path is also kept as
  * a path of its own while it is built. A fill, a stroke or a clip of the current path that reaches behind the camera
@@ -91,6 +106,9 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
   let path: Path2D | null = null;
   // The transform has changed since the path was begun.
   let moved = false;
+  // The transform as it is now, once it has been asked for; and what it was at each save that is still open.
+  let matrix: DOMMatrix | null = null;
+  const saved: (DOMMatrix | null)[] = [];
   const own = new Map<PropertyKey, unknown>();
   const use = (name: PropertyKey, args: unknown[]): unknown => {
     const method = Reflect.get(ctx, name) as (...a: unknown[]) => unknown;
@@ -101,11 +119,16 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
     // A stroke takes no fill rule; a fill and a clip keep theirs.
     return reachesBehind(ctx, path) ? Reflect.apply(method, ctx, [path, ...args]) : Reflect.apply(method, ctx, args);
   };
-  return new Proxy(ctx, {
+  const made = new Proxy(ctx, {
     get(target, name) {
       let value = own.get(name);
       if (value !== undefined) return value;
-      if (name === 'beginPath') {
+      if (name === 'save') {
+        value = (): void => {
+          saved.push(matrix);
+          target.save();
+        };
+      } else if (name === 'beginPath') {
         value = (): void => {
           target.beginPath();
           path = new Path2D();
@@ -119,6 +142,8 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
       } else if (MOVES.has(name)) {
         value = (...args: unknown[]): unknown => {
           moved = true;
+          // A restore brings back the transform of its save; any other move makes one that is not known yet.
+          matrix = name === 'restore' ? (saved.pop() ?? null) : null;
           return Reflect.apply(Reflect.get(target, name) as (...a: unknown[]) => unknown, target, args);
         };
       } else if (USES.has(name)) {
@@ -132,8 +157,13 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
       return value;
     },
     set(target, name, value) {
-      if (name === 'currentTransform') moved = true;
+      if (name === 'currentTransform') {
+        moved = true;
+        matrix = null;
+      }
       return Reflect.set(target, name, value);
     },
   });
+  planeCanvases.set(made, { raw: ctx, transform: () => (matrix ??= ctx.getTransform()) });
+  return made;
 }

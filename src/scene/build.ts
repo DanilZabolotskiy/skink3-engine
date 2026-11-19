@@ -15,6 +15,7 @@ import {
   circleShape,
   polygonShape,
   rectShape,
+  isRegion,
   REGION_MAX_FLAT_POINTS,
   REGION_MAX_POINTS,
   regionShape,
@@ -25,12 +26,14 @@ import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
-import { FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, RISE_MAX, STREAK_MAX } from './types.ts';
+import { CAST_MAX_LENGTH, DETAIL_MAX, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
   CameraPathSpec,
   CameraSpec,
+  CastSpec,
+  DetailSpec,
   ContrastSpec,
   EmitterNode,
   EyeNode,
@@ -44,7 +47,10 @@ import type {
   LevelSpec,
   LinkNode,
   FindingKind,
+  OpeningsSpec,
   PhysicsSpec,
+  RoofKind,
+  RoofSpec,
   SceneNode,
   ShapeNode,
   ShotSpec,
@@ -281,13 +287,28 @@ export interface ShapeOptions {
    * degrees where they drift (-90, up). For a shape listed directly in a flat layer. Animate it with hazeTo().
    */
   haze?: { amount: number; scale?: number; speed?: number; direction?: number };
+  /**
+   * With rise, on a circle, a capsule, a rect or a polygon: a roof on the body in place of its flat top. kind:
+   * 'gable' (two slopes and a ridge), 'hip' (four slopes), 'cone' (slopes to one point) or 'dome' (a round cap);
+   * height: units over the top of the body, 0.01 to 2000; ridge: where the ridge of a gable or a hip runs, in degrees
+   * (default: along the longer side). The slopes are the fill in the tones of the light, the upright ends the side.
+   */
+  roof?: { kind: RoofKind; height: number; ridge?: number };
+  /**
+   * With rise: rows of openings painted on the side of the body, on every face the viewer sees. width and height of
+   * one opening, in units; shape 'rect' (default) or 'arch'; step: from one middle to the next (default twice the
+   * width); rows (default 1): they share the height of the body at its highest; sill: the foot of an opening over the
+   * foot of its row (default: the opening sits in the middle of its row); inset: the least plain wall at a corner
+   * (default half a gap); color (default: a deep shadow tone of the side).
+   */
+  openings?: { shape?: 'rect' | 'arch'; width: number; height: number; step?: number; rows?: number; sill?: number; inset?: number; color?: ColorRef };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze', 'roof', 'openings',
 ];
 
 /** What a heat haze is when only its amount is given. */
@@ -329,6 +350,75 @@ function risen(where: string, o: { rise?: number; side?: ColorRef }, what: strin
   }
   return { rise: num(where, 'rise', o.rise, 0, RISE_MAX), ...(o.side === undefined ? {} : { side: color(where, 'side', o.side) }) };
 }
+
+/** The roof of a body: written only when it is given, so that a node without it is the data it always was. */
+function roofOf(where: string, o: ShapeOptions, shape: ShapeSpec): { roof?: RoofSpec } {
+  const r = o.roof;
+  if (r === undefined) return {};
+  if (o.rise === undefined) fail(where, 'roof is the roof of a shape with a height: give rise (0 lies flat until a riseTo), or leave roof out');
+  checkKeys(`${where}: roof`, r, ['kind', 'height', 'ridge']);
+  if (!ROOF_KINDS.includes(r.kind)) fail(where, `roof.kind must be one of ${ROOF_KINDS.join(', ')}; got ${JSON.stringify(r.kind)}`);
+  if (shape.kind === 'blob' || isRegion(shape)) fail(where, 'a roof stands on a circle, a capsule, a rect or a polygon; a blob or a region has a free outline and keeps its flat top: leave roof out');
+  if (r.ridge !== undefined && r.kind !== 'gable' && r.kind !== 'hip') fail(where, `roof.ridge is where the ridge of a gable or a hip runs; a ${r.kind} has no ridge: leave ridge out`);
+  return { roof: { kind: r.kind, height: num(where, 'roof.height', r.height, 0.01, RISE_MAX), ...(r.ridge === undefined ? {} : { ridge: num(where, 'roof.ridge', r.ridge, -1e5, 1e5) }) } };
+}
+
+/** The openings of the side of a body: written only when they are given, so that a node without them is the data it always was. */
+function openingsOf(where: string, o: ShapeOptions): { openings?: OpeningsSpec } {
+  const g = o.openings;
+  if (g === undefined) return {};
+  if (o.rise === undefined) fail(where, 'openings are painted on the side of a shape with a height: give rise (0 lies flat until a riseTo), or leave openings out');
+  checkKeys(`${where}: openings`, g, ['shape', 'width', 'height', 'step', 'rows', 'sill', 'inset', 'color']);
+  const shape = g.shape ?? 'rect';
+  if (!OPENING_SHAPES.includes(shape)) fail(where, `openings.shape must be one of ${OPENING_SHAPES.join(', ')}; got ${JSON.stringify(shape)}`);
+  const width = num(where, 'openings.width', g.width, 0.01, RISE_MAX);
+  const height = num(where, 'openings.height', g.height, 0.01, RISE_MAX);
+  const step = g.step === undefined ? 2 * width : num(where, 'openings.step', g.step, 0.01, 1e5);
+  if (step < width) fail(where, `openings.step is ${step} and the openings are ${width} wide: they would lie over each other; give a step of ${width} at least`);
+  const rows = g.rows === undefined ? 1 : num(where, 'openings.rows', g.rows, 1, 64);
+  if (!Number.isInteger(rows)) fail(where, `openings.rows must be a whole number, got ${rows}`);
+  return {
+    openings: {
+      shape,
+      width,
+      height,
+      step,
+      rows,
+      ...(g.sill === undefined ? {} : { sill: num(where, 'openings.sill', g.sill, 0, RISE_MAX) }),
+      inset: g.inset === undefined ? (step - width) / 2 : num(where, 'openings.inset', g.inset, 0, 1e5),
+      ...(g.color === undefined ? {} : { color: color(where, 'openings.color', g.color) }),
+    },
+  };
+}
+
+/** The shadows the bodies of a group cast: written only when they are given, so that a group without them is the data it always was. */
+function castOf(where: string, value: unknown): { cast?: CastSpec } {
+  if (value === undefined) return {};
+  const c = value as { color?: unknown; opacity?: unknown; dir?: unknown; length?: unknown; soft?: unknown };
+  checkKeys(`${where}: cast`, c, ['color', 'opacity', 'dir', 'length', 'soft']);
+  if (c.color === undefined) fail(where, 'cast needs a color: the colour of the shadows, a palette reference; the engine has none of its own');
+  return {
+    cast: {
+      color: color(where, 'cast.color', c.color),
+      opacity: c.opacity === undefined ? CAST_DEFAULTS.opacity : num(where, 'cast.opacity', c.opacity, 0, 1),
+      ...(c.dir === undefined ? {} : { dir: num(where, 'cast.dir', c.dir, -1e5, 1e5) }),
+      length: c.length === undefined ? CAST_DEFAULTS.length : num(where, 'cast.length', c.length, 0, CAST_MAX_LENGTH),
+      soft: c.soft === undefined ? CAST_DEFAULTS.soft : num(where, 'cast.soft', c.soft, 0, SOFT_MAX),
+    },
+  };
+}
+
+/** The detail the bodies of a group are worth: written only when it is given, so that a group without it is the data it always was. */
+function detailOf(where: string, value: unknown): { detail?: DetailSpec } {
+  if (value === undefined) return {};
+  const d = value as { min?: unknown };
+  checkKeys(`${where}: detail`, d, ['min']);
+  if (d.min === undefined) fail(where, 'detail needs min: the size on screen, in units of the stage, below which a body is drawn plain (0: none is)');
+  return { detail: { min: num(where, 'detail.min', d.min, 0, DETAIL_MAX) } };
+}
+
+/** What a cast is when it says nothing more than its colour. */
+export const CAST_DEFAULTS = { opacity: 0.35, length: 0.7, soft: 0 } as const;
 
 function flag(where: string, name: string, value: unknown): boolean {
   if (typeof value !== 'boolean') fail(where, `${name} must be true or false, got ${JSON.stringify(value)}`);
@@ -390,6 +480,8 @@ function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: Sprin
     ...softness(where, o.soft),
     ...risen(where, o, 'shape'),
     ...hazy(where, o),
+    ...roofOf(where, o, shape),
+    ...openingsOf(where, o),
     ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'shape',
@@ -530,11 +622,33 @@ export function group(o: {
   back?: boolean;
   /** Units, up to 200: the group is drawn as one picture, blurred this far: soft shadows, a haze, a cloud. */
   soft?: number;
+  /**
+   * 'depth': the children are drawn far to near at every frame, whatever order they were listed in: bodies that stand
+   * in a plane of a perspective layer hide each other rightly from every side the camera turns to, and in a flat layer
+   * what stands lower on the screen is drawn over what stands higher. A stroke with a rise among them (a wall, a
+   * ring) is taken stretch by stretch, each in its place among the others.
+   */
+  sort?: 'depth';
+  /**
+   * The bodies in the group (shapes and strokes with a rise) cast shadows on the ground under it, drawn as one picture
+   * before the group's children. color: a palette reference; opacity (default 0.35); length: units of shadow to each
+   * unit of height (default 0.7, up to 8); dir: where they fall, in degrees (default: away from the light of the
+   * shot); soft: units of blur (default 0).
+   */
+  cast?: { color: ColorRef; opacity?: number; dir?: number; length?: number; soft?: number };
+  /**
+   * For a group of many bodies (shapes and strokes with a rise): how much detail they are worth. A body smaller on
+   * screen than min (units of the stage: the pixels of a frame 1920 wide), across and in height, is drawn plain: its
+   * top alone, without its side, its openings, its roof, its light and its shadow. Every other body is drawn with all
+   * it has, and its side as one outline, several times faster than outside such a group. min 0: no body is plain.
+   */
+  detail?: { min: number };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'soft']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'soft', 'sort', 'cast', 'detail']);
+  if (o.sort !== undefined && o.sort !== 'depth') fail(where, `sort must be "depth" (the children are drawn far to near), got ${JSON.stringify(o.sort)}; leave it out to draw them as listed`);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   if (o.back !== undefined && o.plane === undefined) fail(where, 'back is for a group that lies in a plane of a perspective layer: give plane');
   return {
@@ -543,6 +657,10 @@ export function group(o: {
     // Written only when it is given: a group without a plane is the data it always was.
     ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) }),
     ...softness(where, o.soft),
+    // Written only when they are given: a group without them is the data it always was.
+    ...(o.sort === undefined ? {} : { sort: o.sort }),
+    ...castOf(where, o.cast),
+    ...detailOf(where, o.detail),
     ...voice(where, o.sound),
     type: 'group',
     id: idOf(where, o.id),

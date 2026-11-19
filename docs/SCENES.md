@@ -432,6 +432,8 @@ All shape factories take these options:
 | `soft` | none | 0 to 200 units: the shape and what is in it are drawn as one picture and blurred this far, so its edge fades out (see A soft edge) |
 | `rise` | none | 0 to 2000 units: the shape is the top of a body that stands this high on the ground; `riseTo` changes it (see A height: bodies that stand on the ground) |
 | `side` | a shadow tone of the fill | palette colour of the side of a shape with a `rise` |
+| `roof` | none | `{ kind, height, ridge? }`: a gable, a hip, a cone or a dome on a shape with a `rise` (see A roof and openings on a body) |
+| `openings` | none | `{ width, height, step?, rows?, shape?, sill?, inset?, color? }`: rows of windows or arches on the side of a shape with a `rise` (see A roof and openings on a body) |
 | `haze` | none | `{ amount, scale?, speed?, direction? }`: the picture drawn before the shape wavers inside its outline like air over heat, and what is drawn after it stays steady; `hazeTo` changes the amount (see A heat haze) |
 | `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
 | `depth` | `0` | for a shape listed directly in a layer: its place in the draw order; the larger depth is drawn first (see `layer`) |
@@ -546,11 +548,33 @@ riseTo('block', { at: 5, to: 0, dur: 0.5 }),    // and sinks back into it
 - **In a plane of a perspective layer** (a group with `plane`) the body stands on the front of the plane, and the camera of the layer sees it as it sees everything: the top is nearer to the camera, so it is drawn larger and farther from the point the camera stands over, and the side shows on the side that is turned away from that point. A body right under the camera shows no side. `perspectiveTo` changes the view of every body with it. The height is at most 0.9 of the height of the camera over the plane.
 - **The side** is one flat tone: the colour `side`, or, left out, a shadow tone of the fill as it is at the frame (of the `color`, for a stroke).
 - **What is inside a body rides on its top:** the `at` of a child is a place on the top, so bodies stack. A block on a plateau stands at the height of the plateau and has its own height above that.
-- **The order of the list is the draw order,** as everywhere: list first what is farther from the viewer (in a flat layer: higher up the screen), so that a nearer body covers the foot of the one behind it. A wall that goes round other things is two strokes: its far half before them, its near half after them.
+- **The order of the list is the draw order,** as everywhere: list first what is farther from the viewer (in a flat layer: higher up the screen), so that a nearer body covers the foot of the one behind it. A group with `sort: 'depth'` puts its children in that order by itself at every frame, and takes a closed wall round the things inside it (see Bodies in a group: shadows, depth order, detail).
 - **A stroke with a `rise` is a wall:** the line is its top, as wide as ever, and its side reaches down to where it stands. It may be closed, drawn on (`drawOn`: the wall is built along its line) and hold a least width on screen (`least`). It takes no `dash`.
 - **`riseTo(id, { at, to, dur?, profile?, ramp? })`** changes the height at a moment: `to` is the new height (0 to 2000), `dur` is 0.8 s unless given, `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each starts from the height reached at its moment. The node has a `rise`: `rise: 0` for one that lies flat until it is raised. With `stagger` a row of blocks grows one after another; a key back to 0 takes a body down again.
-- **What it is not.** A body has no light of a space and casts no shadow: draw shadows as dark shapes on the ground, in a soft group (see A soft edge). The automatic light, a glow, a cover, a clip and the contrast review read the top alone, and a label points at the top. A rigid body, a content with a `level`, and a region or a stroke through points of the space (`[x, y, z]`) take no `rise`.
+- **What it is not.** A body has no light of a space. The bodies of a group with `cast` throw shadows on the ground, and on nothing else (see Bodies in a group: shadows, depth order, detail); draw any other shadow as a dark shape on the ground, in a soft group (see A soft edge). The automatic light, a glow, a cover, a clip and the contrast review read the top alone, and a label points at the top. A rigid body, a content with a `level`, and a region or a stroke through points of the space (`[x, y, z]`) take no `rise`.
 - The motion review judges a height that changes as the move of the top that it is on screen (see Motion review). `riseTo` makes no sound event: place a sound with `sfx` where one belongs.
+
+#### A roof and openings on a body
+
+A body with a `rise` may carry a roof in place of its flat top, and rows of openings on its side: a house, a hall with a dome, a tower with windows, an arcade.
+
+```ts
+rect({ id: 'hall', w: 200, h: 130, radius: 0, fill: 'accent.amber', lit: false, side: 'light.cream', rise: 70,
+  roof: { kind: 'hip', height: 40 },
+  openings: { shape: 'arch', width: 12, height: 34, step: 26, sill: 8, color: 'dark.plum' } }),
+circle({ id: 'tower', at: [300, 0], r: 44, fill: 'accent.azure', lit: false, side: 'light.mint', rise: 200,
+  roof: { kind: 'cone', height: 150 }, openings: { width: 8, height: 16, step: 24, rows: 4 } }),
+```
+
+- **`roof: { kind, height, ridge? }`.** `kind` is `'gable'` (two slopes and a ridge), `'hip'` (four slopes), `'cone'` (slopes to one point over the middle) or `'dome'` (a round cap). `height` (0.01 to 2000 units) is how high the roof stands over the top of the body. `ridge` turns the ridge of a gable or a hip: degrees in the shape's own space, 0 along its x; left out, the ridge runs along the longer side.
+- A roof stands on a `circle`, a `capsule`, a `rect` or a `polygon`. A `blob` and a `region` have free outlines and keep their flat top: a roof on one is refused. The node has a `rise`; with `rise: 0` the roof stands on the ground.
+- **The slopes are the fill in the tones of the light of the shot,** each by the way it faces, like the sides of a lit solid; a cone and a dome go from the lit side round to the shadow in steps. The upright ends of a gable are the side of the body. A slope keeps its tone while the camera of a perspective layer goes round it. The automatic light of the shape (`lit`) draws nothing on a roof.
+- What is inside a roofed body stands at the height of its eaves and is drawn over the roof: a drum on a hall, a flag on a tower.
+- **`openings: { width, height, step?, rows?, shape?, sill?, inset?, color? }`** paints rows of openings on the side. `width` and `height` are those of one opening, in units. `step` is the way from the middle of one to the middle of the next (twice the width unless given). `rows` (1, up to 64) share the height of the body; an opening sits in the middle of its row, or `sill` units over the foot of its row (`sill: 0`: a door, an arcade). `shape` is `'rect'` or `'arch'` (a round head). `inset` is the least plain wall at a sharp corner (half a gap unless given). `color` is a palette colour; left out, a deep shadow tone of the side.
+- A face of the side runs from one sharp corner of the outline to the next, and carries as many openings as fit it, the same plain wall at both ends; a round outline is one face all the way round. Only the faces turned to the viewer are painted, and in a plane the openings are seen as the camera sees the wall.
+- The rows are laid out for the body at its highest (the largest `rise` it reaches), so a body that rises uncovers its windows; it does not stretch them.
+- Openings are paint: nothing is seen through them and they give no light. A stroke with a `rise` (a wall) takes neither a roof nor openings.
+- Both are left out of a body that a group draws plain (see Bodies in a group: shadows, depth order, detail).
 
 #### A heat haze
 
@@ -596,7 +620,7 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 - Its outline can change over time: `reshape` runs every point to a new place (see An outline that changes).
 - **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, soft? })`
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, soft?, sort?, cast?, detail? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
@@ -606,12 +630,49 @@ Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a gro
 
 `soft` (0 to 200 units) blurs the group and all it holds as one picture: soft shadows, a haze, a cloud and its shadow (see A soft edge).
 
+`sort`, `cast` and `detail` are for the bodies in the group, the shapes and strokes with a `rise`: the order they are drawn in, their shadows, and how small ones are drawn (see Bodies in a group: shadows, depth order, detail).
+
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
 ```ts
 circle({ id: 'ball', r: 30, fill: 'accent.amber', body: { kind: 'dynamic', release: 1 },
   children: [group({ id: 'ball-face', upright: true, children: [eye({ id: 'ball-eye', r: 8, white: 'light.snow', pupil: 'deep.abyss' })] })] })
 ```
+
+#### Bodies in a group: shadows, depth order, detail
+
+Three options of a group are for the bodies in it (shapes and strokes with a `rise`): a town on a plain, a field of blocks, a wall round them.
+
+```ts
+group({ id: 'town', sort: 'depth', cast: { color: 'deep.abyss', opacity: 0.4, length: 0.8, soft: 1.5 }, detail: { min: 11 }, children: [...houses, hall, tower, wall] })
+```
+
+**`cast: { color, opacity?, dir?, length?, soft? }`: shadows.** Every body inside the group, however deep, throws a shadow on the ground the group lies on.
+
+- `color` is a palette colour (the engine has none of its own) and `opacity` (0.35) the strength of the shadows. `length` (0.7, up to 8) is how long a shadow is, in units to each unit of the height of its body. `dir` is where the shadows fall, in degrees (0 to the right, 90 down), in the layer or, for a group in a plane, in that plane: there a shadow stays where it fell while the camera goes round. Left out, they fall away from the light of the shot. `soft` (0, up to 200 units) blurs them.
+- A shadow is as long as its body is high at each frame: it grows with `riseTo`. A roof makes it longer, by the shadow of its ridge or its point. A wall casts along its line, as far as it is drawn. A body that stands on another casts from the height it stands at.
+- **The shadows of a group are one picture,** drawn before everything else of the group: where two shadows meet they are no darker, and the picture as a whole has the opacity and the blur. A body that fades takes its shadow with it.
+- **They lie on the ground only:** on nothing that stands on it, so no body is shaded by its neighbour, and a shadow passes under a body that stands in it. A shape that lies flat casts nothing. A group inside with a `cast` of its own draws the shadows of its own bodies.
+- Seen from behind its plane a group casts nothing. `cast.dir` moves the shadows only: the tones of roofs and sides follow the light of the shot.
+- The motion review judges the end of the shadow of a body whose height is keyed, on the channel `shadow`: with a `length` over 1 it travels farther than the body rises (see Motion review).
+
+**`sort: 'depth'`: the draw order.** The children of the group are drawn far to near for the camera of each frame, in whatever order they are listed.
+
+- How far a child is: where it stands on the ground (the foot of a body, the place of anything else). In a plane of a perspective layer that is its distance from the point the camera stands over; in a flat layer, how high up the screen it is. What is equally far keeps the order of the list. A link, a label and an emitter have no place and are drawn last.
+- A child is placed as a whole, with everything inside it; the children of a child keep their listed order unless their group sorts too.
+- **A wall goes round what stands inside it.** A stroke with a `rise` among the children is drawn stretch by stretch, each in its own place among the other children: the far stretches of a closed wall behind the houses, the near ones in front of them. Such a wall takes no `pulse` (refused: run the light along a flat stroke drawn over the group), and it fades stretch by stretch, so fade the group, not the wall.
+- **One place per child.** Two bodies that are long and cross each other, or a very large body among small ones, may come out in the wrong order: split the large one, or list such a pair in a group of their own without `sort`. While the camera turns, two bodies that overlap on screen change places at one frame; the motion review does not see that, so look at a strip of a turn through a dense spot.
+- Putting 7,000 children in order costs a few milliseconds of a frame.
+
+**`detail: { min }`: a level of detail.** For a view with thousands of bodies. `min` (0 to 200) is a size on screen in units of the stage (the pixels of a frame 1920 wide).
+
+- **A body smaller than `min` is drawn plain:** its top alone, in its own fill, at its raised place, with no side, no roof, no openings, no automatic light and no shadow; a wall as a flat line at its height. It costs what a flat shape costs. The size of a body is the larger of its outline across and its height, as they are on screen at the frame, with every scale, the zoom and the perspective.
+- **Every other body is drawn in full, by a faster route:** its side as one outline with only the corners that can be told on screen (within 0.06 units), and only the stretches turned to the viewer. The picture is the one without `detail` but for anti-aliased pixels along the rim of the side. `detail: { min: 0 }` asks for that route alone.
+- The nearest group above a body that says `detail` decides. A shape that lies flat is not touched.
+- **Choosing `min`.** A body changes between plain and full at the frame it crosses `min`: a small pop. Keep `min` near the size at which a side can no longer be told (8 to 16), so that the change happens among bodies of a few pixels, far from the subject.
+- **What it saves,** measured at 1080p on a tilted plane, on one machine: a frame with 7,000 box bodies took 0.86 s without `detail`, 0.18 s with `detail: { min: 0 }` and 0.12 s with `min: 16`, where the same shapes lying flat took 0.09 s. A frame with 540 bodies of 60 smooth points each took 0.30 s without it and 0.06 s with `min: 0`. Roofs, shadows and the depth order on the 7,000 bodies added about 0.15 s to a frame.
+
+`examples/town/scene.ts` shows all of it: a walled town by a river with roofs, a dome, a cone, windows and an arcade, huts over the plain, and a block that rises.
 
 ### `link({ id, from, to, color, pulseColor?, bend?, width?, gap?, opacity?, glow?, clipTo?, sound? })`
 
@@ -1357,7 +1418,7 @@ turnTo('card', { at: 5, to: 90, about: 'x', dur: 1.6, profile: 'ease' }),    // 
 
 **What it does not do.**
 
-- The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space and no cast shadow: draw a shadow as links or as a region on the ground and drive it. A shape or a stroke in a plane may stand up from it with `rise`, as the top of a body with one flat side (see A height: bodies that stand on the ground).
+- The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space. Only the bodies of a group with `cast` throw shadows, and only on their plane (see Bodies in a group: shadows, depth order, detail); draw any other shadow as links or as a region on the ground and drive it. A shape or a stroke in a plane may stand up from it with `rise`, as the top of a body, with a roof and openings if it is given them (see A height: bodies that stand on the ground).
 - Nothing but a plane is cut at the camera. A node whose place, or one of whose points of the space, is nearer than 2 % of the lens in front of the camera, or behind it, is not drawn at that frame.
 - Rigid bodies are refused in a perspective layer: the physics bake is flat. Springs (`follow`, `sway`) work on the picture, so a move of the layer's camera sets them swinging.
 - No blur by distance: the `blur` of the layer applies to all of it. One node or one group, also in a plane, is blurred by its own `soft`.
@@ -1492,6 +1553,7 @@ Things to know when you write a scene:
 - Keep a small thing slow: under half of its own size per frame.
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
+- The shadow of a body whose height is keyed, in a group with `cast`, is judged on the channel `shadow`: the travel of its end, which is `cast.length` times the change of the height.
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).

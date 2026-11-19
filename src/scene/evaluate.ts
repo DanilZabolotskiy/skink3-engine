@@ -7,7 +7,7 @@ import { DEG, quadSub, vrot, xfApply, xfCompose, XF_IDENTITY, type Quad, type Ve
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { sampleDriven } from '../motion/drive.ts';
-import { pathTable, type PathSpec } from '../motion/paths.ts';
+import { pathAt, pathTable, type PathSpec } from '../motion/paths.ts';
 import {
   sampleAway,
   sampleAxis,
@@ -30,7 +30,8 @@ import {
   sampleWidth,
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
-import { outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
+import { isRegion, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
+import { hull, ringOf, roofFaces, sideRing, spanOf, type Upright } from '../shape/solid.ts';
 import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -42,7 +43,7 @@ import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
-import type { LabelSide } from './types.ts';
+import type { LabelSide, StrokeNode } from './types.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
 export interface PoseSource {
@@ -209,10 +210,15 @@ export interface Places {
   readonly point: Float64Array;
   /** By layer index: the camera of a perspective layer at the frame; null for a flat layer. */
   readonly eyes: (Eye | null)[];
+  /**
+   * By node index of a group that lies in a plane, in a shot with bodies or with children drawn far to near: the
+   * point of that plane the camera stands over, in the units of the plane, and how high it is over the front of it.
+   */
+  readonly stands: Map<number, Vec3>;
 }
 
 export function newPlaces(c: CompiledShot): Places {
-  return { flat: new Array<Xf | undefined>(c.nodes.length), planes: new Map(), far: new Float64Array(c.nodes.length), point: new Float64Array(3 * c.nodes.length), eyes: c.layers.map(() => null) };
+  return { flat: new Array<Xf | undefined>(c.nodes.length), planes: new Map(), far: new Float64Array(c.nodes.length), point: new Float64Array(3 * c.nodes.length), eyes: c.layers.map(() => null), stands: new Map() };
 }
 
 /**
@@ -222,8 +228,11 @@ export function newPlaces(c: CompiledShot): Places {
  * the foot is the top moved down the screen (k is 1); in a plane of a
  * perspective layer it is the top drawn smaller or larger about the point of
  * the plane the camera stands over.
+ *
+ * It also says how the body stands (Upright): its height at the frame, and
+ * where a point at any height over the ground is drawn.
  */
-export interface Foot {
+export interface Foot extends Upright {
   readonly k: number;
   readonly x: number;
   readonly y: number;
@@ -250,12 +259,11 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
   const out: Xf[] = new Array<Xf>(c.nodes.length).fill(XF_IDENTITY);
   // The children of a shape with a level ride on its surface: their frame is the middle of the surface.
   let surfaces: Map<number, Xf> | null = null;
-  // By the index of a group that lies in a plane, in a shot with bodies: where the camera stands in that plane, and how high over it.
-  let stands: Map<number, Vec3> | null = null;
   // A shot with a perspective layer: the cameras of this frame, and the planes as they are found.
   const space = c.spatial ? places ?? newPlaces(c) : null;
   if (space) {
     space.planes.clear();
+    space.stands.clear();
     space.flat.fill(undefined);
     c.layers.forEach((layer, li) => {
       space.eyes[li] = layer.persp ? eyeOf(perspAt(layer.persp, t)) : null;
@@ -295,7 +303,8 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
         const axes = n.hinge ? hingedAxes(node.plane, n.hinge.x ? sampleRot(n.hinge.x, t) : 0, n.hinge.y ? sampleRot(n.hinge.y, t) : 0) : node.plane;
         let map = planeMap(eye, [x, y, z], axes);
         if (map && !map.front && node.back === false) map = null;
-        if (c.risen) (stands ??= new Map<number, Vec3>()).set(n.index, standOf(eye, [x, y, z], axes));
+        // In a shot with bodies, or with children drawn far to near: where the camera stands in that plane, and how high over it.
+        if (c.risen || c.sorted) space.stands.set(n.index, standOf(eye, [x, y, z], axes));
         const flat: Xf = { x: 0, y: 0, rot, scale };
         space.flat[n.index] = flat;
         space.planes.set(n.index, map);
@@ -329,8 +338,9 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     if (n.rise) {
       // A body with a height: from here on its transform is that of its top.
       const rise = sampleRise(n.rise, t);
-      if (rise > RISE_FLAT) {
-        const stand = inPlane ? stands?.get(n.plane) : undefined;
+      // A body with a roof keeps its roof while it lies flat: the roof stands on the ground then.
+      if (rise > RISE_FLAT || (node.type === 'shape' && node.roof !== undefined)) {
+        const stand = inPlane ? space.stands.get(n.plane) : undefined;
         if (stand) {
           // In a plane the body stands on the plane, toward its front. Seen from the camera, a point that high over a
           // place of the plane lies on the line from the point the camera stands over through that place, farther
@@ -340,12 +350,15 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
           const gx = xf.x - stand[0];
           const gy = xf.y - stand[1];
           const back = vrot([(gx * (1 - grow)) / (xf.scale * grow), (gy * (1 - grow)) / (xf.scale * grow)], -xf.rot);
-          feet?.set(n.index, { k: 1 / grow, x: back[0], y: back[1] });
+          // The point the camera stands over, and the height of the camera, in the units of the body.
+          const over = vrot([-gx / xf.scale, -gy / xf.scale], -xf.rot);
+          feet?.set(n.index, { k: 1 / grow, x: back[0], y: back[1], h: height / xf.scale, ux: over[0], uy: over[1], uh: stand[2] / xf.scale });
           xf = { x: stand[0] + gx * grow, y: stand[1] + gy * grow, rot: xf.rot, scale: xf.scale * grow };
         } else {
           // In a flat layer the top is the foot moved up the screen.
           const down = vrot([0, rise], -xf.rot);
-          feet?.set(n.index, { k: 1, x: down[0], y: down[1] });
+          const unit = vrot([0, 1], -xf.rot);
+          feet?.set(n.index, { k: 1, x: down[0], y: down[1], h: rise, ux: unit[0], uy: unit[1], uh: 0 });
           xf = { ...xf, y: xf.y - rise * xf.scale };
         }
       }
@@ -409,6 +422,11 @@ export interface ShapeItem {
   readonly fill?: string;
   /** A body that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
   readonly foot?: Foot;
+  /**
+   * A body of a group that says what detail its bodies are worth (detail): how large it is on screen, and whether it
+   * is so small that its top alone is drawn (it has no `foot` then). Left out: a body of no such group.
+   */
+  readonly detail?: Worth;
 }
 
 export interface EyeItem {
@@ -456,6 +474,32 @@ export interface StrokeItem {
   readonly width?: number;
   /** A wall that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
   readonly foot?: Foot;
+  /**
+   * A wall among children that are drawn far to near: this item is one stretch of it, from one length along the line
+   * to another, in the units of the stroke. Left out: the whole line.
+   */
+  readonly part?: readonly [number, number];
+}
+
+/** The shadow of one body on the ground. */
+export interface CastShadow {
+  /** Closed outlines, x and y in turn, in the space the group is drawn in; together they are the shadow. All run one way round. */
+  readonly outlines: readonly ArrayLike<number>[];
+  /** A wall: its shadow is these outlines and a line of this width round each of them. 0 for any other body. */
+  readonly width: number;
+  /** How much of the body is there, 0..1: a body that fades takes its shadow with it. */
+  readonly alpha: number;
+}
+
+/**
+ * The shadows the bodies of a group cast on the ground under it (cast), in
+ * one colour. It comes inside a GroupItem of the group, which makes one
+ * picture of them and gives that picture its opacity and its blur.
+ */
+export interface CastItem {
+  readonly kind: 'cast';
+  readonly node: CNode;
+  readonly shadows: readonly CastShadow[];
 }
 
 export interface TextItem {
@@ -610,7 +654,7 @@ export function itemWidth(item: LinkItem | StrokeItem): number {
   return node.width;
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem | PlaneItem;
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | CastItem | GroupItem | ClipItem | StretchItem | PlaneItem;
 export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem | PlaneItem>;
 
 /**
@@ -868,6 +912,320 @@ export function drawOrder(c: CompiledShot, layer: CLayer, t: number, places: Pla
   return out;
 }
 
+/** A wall among children that are drawn far to near is taken in no more stretches than this. */
+const WALL_STRETCHES = 200;
+
+/** The width a stroke is drawn with at a frame, in its own units: the one it was given, what a widthTo has made of it, or what holds it on screen (least). */
+function strokeWidthAt(n: CNode, t: number, seen: number): number {
+  const node = n.node as StrokeNode;
+  if (node.least !== undefined) return Math.max(node.width, node.least / Math.max(seen, 1e-9));
+  return n.width ? sampleWidth(n.width, t) : node.width;
+}
+
+/**
+ * The steps in which a layer with children drawn far to near (sort: 'depth')
+ * is drawn at a frame: the nodes of `base`, with the children of every such
+ * group far to near, each with everything inside it. A stroke with a rise
+ * among them comes as several steps, one to each stretch of it (`parts`), each
+ * in its own place among the others.
+ *
+ * How far a child is: where it stands on the ground (the foot of a body, the
+ * place of anything else), in a plane of a perspective layer by its distance
+ * from the point the camera stands over, in a flat layer by how high up the
+ * screen it is. What is equally far keeps the order it was listed in; a link,
+ * a label and an emitter have no place and are drawn last.
+ */
+function sortedSteps(
+  c: CompiledShot,
+  base: readonly number[],
+  t: number,
+  zoom: number,
+  world: readonly Xf[],
+  places: Places | undefined,
+  feet: Map<number, Foot> | undefined,
+): { order: number[]; parts: (readonly [number, number] | null)[] } {
+  const order: number[] = [];
+  const parts: (readonly [number, number] | null)[] = [];
+  const emit = (index: number): void => {
+    const n = c.nodes[index]!;
+    order.push(index);
+    parts.push(null);
+    if (!(n.node.type === 'group' && n.node.sort === 'depth')) {
+      for (let i = index + 1; i <= n.subtreeEnd; i = c.nodes[i]!.subtreeEnd + 1) emit(i);
+      return;
+    }
+    const stand = n.plane >= 0 ? places?.stands.get(n.plane) : undefined;
+    // The larger, the farther: drawn first.
+    const far = (xf: Xf, x: number, y: number): number => {
+      const p = xfApply(xf, [x, y]);
+      return stand ? (p[0] - stand[0]) ** 2 + (p[1] - stand[1]) ** 2 : -p[1];
+    };
+    const units: { index: number; key: number; at: number; part: readonly [number, number] | null }[] = [];
+    for (let i = index + 1; i <= n.subtreeEnd; i = c.nodes[i]!.subtreeEnd + 1) {
+      const child = c.nodes[i]!;
+      const type = child.node.type;
+      if (type === 'link' || type === 'label' || type === 'emitter') {
+        units.push({ index: i, key: -Infinity, at: units.length, part: null });
+        continue;
+      }
+      const xf = places?.flat[i] ?? world[i]!;
+      const foot = feet?.get(i);
+      if (type === 'stroke' && child.rise) {
+        // A wall: stretch by stretch, each as far as the ground under its middle.
+        const table = pathTable(strokePathOf(child, t));
+        const upTo = table.length * Math.min(1, Math.max(0, sampleDrawn(child.stroke!, t)));
+        if (upTo > 1e-9) {
+          const width = strokeWidthAt(child, t, world[i]!.scale * zoom);
+          const count = Math.max(1, Math.ceil(upTo / Math.max(2 * width, upTo / WALL_STRETCHES)));
+          for (let j = 0; j < count; j++) {
+            const from = (upTo * j) / count;
+            const to = (upTo * (j + 1)) / count;
+            const mid = pathAt(table, (from + to) / 2);
+            units.push({ index: i, key: foot ? far(xf, foot.k * mid.x + foot.x, foot.k * mid.y + foot.y) : far(xf, mid.x, mid.y), at: units.length, part: [from, to] });
+          }
+          continue;
+        }
+      }
+      units.push({ index: i, key: foot ? far(xf, foot.x, foot.y) : far(xf, 0, 0), at: units.length, part: null });
+    }
+    units.sort((p, q) => (p.key === q.key ? p.at - q.at : q.key - p.key));
+    for (const u of units) {
+      if (u.part) {
+        order.push(u.index);
+        parts.push(u.part);
+      } else emit(u.index);
+    }
+  };
+  // `base` lists every node with everything inside it straight after it.
+  for (let i = 0; i < base.length; i += c.nodes[base[i]!]!.subtreeEnd - base[i]! + 1) emit(base[i]!);
+  return { order, parts };
+}
+
+/** What a body of a group that says what detail its bodies are worth (detail) is drawn with at a frame. */
+export interface Worth {
+  /** The size of one unit of the body on screen, in units of the stage. */
+  readonly unit: number;
+  /** True while the body is smaller on screen than the least size of that group, across and in height: its top alone is drawn. */
+  readonly plain: boolean;
+}
+
+/**
+ * How a body of a group that says what detail its bodies are worth is drawn at a frame; null for a node that is no
+ * body at this frame, or stands in no such group. `unit` is the size of one of its units on screen.
+ */
+function worthOf(c: CompiledShot, n: CNode, t: number, foot: Foot | undefined, unit: number): Worth | null {
+  const min = c.detail ? c.detail[n.index]! : -1;
+  if (min < 0 || !foot) return null;
+  const node = n.node;
+  if (node.type !== 'shape' && node.type !== 'stroke') return null;
+  // A wall is as large as it is high; any other body as its outline is across, or as it is high.
+  const across = node.type === 'shape' ? spanOf(n.outline || n.form ? shapeOf(n, t) : node.shape) : 0;
+  return { unit, plain: Math.max(across, foot.h) * unit < min };
+}
+
+/** Below this height, in its units, a body casts no shadow worth drawing. */
+const CAST_FLAT = 1e-3;
+
+/**
+ * The shadows the bodies inside a group cast on the ground under it at a
+ * frame, in the space the group is drawn in (its plane, or its layer). A
+ * shadow is what the body passes over when it is pushed along the ground in
+ * the direction of the shadows, as far as each of its points is high: `fall`
+ * is that direction, as long as the shadow of one unit of height.
+ *
+ * A body that stands on another casts from the height it stands at. A body
+ * inside a group that casts its own shadows is left to that group.
+ */
+function castShadows(
+  c: CompiledShot,
+  group: CNode,
+  t: number,
+  zoom: number,
+  fall: Vec2,
+  world: readonly Xf[],
+  places: Places | undefined,
+  feet: Map<number, Foot>,
+  alpha: Float64Array,
+): CastShadow[] {
+  const out: CastShadow[] = [];
+  const stand = group.plane >= 0 ? places?.stands.get(group.plane) : undefined;
+  // Seen from behind its plane a body is not drawn as it stands, and casts nothing.
+  if (stand && !(stand[2] > 0)) return out;
+  const whole = alpha[group.index]!;
+  for (let i = group.index + 1; i <= group.subtreeEnd; i++) {
+    const n = c.nodes[i]!;
+    const node = n.node;
+    if (node.type === 'group' && node.cast) {
+      i = n.subtreeEnd;
+      continue;
+    }
+    const foot = feet.get(i);
+    if (!foot || alpha[i]! <= FAINT) continue;
+    if (node.type !== 'shape' && node.type !== 'stroke') continue;
+    const xf = places?.flat[i] ?? world[i]!;
+    if (xf.scale <= HIDDEN) continue;
+    const roof = node.type === 'shape' ? node.roof : undefined;
+    if (foot.h <= CAST_FLAT && !roof) continue;
+    // A body that is drawn plain has no shadow.
+    if (c.detail && worthOf(c, n, t, foot, world[i]!.scale * zoom)?.plain) continue;
+    // How high the body stands, and how high its top is: in a plane as shares of the camera's height over the plane, in a flat layer in units of the layer.
+    let top = stand ? foot.k : foot.h * xf.scale;
+    for (let p = n.parent; p > group.index; p = c.nodes[p]!.parent) {
+      const f = feet.get(p);
+      if (!f) continue;
+      if (stand) top *= f.k;
+      else top += f.h * (places?.flat[p] ?? world[p]!).scale;
+    }
+    const base = stand ? top / foot.k : top - foot.h * xf.scale;
+    const cos = Math.cos(xf.rot) * xf.scale;
+    const sin = Math.sin(xf.rot) * xf.scale;
+    // The place on the ground under a point of the top, and the shadow of a point `over` it (in the units of the body) or of its foot.
+    let gx = 0;
+    let gy = 0;
+    const onGround = (x: number, y: number): void => {
+      const px = xf.x + x * cos - y * sin;
+      const py = xf.y + x * sin + y * cos;
+      if (stand) {
+        gx = stand[0] + (px - stand[0]) * top;
+        gy = stand[1] + (py - stand[1]) * top;
+      } else {
+        gx = px;
+        gy = py + top;
+      }
+    };
+    // The length of the shadow of the top, of the foot, and of one more unit of the body over the top.
+    const high = stand ? stand[2] * (1 - top) : top;
+    const low = stand ? stand[2] * (1 - base) : base;
+    const unit = stand ? xf.scale * top : xf.scale;
+    const outlines: ArrayLike<number>[] = [];
+    let width = 0;
+    if (node.type === 'stroke') {
+      const table = pathTable(strokePathOf(n, t));
+      const upTo = table.length * Math.min(1, Math.max(0, sampleDrawn(n.stroke!, t)));
+      if (upTo <= 1e-9) continue;
+      width = strokeWidthAt(n, t, world[i]!.scale * zoom) * unit;
+      // The line as far as it is drawn, sample by sample.
+      const line: number[] = [];
+      const m = table.cum.length;
+      for (let s = 0; s < m; s++) {
+        if (table.cum[s]! <= upTo) {
+          onGround(table.xs[s]!, table.ys[s]!);
+          line.push(gx, gy);
+          continue;
+        }
+        const span = table.cum[s]! - table.cum[s - 1]!;
+        const u = span > 1e-12 ? (upTo - table.cum[s - 1]!) / span : 0;
+        if (u > 1e-9) {
+          onGround(table.xs[s - 1]! + (table.xs[s]! - table.xs[s - 1]!) * u, table.ys[s - 1]! + (table.ys[s]! - table.ys[s - 1]!) * u);
+          line.push(gx, gy);
+        }
+        break;
+      }
+      for (let s = 0; s + 3 < line.length; s += 2) sweep(outlines, line[s]!, line[s + 1]!, line[s + 2]!, line[s + 3]!, fall, low, high);
+    } else {
+      const shape = n.outline || n.form ? shapeOf(n, t) : node.shape;
+      if (shape.kind === 'blob' || isRegion(shape)) {
+        // An outline that may have bays, with the corners that can be told on screen: the outline itself at both
+        // ends, and between them what each run of its stretches that lead the way passes over.
+        const { points: pts, convex } = sideRing(shape, world[i]!.scale * zoom);
+        const m = pts.length;
+        const ring = new Float64Array(2 * m);
+        let area = 0;
+        for (let s = 0; s < m; s++) {
+          onGround(pts[s]![0], pts[s]![1]);
+          ring[2 * s] = gx;
+          ring[2 * s + 1] = gy;
+        }
+        for (let s = 0; s < m; s++) {
+          const e = s + 1 === m ? 0 : s + 1;
+          area += ring[2 * s]! * ring[2 * e + 1]! - ring[2 * e]! * ring[2 * s + 1]!;
+        }
+        if (area < 0) {
+          // The other way round, so that every outline of the shadow runs one way.
+          for (let s = 0, e = m - 1; s < e; s++, e--) {
+            const x = ring[2 * s]!;
+            const y = ring[2 * s + 1]!;
+            ring[2 * s] = ring[2 * e]!;
+            ring[2 * s + 1] = ring[2 * e + 1]!;
+            ring[2 * e] = x;
+            ring[2 * e + 1] = y;
+          }
+        }
+        if (convex) {
+          const points: number[] = [];
+          for (let s = 0; s < 2 * m; s += 2) points.push(ring[s]! + fall[0] * low, ring[s + 1]! + fall[1] * low, ring[s]! + fall[0] * high, ring[s + 1]! + fall[1] * high);
+          outlines.push(hull(points));
+        } else {
+          for (const far of [low, high]) {
+            const end = new Float64Array(2 * m);
+            for (let s = 0; s < 2 * m; s += 2) {
+              end[s] = ring[s]! + fall[0] * far;
+              end[s + 1] = ring[s + 1]! + fall[1] * far;
+            }
+            outlines.push(end);
+          }
+          // A stretch leads the way when the shadows fall out of the outline across it.
+          const leads = (s: number): boolean => {
+            const e = s + 1 === m ? 0 : s + 1;
+            return (ring[2 * e + 1]! - ring[2 * s + 1]!) * fall[0] - (ring[2 * e]! - ring[2 * s]!) * fall[1] > 0;
+          };
+          let start = 0;
+          while (start < m && leads(start)) start++;
+          for (let k = 1; start < m && k < m && high > low; ) {
+            const first = (start + k) % m;
+            if (!leads(first)) {
+              k++;
+              continue;
+            }
+            let len = 1;
+            while (k + len < m && leads((start + k + len) % m)) len++;
+            const strip = new Float64Array(4 * (len + 1));
+            for (let j = 0; j <= len; j++) {
+              const q = 2 * ((first + j) % m);
+              strip[2 * j] = ring[q]! + fall[0] * high;
+              strip[2 * j + 1] = ring[q + 1]! + fall[1] * high;
+              const back = 2 * (2 * len + 1 - j);
+              strip[back] = ring[q]! + fall[0] * low;
+              strip[back + 1] = ring[q + 1]! + fall[1] * low;
+            }
+            outlines.push(strip);
+            k += len;
+          }
+        }
+      } else {
+        // A convex body: the outline round the shadows of its corners, those of its roof among them.
+        const points: number[] = [];
+        for (const p of ringOf(shape).points) {
+          onGround(p[0], p[1]);
+          points.push(gx + fall[0] * low, gy + fall[1] * low, gx + fall[0] * high, gy + fall[1] * high);
+        }
+        if (roof) {
+          for (const face of roofFaces(shape, roof)) {
+            for (let s = 0; s < face.points.length; s += 3) {
+              const z = face.points[s + 2]!;
+              if (z <= 0) continue;
+              onGround(face.points[s]!, face.points[s + 1]!);
+              points.push(gx + fall[0] * (high + z * unit), gy + fall[1] * (high + z * unit));
+            }
+          }
+        }
+        outlines.push(hull(points));
+      }
+    }
+    if (outlines.length > 0) out.push({ outlines, width, alpha: whole > FAINT ? Math.min(1, alpha[i]! / whole) : 1 });
+  }
+  return out;
+}
+
+/** What a stretch of the ground from a to b passes over when it is pushed along `fall` from `low` to `high`: four corners, wound one way round. */
+function sweep(out: ArrayLike<number>[], ax: number, ay: number, bx: number, by: number, fall: Vec2, low: number, high: number): void {
+  const quad = [ax + fall[0] * low, ay + fall[1] * low, bx + fall[0] * low, by + fall[1] * low, bx + fall[0] * high, by + fall[1] * high, ax + fall[0] * high, ay + fall[1] * high];
+  let area = 0;
+  for (let s = 0; s < 8; s += 2) area += quad[s]! * quad[(s + 3) % 8]! - quad[(s + 2) % 8]! * quad[s + 1]!;
+  if (area < 0) out.push([quad[6]!, quad[7]!, quad[4]!, quad[5]!, quad[2]!, quad[3]!, quad[0]!, quad[1]!]);
+  else out.push(quad);
+}
+
 /** The display list of a shot at a frame. */
 export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: string): FrameState {
   if (!Number.isInteger(frame) || frame < 0 || frame >= c.frames) {
@@ -903,19 +1261,30 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     const root: Item[] = [];
     // The hazes of the layer, each with the number of items of the root drawn before it.
     const marks: { at: number; haze: Omit<HazeItem, 'before'> }[] = [];
-    // Open groups: the items of a faded node and of its subtree go into its group.
-    const open: { end: number; items: Item[] }[] = [];
+    // Open groups: the items of a faded node and of its subtree go into its group. Each is open for the nodes from `start` to `end`.
+    const open: { start: number; end: number; items: Item[] }[] = [];
+    // The nodes from `skipFrom` to `skipUntil` are not drawn.
+    let skipFrom = 0;
     let skipUntil = -1;
     // A layer that orders what it draws lists its nodes farthest first; any other layer as they were given.
-    for (const index of layer.ordered ? drawOrder(c, layer, t, places) : layer.nodes) {
+    const listed = layer.ordered ? drawOrder(c, layer, t, places) : layer.nodes;
+    // A layer with children drawn far to near takes them in that order, and a wall among them stretch by stretch.
+    const steps = layer.sorted ? sortedSteps(c, listed, t, view.zoom, world, places, feet) : null;
+    const order = steps ? steps.order : listed;
+    for (let step = 0; step < order.length; step++) {
+      const index = order[step]!;
+      const part = steps ? steps.parts[step]! : null;
       const n = c.nodes[index]!;
       if (layer.ordered && n.parent < 0) {
         // The next node of the order: nothing of the one before it is open.
         open.length = 0;
+        skipFrom = 0;
         skipUntil = -1;
       }
-      if (index <= skipUntil) continue;
-      while (open.length > 0 && index > open[open.length - 1]!.end) open.pop();
+      if (index >= skipFrom && index <= skipUntil) continue;
+      // What is open belongs to the nodes around this one. In a layer drawn as listed the nodes only go up; among
+      // children drawn far to near they also go back, and a wall comes again with its next stretch.
+      while (open.length > 0 && (index > open[open.length - 1]!.end || index <= open[open.length - 1]!.start)) open.pop();
       const node = n.node;
       const xf = placeOf(index);
       const a = alpha[index]!;
@@ -926,6 +1295,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
       }
       if (own[index]! <= FAINT) {
         // Invisible, and so is everything inside it.
+        skipFrom = index;
         skipUntil = n.subtreeEnd;
         continue;
       }
@@ -935,12 +1305,13 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         const map = places?.planes.get(index);
         if (!map) {
           // The camera cannot see the plane at this frame.
+          skipFrom = index;
           skipUntil = n.subtreeEnd;
           continue;
         }
         const inner: Item[] = [];
         items.push({ kind: 'plane', node: n, map, items: inner });
-        open.push({ end: n.subtreeEnd, items: inner });
+        open.push({ start: index, end: n.subtreeEnd, items: inner });
         items = inner;
       }
       if (n.clipIndex >= 0) {
@@ -956,6 +1327,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           // Clipped to a content: only its filled part holds anything.
           const g = levelGeometry(clipNode, placeOf(n.clipIndex), t);
           if (g.level <= LEVEL_EMPTY) {
+            skipFrom = index;
             skipUntil = n.subtreeEnd;
             continue;
           }
@@ -966,7 +1338,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           inner = [];
           items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), ...softness, items: inner });
         }
-        open.push({ end: n.subtreeEnd, items: inner });
+        open.push({ start: index, end: n.subtreeEnd, items: inner });
         items = inner;
       }
       if (n.axis && xf.scale > HIDDEN) {
@@ -975,7 +1347,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         if (s) {
           const inner: Item[] = [];
           items.push({ kind: 'stretch', node: n, at: [xf.x, xf.y], height: 1, axes: { rot: xf.rot, scale: xf.scale, ...s }, items: inner });
-          open.push({ end: n.subtreeEnd, items: inner });
+          open.push({ start: index, end: n.subtreeEnd, items: inner });
           items = inner;
         }
       }
@@ -985,7 +1357,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const inner: Item[] = [];
           // The pivot is measured from the node's origin in the layer's directions, in the node's units.
           items.push({ kind: 'stretch', node: n, at: [xf.x + s.pivot[0] * xf.scale, xf.y + s.pivot[1] * xf.scale], height: s.height, items: inner });
-          open.push({ end: n.subtreeEnd, items: inner });
+          open.push({ start: index, end: n.subtreeEnd, items: inner });
           items = inner;
         }
       }
@@ -994,16 +1366,27 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
       if (soft > 0) {
         const group: Item[] = [];
         items.push({ kind: 'group', node: n, opacity: Math.min(1, own[index]!), items: group, soft });
-        open.push({ end: n.subtreeEnd, items: group });
+        open.push({ start: index, end: n.subtreeEnd, items: group });
         items = group;
       } else if (own[index]! < OPAQUE) {
         const group: Item[] = [];
         items.push({ kind: 'group', node: n, opacity: own[index]!, items: group });
-        open.push({ end: n.subtreeEnd, items: group });
+        open.push({ start: index, end: n.subtreeEnd, items: group });
         items = group;
       }
+      // What detail a body is worth at this frame; null for anything that is not a body of a group that says so.
+      const worth = c.detail && feet ? worthOf(c, n, t, feet.get(index), world[index]!.scale * view.zoom) : null;
       switch (node.type) {
         case 'group':
+          if (node.cast && feet && xf.scale > HIDDEN) {
+            // The shadows of its bodies: one picture under everything else of the group, at the opacity and with the blur of the cast.
+            const fall: Vec2 = node.cast.dir === undefined ? [-c.light[0] * node.cast.length, -c.light[1] * node.cast.length] : [Math.cos(node.cast.dir * DEG) * node.cast.length, Math.sin(node.cast.dir * DEG) * node.cast.length];
+            const shadows = castShadows(c, n, t, view.zoom, fall, world, places, feet, alpha);
+            if (shadows.length > 0 && node.cast.opacity > FAINT) {
+              const blur = node.cast.soft * world[index]!.scale;
+              items.push({ kind: 'group', node: n, opacity: node.cast.opacity, items: [{ kind: 'cast', node: n, shadows }], ...(blur > 0 ? { soft: blur } : {}) });
+            }
+          }
           break;
         case 'shape':
           if (xf.scale <= HIDDEN) break;
@@ -1018,7 +1401,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
               break;
             }
           }
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...standing(index) });
+          // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -1063,7 +1447,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
           // A line with a least width is as wide, in its own units, as it takes to be that wide on screen; never thinner than it was made.
           const held = node.least === undefined ? {} : { width: Math.max(node.width, node.least / Math.max(world[index]!.scale * view.zoom, 1e-9)) };
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...standing(index) });
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {

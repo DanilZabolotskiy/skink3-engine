@@ -177,6 +177,8 @@ export interface CLayer {
   readonly persp: PerspTrack | null;
   /** True when the layer orders what it draws: it is a perspective layer, or a node listed in it has a depth. */
   readonly ordered: boolean;
+  /** True when a group of the layer draws its children far to near (sort: 'depth'). */
+  readonly sorted: boolean;
 }
 
 export interface CompiledShot {
@@ -212,9 +214,21 @@ export interface CompiledShot {
   readonly spatial: boolean;
   /** True when a node of the shot is a body with a height (a rise). */
   readonly risen: boolean;
+  /** True when a group of the shot draws its children far to near (sort: 'depth'). */
+  readonly sorted: boolean;
+  /**
+   * By node index: the least size on screen at which a body is drawn in full, from the nearest group above the node
+   * that says so (detail), and -1 for a node under no such group. Null in a shot without any.
+   */
+  readonly detail: readonly number[] | null;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 'text' }>;
+
+/** True for a group that draws its children far to near. */
+function sortsChildren(node: SceneNode): boolean {
+  return node.type === 'group' && node.sort === 'depth';
+}
 
 /** True for the nodes that have a place of their own: a position, a rotation and a size in their parent's space. */
 export function isPlaced(node: SceneNode): node is Placed {
@@ -629,6 +643,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           if (d.parent >= 0) fail(`${where}: shape "${node.id}" has a haze: that is for a shape listed directly in a layer's nodes; put the haze beside the group, not in it`);
           if (view) fail(`${where}: shape "${node.id}" has a haze, and the layer "${spec.layers[d.layer]!.id}" is a perspective layer; a haze lies in a flat layer`);
         }
+        if (node.openings?.color) colors['openings'] = col(node, 'openings.color', node.openings.color);
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
           if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
@@ -657,6 +672,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         }
         break;
       case 'group':
+        if (node.cast) colors['cast'] = col(node, 'cast.color', node.cast.color);
         if (node.follow) {
           springKind = 'follow';
           springSpec = node.follow;
@@ -684,6 +700,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         if (node.pulseColor) colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
         if (node.side) colors['side'] = col(node, 'side', node.side);
         if (node.rise !== undefined && node.dash) fail(`${where}: stroke "${node.id}" has a rise and dashes; a wall is a solid line: leave dash out`);
+        if (node.rise !== undefined && d.parent >= 0 && sortsChildren(drafts[d.parent]!.node) && strokePulses.has(d.index)) {
+          fail(`${where}: pulse cannot target "${node.id}": it is a wall among children drawn far to near (sort: 'depth'), which is drawn stretch by stretch; run the light along a flat stroke drawn over the group`);
+        }
         break;
       case 'text':
         colors['ink'] = col(node, 'ink', node.ink);
@@ -925,6 +944,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       tint: layer.tint ?? defaultTint(depth),
       persp: perspTracks[li]!,
       ordered: layer.perspective !== undefined || layerNodes[li]!.some((i) => nodes[i]!.depth !== null || (nodes[i]!.node as { depth?: number }).depth !== undefined),
+      sorted: layerNodes[li]!.some((i) => sortsChildren(nodes[i]!.node)),
     };
   });
 
@@ -1025,7 +1045,20 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     backgroundTrack,
     spatial: perspTracks.some((track) => track !== null),
     risen: nodes.some((n) => n.rise !== null),
+    sorted: nodes.some((n) => sortsChildren(n.node)),
+    detail: detailLevels(nodes),
   };
+}
+
+/** The detail each node is worth: that of the nearest group above it that says so. A node comes after its parent. */
+function detailLevels(nodes: readonly CNode[]): number[] | null {
+  if (!nodes.some((n) => n.node.type === 'group' && n.node.detail !== undefined)) return null;
+  const out: number[] = [];
+  for (const n of nodes) {
+    const above = n.parent >= 0 ? out[n.parent]! : -1;
+    out.push(n.node.type === 'group' && n.node.detail !== undefined ? n.node.detail.min : above);
+  }
+  return out;
 }
 
 /** The name the camera of a perspective layer has in the motion review, and in intended(). */
