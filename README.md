@@ -2,7 +2,40 @@
 
 A code-first engine for animated science-explainer videos in a flat-vector style. It draws crisp shapes lit automatically, in the colours of the production's palette, with depth of field and glow, and computes their motion with physics at 60 fps. Scenes are TypeScript, written by people or by LLM agents. Skia draws the frames on the GPU without a browser, and they are piped straight into ffmpeg.
 
-> **Status: pre-alpha, phase 0 done (November 2026).** The first engine code is in: a vertical slice through the whole path (scene → look and light → motion → physics bake → camera → render → ffmpeg) and a 15-second demo shot that goes through it. Every layer is real but minimal; what is built and what is only planned is listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The roadmap is at the end of this file.
+<table>
+  <tr>
+    <td width="50%"><a href="docs/gallery/demo.png"><img src="docs/gallery/demo.png" alt="A glowing source sends pulses of light along its links to five nodes, a creature watches, and a pile of pieces lies in a tray"></a></td>
+    <td width="50%"><a href="docs/gallery/reef.png"><img src="docs/gallery/reef.png" alt="A jelly rises over a garden of corals, fish swim past, and shafts of light fall through the water"></a></td>
+  </tr>
+  <tr>
+    <td><b>Automatic light, glow and physics:</b> pulses of light run along the links of a network, and a handful of rigid bodies has tumbled into a tray. <a href="examples/demo/scene.ts">examples/demo</a></td>
+    <td><b>Depth of field and a living frame:</b> layers in and out of focus, shafts of light, particles, and things that sway, swim and pulse. <a href="examples/reef/scene.ts">examples/reef</a></td>
+  </tr>
+  <tr>
+    <td><a href="docs/gallery/sea.png"><img src="docs/gallery/sea.png" alt="A sea at sunset runs to the horizon, with sailing boats, a lighthouse, a rock arch in front of the sun and a path of light on the water"></a></td>
+    <td><a href="docs/gallery/kites.png"><img src="docs/gallery/kites.png" alt="Three kites fly on their lines over a green hill by day, a flag waves on a pole, and two creatures watch"></a></td>
+  </tr>
+  <tr>
+    <td><b>A perspective layer:</b> a sea that runs to the horizon under a camera of its own, with boats, rocks and their mirror images standing in it. <a href="examples/sea/scene.ts">examples/sea</a></td>
+    <td><b>Motion as a function of time (<code>drive</code>):</b> kites that wander on the wind, their lines and tails, and a flag whose outline follows it. <a href="examples/kites/scene.ts">examples/kites</a></td>
+  </tr>
+</table>
+
+Each picture is one frame of an example with neutral content, at 1920×1080, as `still` writes it: `node bin/skink3.mjs still examples/reef/scene.ts --time 5.5` (the demo at 12.3 s, the sea at 5 s, the kites at 4.2 s).
+
+## Status
+
+**Working and in use; still growing (November 2026).** Complete videos are made with it in a separate production repository, as 4K masters at 60 fps. There are no releases: a production depends on a checkout of this repository. What the engine does today:
+
+- **Picture.** Circles, capsules, rounded polygons, blobs, free-form regions, links, strokes, labels, free-standing text, counters, eyes and particle emitters. One light per shot makes the shadow crescents, rims, highlights and glow of every shape. Depth layers have parallax, depth of field and atmospheric perspective; a layer can be a space of three dimensions under a camera of its own. A shape can be a cover, a clip, or a vessel whose content rises to a level.
+- **Motion.** A scene states intents, and the engine adds anticipation, arcs, overshoot and springs: moves, hops, travel along free-form paths, turns, changes of size, opacity, fill and level, lines that draw themselves, outlines that change shape, pulses of light, and `drive` for any motion that is a function of time. The camera drifts, pushes in, follows a path and takes keys.
+- **Physics.** Rigid bodies (Rapier 2D) and particles, baked beforehand with fixed seeds.
+- **Text and languages.** String tables per language, bundled fonts for Latin, Cyrillic and Greek with a check of every glyph, text that fits itself, and subtitles from word timings (.srt, .vtt, .ytt).
+- **Sound.** The sound effects of a shot, built from its events and a bank of sounds that a production brings.
+- **Reviews without watching.** The motion review, the physics review and the contrast review report their findings as text, with trails, graphs and close-ups.
+- **Render.** Deterministic frames on the GPU, in parallel chunks, at any 16:9 width; a re-render matches pixel for pixel.
+
+Not built yet: transitions between shots, soft bodies, ropes, flocks and fluids, motion blur, narration, music and the mix of a film's sound. The full list of what a scene cannot do yet closes [docs/SCENES.md](docs/SCENES.md); what each module does is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the roadmap is at the end of this file.
 
 ## Why
 
@@ -43,7 +76,7 @@ Requirements: Node 26 or newer, ffmpeg on `PATH` (for `render` only).
 
 ```
 npm ci
-npm run check                                             # tsc, unit tests, scene checks of the demo
+npm run check                                             # tsc, unit tests, scene checks of five example shots
 node bin/skink3.mjs still examples/demo/scene.ts --frame 450     # one frame       -> out/demo/still_00450_en.png
 node bin/skink3.mjs sheet examples/demo/scene.ts                 # contact sheet   -> out/demo/sheet_en.png
 node bin/skink3.mjs strip examples/demo/scene.ts --from 388 --count 24 --step 3    # motion strip
@@ -60,7 +93,7 @@ node bin/skink3.mjs sfx examples/demo/scene.ts --bank <bank.json> --sheet   # an
 
 `node bin/skink3.mjs help` lists every command and option. Output goes to `./out`, the bake cache to `./cache`, both under the directory the command is run from.
 
-How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift, and that pushes in on a moment while the loop goes on. [examples/atlas/scene.ts](examples/atlas/scene.ts) is a third, for lines: a route that draws itself behind a bead, dots that close into a line, a dashed outline and a ring that fills to a share, with a camera that pushes in and pulls back on cue, a title and a note that belong to the frame, a word on a block, bars that grow from their feet, a counter that runs with the route, a cog that spins and slows to rest, and an island with a bay under it all.
+How to write a scene: [docs/QUICK-REFERENCE.md](docs/QUICK-REFERENCE.md) on one page, [docs/SCENES.md](docs/SCENES.md) in full. The smallest one is [examples/minimal/scene.ts](examples/minimal/scene.ts). [examples/flow/scene.ts](examples/flow/scene.ts) is a second, 10-second shot for the things the demo does not have: beads that travel along a path at one speed and vanish behind a cover, a vessel whose content rises to a level, fizz clipped to that content, a creature that hops and squashes, and a camera that goes round a loop, so that a subject stays framed while the camera keeps the speed of a drift, and that pushes in on a moment while the loop goes on. [examples/atlas/scene.ts](examples/atlas/scene.ts) is a third, for lines: a route that draws itself behind a bead, dots that close into a line, a dashed outline and a ring that fills to a share, with a camera that pushes in and pulls back on cue, a title and a note that belong to the frame, a word on a block, bars that grow from their feet, a counter that runs with the route, a cog that spins and slows to rest, and an island with a bay under it all. [examples/drive/scene.ts](examples/drive/scene.ts) has things that follow a function of time, and [examples/space/scene.ts](examples/space/scene.ts) a perspective layer. The three shots of the gallery, each with a palette of its own, are [examples/reef/scene.ts](examples/reef/scene.ts) (under water: depth of field, light from above, emitters), [examples/sea/scene.ts](examples/sea/scene.ts) (a sea at sunset in a perspective layer) and [examples/kites/scene.ts](examples/kites/scene.ts) (a windy hill by day: lines, tails and a flag that follow a function of time).
 
 ### Using the engine from another repository
 
@@ -144,22 +177,22 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups. The contrast review: named nodes against what is seen behind them, with the production's thresholds |
 | `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), the sound sheet, PCM WAV read and written |
 | `src/cli`, `bin/` | the `skink3` command |
-| `examples/` | the demo shot, the flow shot, the atlas shot, the drive shot (things that follow a function of time), the space shot (a perspective layer) and a minimal scene |
+| `examples/` | the demo shot, the flow shot, the atlas shot, the drive shot (things that follow a function of time), the space shot (a perspective layer), the three shots of the gallery with palettes of their own (reef, sea, kites) and a minimal scene |
 | `test/` | unit and determinism tests (`node --test`) |
 | `assets/fonts/` | the bundled font families, each with its licence |
 | `bench/` | drawing and physics benchmarks |
 | `tools/metrics/` | style and motion metrics for any video — see [docs/METRICS.md](docs/METRICS.md) |
-| `docs/` | principles, architecture, stack, scene authoring (the guide and its quick reference), motion review, physics review, metrics |
+| `docs/` | principles, architecture, stack, scene authoring (the guide and its quick reference), motion review, physics review, metrics; the pictures of the gallery in `docs/gallery/` |
 
 ## Roadmap
 
 | Phase | Scope | Done when | State |
 |---|---|---|---|
 | 0 | A 15-second test shot through the whole path: scene → light → physics bake → GPU render → ffmpeg | the shot reads as the target genre, and its metrics fall in the target ranges | **done** — see the demo shot above |
-| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths, camera keys and zoom keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change, fallback fonts for symbols and Greek with a check of every glyph, palettes without rules of the engine's own, a review of contrast and perspective layers are built) | three reference shots (dark, light, microscopic) | next |
-| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, turns and travels whose speed is keyed over time, sizes that change on a speed profile, pulses of light along links and along strokes, squashes, nodes and outlines that follow a function of time, and sound effects from the events of a scene are built) | one demo shot per layer | planned |
+| 1 | Core picture: more node types, palettes from a mood, camera (spring follow), bubbles, digits that roll, full script coverage with fallback fonts, transitions (the motion review, the physics review, camera paths, camera keys and zoom keys, a background keyed over time, covers, clipping and levels, strokes, free-standing text and counters, free-form regions and outlines that change, fallback fonts for symbols and Greek with a check of every glyph, palettes without rules of the engine's own, a review of contrast and perspective layers are built) | three reference shots (dark, light, microscopic) | in progress |
+| 2 | Motion and physics: more intents, simple rigs, ropes, soft bodies, flocks, fluids; kinematic hand-off, goal forces, seed search (speed profiles, hops, travel along free-form paths, turns and travels whose speed is keyed over time, sizes that change on a speed profile, pulses of light along links and along strokes, squashes, nodes and outlines that follow a function of time, and sound effects from the events of a scene are built) | one demo shot per layer | in progress |
 | 3 | Library: generators (L-systems, procedural bodies, scattering), characters under the simple-forms rule, infographics | character and prop sheets | planned |
-| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | planned |
+| 4 | Pipeline: script → narration with word timings → shots → checks → render → subtitles; translation with re-render per language (subtitles from word timings and the sound effects of a shot are built) | a complete video | started |
 
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
