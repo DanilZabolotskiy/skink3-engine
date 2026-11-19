@@ -102,7 +102,7 @@ drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of its dashes
 bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
 widthTo('wire', { at: 4, to: 20, /* = */ dur: 0.6, overshoot: 0.15 }); // a link or a stroke: its width
-reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a region or a stroke, point for point; + smooth
+reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /* = */ dur: 1.2, profile: 'ease', ramp: 0.3 }); // a region or a stroke, point for point; + smooth; matchPoints, reachedAt: any two outlines
 drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /* = */ at: 0 }); // a function of time: at, rotation, scale, opacity, depth, points; or samples: { at: [...] }
 pulse('wire', { at: 2, /* = */ dur: 0.7, bump: 0.14 }); // bumps the far node at at + dur. A stroke: + from, to (shares), profile, length, node (bumped)
 openTo('pupil', { at: 1, to: 1, /* = */ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
@@ -132,7 +132,7 @@ popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names 
 sfx('chime', { at: 6, /* = */ gain: 1 }); // placed by hand, as on a word; + node: panned to it
 ```
 
-Only what is seen sounds; `skink3 sfx` makes the track from a bank.
+Only what is seen sounds.
 
 ## Command line
 

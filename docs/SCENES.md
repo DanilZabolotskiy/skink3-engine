@@ -296,6 +296,20 @@ cameraTo({ at: 11, zoom: 4000, dur: 3, profile: 'out' }),          // ... that s
 - On a camera `path` the keys act from where the path has carried the camera; after a key the path goes on, as large on screen as before.
 - A camera key is no node's intent: it has no target, no sound and makes no event. The motion review judges it as it judges the camera: a `'steady'` key from rest is an `abrupt-start` and an `abrupt-stop` on `(camera)`; mark it with `intended` when it is meant.
 - Scaling a group instead of the camera leaves the other layers and their parallax behind; use a camera key.
+- **A zoom from a wide view into a detail, in one shot and without a cut.** Draw the detail in the units that suit it, as the children of a group that stands at its place in the wide view at its true size there (`scale: 1 / zoom`), and zoom the camera into that place by that factor: the detail arrives as it was drawn.
+
+```ts
+const ZOOM = 240;                                                    // the town is drawn 240 times as large as it is in the wide view
+group({ id: 'town', at: [310, -40], scale: 1 / ZOOM, opacity: 0, children: [/* the town, in its own units, about [0, 0] */] }),
+// timeline
+cameraTo({ at: 2, zoom: ZOOM, to: [310, -40], dur: 7 }),             // one move from the wide view to the town
+fadeTo('mark', { at: 4.4, to: 0, dur: 0.8 }),                        // what marked the place in the wide view goes ...
+fadeTo('town', { at: 4.6, to: 1, dur: 1.2 }),                        // ... and the town comes up while it is still small
+```
+
+  - The two pictures change places on the way: the coarse shapes of the wide view do not bear the whole zoom, and the detail is a speck before it. Fade the marks, lines and labels of the wide view out as they grow, and the group in.
+  - What stands at a thousandth of its size or less, the scale of the group times its own, counts as hidden and is not drawn: keep the scales inside the group near 1, and take a factor of 500 at most in one group.
+  - The camera is no life of the frame (see Motion review): give the detail something that moves on its own for the seconds after the zoom.
 
 #### Zoom keys
 
@@ -506,6 +520,8 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 ### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
+
+Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a group has no picture of its own, so it can hold a detail of a wide view at its true size there, for a zoom into it (see Camera, a zoom into a detail).
 
 `depth` is its place in the draw order of its layer (see `layer`). `plane` and `back` are for a group listed in a perspective layer: the group and all it holds lie in a plane of the space (see A perspective layer). A group with nothing in it also serves as a corner: a place that a `drive` moves and that `link`s hold on to (see A node that follows a function of time).
 
@@ -1035,6 +1051,31 @@ reshape('shore', { at: 2, dur: 2.4, points: COAST, smooth: 1 }),    // the dotte
 - It plays on top of the moves, turns, sizes and fades of the node. Children of a region keep their places.
 - A `reshape` makes no event. The motion review judges it as a move, on the channel `outline`: the travel of the point that goes farthest. `'steady'` between two rests in view is `mechanical`; while an outline changes, the node counts as life in the frame.
 
+**Two outlines that were not made for each other.** A `reshape` wants as many points in both outlines, from the same place and the same way round. Two outlines that come from elsewhere (the edge of a thing at two moments, a small ring and the ragged ground it grows into) have neither. `matchPoints` gives both, and `reachedAt` says when the outline, on its way, gets to a place, so that what stands there can appear as the edge passes it:
+
+```ts
+import { matchPoints, reachedAt } from 'skink3-engine';
+// A yard of five corners and the ground it grows into, of eleven: nothing in common but the place.
+const YARD: Vec2[] = [[-60, -50], [40, -70], [80, 10], [10, 60], [-70, 30]];
+const GROUND: Vec2[] = [[-300, -120], [-120, -230], [60, -180], [240, -240], [330, -60], [260, 80], [320, 200], [90, 170], [-80, 250], [-250, 160], [-340, 20]];
+const [yard, ground] = matchPoints(YARD, GROUND, { points: 60 });
+const GROW = { at: 2, dur: 4 };
+const HUT: Vec2 = [200, 40];
+region({ id: 'town', fill: 'mid.mist', points: yard, smooth: 0 }),
+rect({ id: 'hut', at: HUT, w: 18, h: 14, fill: 'accent.amber' }),
+// timeline
+reshape('town', { ...GROW, points: ground }),
+popIn('hut', { at: GROW.at + GROW.dur * (reachedAt(yard, ground, HUT) ?? 1) }),   // the hut comes up as the edge of the town passes its place
+```
+
+- **`matchPoints(from, to, { points?, closed? })`** returns the two outlines, each as the same number of points a set share of its own length apart. Both are turned clockwise; the first starts at its first point, and the second where the points have the least way to go in all. So neither the place a list starts from nor the way round it is given matters.
+  - `points`: how many; unless given, as many as the outline with more has, and 24 at least. 600 at most, as a region takes. The points are spread evenly, so a corner of the outline falls between two of them: give a few times the number of its corners, and `smooth: 0` keeps them sharp enough.
+  - `closed: false`: for two lines that are not closed (the `points` of an open `stroke`): matched from their first points to their last.
+  - It does not promise that a region stays a region on the way. It does for an outline and one round it, or two of a like place and form; where the shot is refused, give more points or reshape in two steps.
+- **`reachedAt(from, to, place, { profile?, ramp? })`** returns the share of the `dur` of that `reshape`, 0 to 1, at which the outline first holds `place`: `0` when the first outline holds it already, `undefined` when the last does not.
+  - `from` and `to` are the outlines as the `region` and its `reshape` have them, point for point; `profile` and `ramp` are those of the `reshape`, when it has others than the defaults.
+  - It takes the outline with straight edges (`smooth: 0`); under a rounded one the edge passes a moment earlier or later.
+
 ### A node that follows a function of time
 
 The moves above bring curves of their own. Some motion is nobody's curve but the subject's: the corner of a wire frame that is turned in four dimensions and projected, a body on an orbit that winds inward, a ring that grows as a square root does, the outline of a sheet that curls into a tube. `drive` hands a node to a function that the scene computes.
@@ -1287,6 +1328,7 @@ Other helpers a scene may call:
 | `rampProgress(u, a, b)`, `profilePeak(profile, ramp)` | the progress of a plain profile with eased ends of the shares `a` and `b`; its peak speed as a multiple of the mean |
 | `moveTimes(options)` | the moments of a move (see Moves) |
 | `pathLength(path)`, `pathTable(path)`, `pathAt(table, distance)` | the length of a free-form path `{ points, closed, smooth }`, its table, and the point at a distance along it |
+| `matchPoints(from, to)`, `reachedAt(from, to, place)` | two outlines as the same number of points, matched for a `reshape`; the share of that change at which the outline first holds a place (see An outline that changes) |
 | `new Noise(seed, name)` | seeded smooth noise between -1 and 1: `n1(x)`, `n2(x, y)` |
 | `frameToSeconds(frame)`, `secondsToFrame(seconds)` | a frame as a moment, and the frame that shows a moment |
 

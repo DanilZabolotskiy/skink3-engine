@@ -13,6 +13,7 @@ export { drive, perspectiveTo, type Driven, type DriveSamples } from './motion/i
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile, type SpeedKeys } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
+export { matchPoints, reachedAt } from './motion/match.ts';
 export { definePalette, checkPalette, resolveColor, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, HueBand, Palette, PaletteIssue, PaletteRule, PaletteSpec, PaletteTones, Role } from './look/palette.ts';
 export { hsv, hexToHsv, lightness, mix } from './look/color.ts';

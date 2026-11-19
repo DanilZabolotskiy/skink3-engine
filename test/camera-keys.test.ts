@@ -9,12 +9,15 @@ import {
   compileShot,
   evaluate,
   frameRaw,
+  group,
   heightFor,
   IntentError,
   layer,
   layerView,
   popIn,
+  rect,
   reviewMotion,
+  SceneError,
   sceneEvents,
   shot,
   type CompiledShot,
@@ -188,4 +191,56 @@ test('camera keys: the motion review judges a camera key, and the events of the 
   // The camera is no event.
   const c = compileShot(make([popIn('dot', { at: 0.2 }), cameraTo({ at: 1, zoom: 2 })]));
   assert.deepEqual(sceneEvents(c, await bakeShot(c)).map((e) => e.kind), ['appear']);
+});
+
+test('camera keys: a detail drawn in its own units sits in a wide view at its true size, and a deep zoom shows it as it was drawn', async () => {
+  // A yard 800 units wide with a gate 200 wide in its middle, a five-hundredth as large in the wide view, to the right of the middle.
+  const yard = (scale: number): ReturnType<typeof group> =>
+    group({
+      id: 'yard',
+      at: [300, 0],
+      scale,
+      children: [rect({ id: 'ground', w: 800, h: 800, fill: 'accent.pink', lit: false }), rect({ id: 'gate', w: 200, h: 200, fill: 'deep.night', lit: false })],
+    });
+  const spec = (scale: number, timeline: Key[]): ShotSpec =>
+    shot({
+      id: 'tiny',
+      seconds: 6,
+      seed: 5,
+      palette,
+      strings: { en: {} },
+      background: { inner: 'deep.night', outer: 'deep.night' },
+      atmosphere: 'mid.mist',
+      vignette: 0,
+      camera: STILL,
+      layers: [layer({ id: 'stage', depth: 0, nodes: [yard(scale)] })],
+      timeline,
+    });
+  const WIDTH = 480;
+  const red = async (s: ShotSpec, frame: number, x: number, y: number): Promise<boolean> => {
+    const c = compileShot(s);
+    const raw = await frameRaw(c, await bakeShot(c), frame, { width: WIDTH, lang: 'en', gpu: false });
+    const k = WIDTH / 1920;
+    return raw[(Math.round(heightFor(WIDTH) / 2 + y * k) * WIDTH + Math.round(WIDTH / 2 + x * k)) * 4]! > 150;
+  };
+  const deep = spec(0.002, [cameraTo({ at: 1, zoom: 500, to: [300, 0], dur: 3 })]);
+  // In the wide view the yard is under two units wide: it is no more than a speck.
+  assert.equal(await red(deep, 30, 300, 0), false);
+  // At the end of the zoom it fills the frame as a yard of 800 units drawn at scale 1 would: its ground, and the gate in its middle.
+  assert.equal(await red(deep, 300, 300, 0), true);
+  assert.equal(await red(deep, 300, -300, 300), true);
+  assert.equal(await red(deep, 300, 0, 0), false);
+  assert.equal(await red(deep, 300, 500, 0), false);
+  // The picture is the one the same yard gives at scale 1 under a camera that looks at it without a zoom.
+  const plain = compileShot(spec(1, [cameraTo({ at: 1, to: [300, 0], dur: 3 })]));
+  const zoomed = compileShot(deep);
+  const a = await frameRaw(zoomed, await bakeShot(zoomed), 300, { width: WIDTH, lang: 'en', gpu: false });
+  const b = await frameRaw(plain, await bakeShot(plain), 300, { width: WIDTH, lang: 'en', gpu: false });
+  let off = 0;
+  for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i]! - b[i]!) > 24) off++;
+  assert.ok(off < (a.length / 4) * 0.002, `${off} pixels differ`);
+  // A group may be far smaller and larger than a shape, down to twice the size at which a node counts as hidden.
+  assert.doesNotThrow(() => yard(500));
+  assert.throws(() => yard(0.001), (e: unknown) => e instanceof SceneError && /group\("yard"\): scale must be a number in 0\.002\.\.500/.test(e.message));
+  assert.throws(() => rect({ id: 'r', w: 10, h: 10, fill: 'accent.pink', scale: 0.001 }), /rect\("r"\): scale must be a number in 0\.01\.\.100/);
 });

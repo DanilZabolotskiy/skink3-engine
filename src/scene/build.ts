@@ -440,6 +440,7 @@ export function group(o: {
   /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
   depth?: number;
   rotation?: number;
+  /** Default 1; 0.002 to 500 (other nodes 0.01 to 100): a detail drawn in its own units sits in a wide view at its true size, for a deep zoom. */
   scale?: number;
   /** 0..1 at the start; default 1. The group fades as one picture. */
   opacity?: number;
@@ -475,7 +476,9 @@ export function group(o: {
     id: idOf(where, o.id),
     ...place(where, o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
-    scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
+    // A group is drawn through its children, so it may be far smaller than a shape: a detail of a wide view at its true size, for a deep zoom.
+    // Its floor is twice the size at which a node counts as hidden (HIDDEN of the evaluation).
+    scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.002, 500),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
     upright: o.upright ?? false,
     children: children(where, o.children),
