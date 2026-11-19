@@ -45,6 +45,18 @@ test('cast: a body throws a shadow on the ground, as long as it is high, the way
   assert.deepEqual(list.map((i) => i.kind), ['cast', 'shape']);
 });
 
+test('cast: the shadows are a leaf like any other, read by its node and by how much of it is there', async () => {
+  // What reads a list asks every leaf but particles for its node and its alpha, whatever kind it is.
+  const there = (list: Awaited<ReturnType<typeof items>>, id: string): number => {
+    let most = 0;
+    for (const i of list) if (i.kind !== 'particles' && i.node.id === id && i.alpha > most) most = i.alpha;
+    return most;
+  };
+  assert.equal(there(await items(make(casting(plain, body()))), 'g'), 1, 'whole bodies, whole shadows');
+  const half = there(await items(make(casting(plain, body({ opacity: 0.5 })))), 'g');
+  assert.ok(Math.abs(half - 0.5) < 1e-9, `a body that is half there: ${half}`);
+});
+
 test('cast: left to itself a shadow falls away from the light of the shot', async () => {
   const node = group({ id: 'g', cast: { color: 'deep.abyss' }, children: body() });
   assert.deepEqual(node.cast, { color: 'deep.abyss', opacity: 0.35, length: 0.7, soft: 0 });

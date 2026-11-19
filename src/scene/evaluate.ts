@@ -499,6 +499,8 @@ export interface CastShadow {
 export interface CastItem {
   readonly kind: 'cast';
   readonly node: CNode;
+  /** How much of the picture is there, 0..1: as much as the body that is there most. Each shadow has its own share in `shadows`. */
+  readonly alpha: number;
   readonly shadows: readonly CastShadow[];
 }
 
@@ -655,6 +657,11 @@ export function itemWidth(item: LinkItem | StrokeItem): number {
 }
 
 export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | CastItem | GroupItem | ClipItem | StretchItem | PlaneItem;
+/**
+ * What a list comes to when its groups are opened. Every leaf carries its
+ * node, and every leaf but particles how much of it is there (alpha): what
+ * reads a list relies on both, so a new kind of leaf carries them too.
+ */
 export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem | PlaneItem>;
 
 /**
@@ -1384,7 +1391,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             const shadows = castShadows(c, n, t, view.zoom, fall, world, places, feet, alpha);
             if (shadows.length > 0 && node.cast.opacity > FAINT) {
               const blur = node.cast.soft * world[index]!.scale;
-              items.push({ kind: 'group', node: n, opacity: node.cast.opacity, items: [{ kind: 'cast', node: n, shadows }], ...(blur > 0 ? { soft: blur } : {}) });
+              let most = 0;
+              for (const s of shadows) if (s.alpha > most) most = s.alpha;
+              items.push({ kind: 'group', node: n, opacity: node.cast.opacity, items: [{ kind: 'cast', node: n, alpha: most, shadows }], ...(blur > 0 ? { soft: blur } : {}) });
             }
           }
           break;
