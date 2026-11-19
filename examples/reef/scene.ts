@@ -152,14 +152,14 @@ const anemone = (id: string, at: Vec2, fill: ColorRef, tip: ColorRef, size: numb
 
 const garden: SceneNode[] = [
   branch('fire', [-800, 400], 'accent.coral', 230, [-30, 0, 28]),
-  blob({ id: 'brain0', at: [-560, 400], r: 124, fill: 'accent.violet', seed: 3, wobble: 0.1 }),
+  blob({ id: 'dome0', at: [-560, 400], r: 124, fill: 'accent.violet', seed: 3, wobble: 0.1 }),
   anemone('rose', [-330, 350], 'accent.pink', 'light.foam', 170),
-  blob({ id: 'brain1', at: [-90, 430], r: 96, fill: 'accent.sun', seed: 8, wobble: 0.1 }),
-  blob({ id: 'brain4', at: [110, 480], r: 70, fill: 'accent.lime', seed: 2, wobble: 0.1 }),
+  blob({ id: 'dome1', at: [-90, 430], r: 96, fill: 'accent.sun', seed: 8, wobble: 0.1 }),
+  blob({ id: 'dome4', at: [110, 480], r: 70, fill: 'accent.lime', seed: 2, wobble: 0.1 }),
   branch('horn', [650, 390], 'accent.sun', 200, [-24, 16]),
-  blob({ id: 'brain2', at: [420, 430], r: 112, fill: 'accent.coral', seed: 5, wobble: 0.1 }),
+  blob({ id: 'dome2', at: [420, 430], r: 112, fill: 'accent.coral', seed: 5, wobble: 0.1 }),
   anemone('lilac', [900, 370], 'accent.violet', 'accent.sun', 150),
-  blob({ id: 'brain3', at: [1150, 420], r: 104, fill: 'accent.lime', seed: 11, wobble: 0.1 }),
+  blob({ id: 'dome3', at: [1150, 420], r: 104, fill: 'accent.lime', seed: 11, wobble: 0.1 }),
   branch('rose-tree', [1400, 400], 'accent.pink', 230, [-22, 12]),
 ];
 
