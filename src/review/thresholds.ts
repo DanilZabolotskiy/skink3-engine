@@ -52,6 +52,11 @@ export const THRESHOLDS = {
     unit: 'opacity in one frame',
     why: 'A third of full opacity in one frame is a pop: an eased fade has to be shorter than 5 frames to do that.',
   },
+  jumpFill: {
+    value: 0.34,
+    unit: 'share of the range of a channel in one frame',
+    why: 'A fill that changes a channel by a third of its range in one frame pops, as a fade does: an eased fillTo has to be shorter than 5 frames to do that.',
+  },
 
   // --- Abrupt start and stop ---------------------------------------------------
   restPx: {
@@ -181,6 +186,11 @@ export const THRESHOLDS = {
     value: 0.004,
     unit: 'opacity per frame',
     why: 'A fade slower than full range in four seconds does not read as change.',
+  },
+  aliveFill: {
+    value: 0.0005,
+    unit: 'share of the range per frame',
+    why: 'Taken from the background: a fill that turns by an eighth of the range of a channel in four seconds still reads as change; slower than that it is a hold.',
   },
   aliveBackground: {
     value: 0.0005,

@@ -4,10 +4,12 @@ import { test } from 'node:test';
 import { palette } from '../examples/demo/palette.ts';
 import {
   bakeShot,
+  cameraTo,
   circle,
   compileShot,
   computeWorld,
   drive,
+  evaluate,
   eyeOf,
   frameRaw,
   group,
@@ -274,6 +276,26 @@ test('perspective: a group that lies in a plane is drawn through the map of that
   const [bx, by] = planePoint(under, [0, 0]);
   assert.ok((await red(make([floor()], [], behind), 0, bx, by)) > 150);
   assert.ok((await red(make([floor({ back: false })], [], behind), 0, bx, by)) < 100);
+});
+
+test('perspective: when the shot camera pushes past the horizon of a plane, the plane is left out and what was drawn before it stays', async () => {
+  // A side wall of panes runs off to the left; the shot camera pushes in to the right, until the whole frame lies
+  // beyond the horizon of that wall. A pink post stands in the room, drawn before the wall.
+  const view = { aim: [0, 0, 0] as Vec3, distance: 1600, tilt: 8, turn: 7 };
+  const panes = Array.from({ length: 12 }, (_, i) => rect({ id: `pane${i}`, at: [160 + i * 340, -120], w: 320, h: 200, fill: 'accent.aqua', lit: false }));
+  const room = (wall: boolean): LayerSpec['nodes'] => [pink({ id: 'post', at: [330, 300, 0], r: 80 }), ...(wall ? [group({ id: 'wall', at: [-640, 520, -760], plane: 'side', children: panes })] : [])];
+  const push: Key[] = [cameraTo({ at: 0.5, zoom: 2.8, to: [440, 290], dur: 2 })];
+  const withWall = make(room(true), push, view, 4);
+  const without = make(room(false), push, view, 4);
+  // Before the push the wall is seen and drawn.
+  assert.notEqual(await hash(withWall, 0), await hash(without, 0));
+  // After it, nothing of the wall can be seen: the frame is the frame of the room without it, and the post is there.
+  // (A filled shape of the wall used to throw away everything drawn on the layer before it.)
+  for (const frame of [180, 239]) assert.equal(await hash(withWall, frame), await hash(without, frame), `frame ${frame}`);
+  const c = compileShot(withWall);
+  const seen = evaluate(c, await bakeShot(c), 180, 'en').layers[0]!.view;
+  const post = await drawn(withWall, 'post', 180);
+  assert.ok((await red(withWall, 180, post.x * seen.zoom + seen.tx - 960, post.y * seen.zoom + seen.ty - 540)) > 150, 'the post is drawn');
 });
 
 test('perspective: a hinge turns a plane about its own axis, out of its plane', async () => {

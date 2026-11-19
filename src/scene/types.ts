@@ -104,8 +104,12 @@ export interface ShapeNode extends NodeBase {
   readonly opacity: number;
   /** Automatic light: shadow crescent, lit rim and highlight stroke. */
   readonly lit: boolean;
+  /** false: the automatic light is drawn without its highlight stroke. Left out: with it. */
+  readonly highlight?: boolean;
   /** 0 = no glow; 1 = full line + halo + background lift. */
   readonly glow: number;
+  /** 0..1: the share of the background lift of its glow that the shape draws. Left out: all of it. */
+  readonly lift?: number;
   /** A thin coloured rim light on the shadow side. */
   readonly rimLight: ColorRef | null;
   readonly children: readonly SceneNode[];

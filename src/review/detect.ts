@@ -17,6 +17,10 @@
 // ease. A key of the width has no steady speed, so there is no mechanical
 // change of width to look for.
 //
+// A shape whose fill is keyed (fillTo) is judged for a jump only, on the
+// largest change of a channel of its colour in one frame: a colour has no
+// place and no speed to start or stop with.
+//
 // The camera of a perspective layer whose view is keyed (perspectiveTo) is
 // judged as the camera is, under the subject "(perspective:<layer id>)": for
 // a jump and for a start or a stop without an ease, on how far the picture
@@ -57,7 +61,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'particles' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'fill' | 'particles' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -652,6 +656,18 @@ export function detectMotion(series: MotionSeries): Finding[] {
         finding('jump', s.id, 'opacity', f - 1, f, step, T.jumpOpacity, 'opacity in one frame',
           `opacity: changed by ${step.toFixed(2)} between frames ${f - 1} and ${f} (from ${s.ownAlpha[f - 1]!.toFixed(2)} to ${s.ownAlpha[f]!.toFixed(2)})`),
       );
+    }
+    // Fill: a shape whose fill is keyed pops when a channel of its colour changes by a third of its range in one frame.
+    if (s.fill) {
+      for (let f = 1; f < F; f++) {
+        if (!st.seen[f] || !st.inFrame[f] || !big[f]) continue;
+        const step = s.fill[f]!;
+        if (step < T.jumpFill) continue;
+        mine.push(
+          finding('jump', s.id, 'fill', f - 1, f, step, T.jumpFill, 'share of the range of a channel in one frame',
+            `fill: a channel of its colour changed by ${step.toFixed(2)} of its range between frames ${f - 1} and ${f}`),
+        );
+      }
     }
 
     {

@@ -18,6 +18,7 @@ import { pathTable, type PathSpec } from '../motion/paths.ts';
 import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
+import { fillStep } from '../scene/fill.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
   computeWorld,
@@ -118,6 +119,11 @@ export interface PlacedSeries {
   readonly outline: Float32Array | null;
   /** Strokes whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other nodes. */
   readonly width: Float32Array | null;
+  /**
+   * Shapes whose fill is keyed (fillTo): how far the fill changes from the frame before to each frame, as the
+   * largest change of a channel, a share of its full range; null for other nodes.
+   */
+  readonly fill: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -414,6 +420,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       n.axis !== null ||
       n.outline !== null ||
       n.width !== null ||
+      n.fill !== null ||
       // A drive, a hinge that turns, and the camera of a perspective layer: where the node is drawn changes with each.
       n.driven ||
       n.hinge !== null ||
@@ -453,6 +460,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       life: type === 'stroke' || n.count !== null ? f32() : null,
       outline: n.outline || n.form?.drive ? f32() : null,
       width: n.width ? f32() : null,
+      fill: n.fill ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -727,6 +735,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.outline[f] = formWay[i]!;
       }
       if (s.width && n.width) s.width[f] = sampleWidth(n.width, t) * xf.scale;
+      if (s.fill && n.fill && f > 0) s.fill[f] = fillStep(n.fill, (f - 1) / FPS, t);
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;

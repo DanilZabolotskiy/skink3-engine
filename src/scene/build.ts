@@ -233,8 +233,12 @@ export interface ShapeOptions {
   opacity?: number;
   /** Automatic light; default true. */
   lit?: boolean;
+  /** false: the automatic light without its highlight stroke, for an outline with deep bays and long capes. */
+  highlight?: boolean;
   /** 0..1; default 0. */
   glow?: number;
+  /** 0..1: how much of its glow's lift of the background a glowing shape draws; default 1. 0 keeps the halo alone. */
+  lift?: number;
   /** Thin coloured rim light on the shadow side. */
   rimLight?: ColorRef;
   /** Nodes that move with this shape and are drawn on top of it. */
@@ -262,7 +266,7 @@ export interface ShapeOptions {
 }
 
 const SHAPE_KEYS = [
-  'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'glow', 'rimLight', 'children', 'follow', 'idle', 'body',
+  'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
   'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth',
 ];
 
@@ -302,10 +306,25 @@ function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?
   };
 }
 
+/** The options of the light and the glow that are written into a node only when they are given. */
+function lightExtras(where: string, o: ShapeOptions): { highlight?: boolean; lift?: number } {
+  const out: { highlight?: boolean; lift?: number } = {};
+  if (o.highlight !== undefined) {
+    out.highlight = flag(where, 'highlight', o.highlight);
+    if (o.lit === false) fail(where, 'highlight is a part of the automatic light, and the shape is not lit (lit: false); leave highlight out');
+  }
+  if (o.lift !== undefined) {
+    out.lift = num(where, 'lift', o.lift, 0, 1);
+    if (!(typeof o.glow === 'number' && o.glow > 0)) fail(where, 'lift is the share of the lift of the background that the glow of the shape draws, and the shape has no glow; give it a glow, or leave lift out');
+  }
+  return out;
+}
+
 function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: SpringSpec | null): ShapeNode {
   if (o.level !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a level');
   return {
     ...extras(where, o),
+    ...lightExtras(where, o),
     ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'shape',

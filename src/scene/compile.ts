@@ -24,6 +24,7 @@ import type {
   DrawOnKey,
   DriveKey,
   FadeToKey,
+  FillToKey,
   HopKey,
   Key,
   LevelToKey,
@@ -73,6 +74,7 @@ import {
 import { COUNT_MARK } from '../text/count.ts';
 import { isRegion } from '../shape/geometry.ts';
 import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
+import { buildFillTrack, type FillTrack } from './fill.ts';
 import type { FormTrack } from './form.ts';
 import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
 import { buildPerspTrack, type PerspTrack } from './space.ts';
@@ -112,6 +114,8 @@ export interface CNode {
   readonly outline: OutlineTrack | null;
   /** Links and strokes with a widthTo: their width over time; null for a line that keeps the width it was given. */
   readonly width: WidthTrack | null;
+  /** Shapes with a fillTo: their fill over time; null for a shape that keeps the fill it was given. */
+  readonly fill: FillTrack | null;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -303,6 +307,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const counts = new Map<number, CountToKey[]>();
   const bends = new Map<number, BendToKey[]>();
   const widths = new Map<number, WidthToKey[]>();
+  const fills = new Map<number, FillToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
   const reshapes = new Map<number, ReshapeKey[]>();
@@ -487,6 +492,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         // The key may be as wide as a stroke may be; a link is held to its own limit.
         if (node.type === 'link' && key.to > LINK_MAX_WIDTH) fail(`${where}: widthTo("${node.id}"): to is ${key.to}, and a link is at most ${LINK_MAX_WIDTH} wide`);
         push(widths, index, key);
+        break;
+      case 'fillTo':
+        need(node.type === 'shape', 'shapes');
+        push(fills, index, key);
         break;
       case 'reshape':
         if (!(node.type === 'stroke' || (node.type === 'shape' && isRegion(node.shape)))) {
@@ -834,6 +843,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       outline,
       // A line without a widthTo has no track: it is as wide as it was made.
       width: (node.type === 'link' || node.type === 'stroke') && widths.has(d.index) ? buildWidthTrack(node.width, widths.get(d.index)!) : null,
+      // A shape without a fillTo has no track: it keeps the fill it was given.
+      fill:
+        node.type === 'shape' && fills.has(d.index)
+          ? buildFillTrack(
+              colors['fill']!,
+              fills.get(d.index)!.map((k) => ({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, to: col(node, `fillTo at ${k.at} s: to`, k.to) })),
+            )
+          : null,
       clipIndex,
       bodySlot,
       springSlot,

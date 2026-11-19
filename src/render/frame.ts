@@ -10,7 +10,7 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -159,7 +159,7 @@ function drawItems(
       case 'plane':
         ctx.save();
         applyPlane(ctx, item);
-        drawItems(ctx, item.items, paint, target, [...stretches, item]);
+        if (seesPlane(ctx)) drawItems(ctx, item.items, paint, target, [...stretches, item]);
         ctx.restore();
         break;
     }
@@ -167,6 +167,36 @@ function drawItems(
 }
 
 const NO_STRETCH: readonly StretchItem[] = [];
+
+/**
+ * The least 1/w at which skia maps a point through a perspective: it clips what lies nearer the plane w = 0 than this,
+ * that is, farther than 16384 times as deep as the origin of the plane.
+ */
+const PLANE_NEAR_W0 = 1 / (1 << 14);
+
+/**
+ * Whether the canvas of a context that has just been set to draw through a plane can show anything of that plane.
+ * When the shot camera has pushed in so far that every corner of the canvas lies beyond the horizon of the plane,
+ * nothing of the plane can be seen there. Worse, skia then maps the canvas into the plane as an empty rectangle at
+ * its origin, and an opaque fill that holds that origin is taken to cover the whole canvas: everything drawn on the
+ * canvas before it was thrown away. Such a plane is left out. A plane any part of the canvas sees is drawn as it was.
+ */
+function seesPlane(ctx: CanvasRenderingContext2D): boolean {
+  const t = ctx.getTransform();
+  // The transform as a 3 x 3 matrix [a c e; b d f; g h i] of the plane into the canvas.
+  const [a, b, c, d, e, f, g, h, i] = [t.m11, t.m12, t.m21, t.m22, t.m41, t.m42, t.m14, t.m24, t.m44];
+  const det = a * (d * i - f * h) - c * (b * i - f * g) + e * (b * h - d * g);
+  if (!Number.isFinite(det) || det === 0) return true;
+  // The last row of its inverse gives, at a point of the canvas, 1/w of the point of the plane drawn there. It is
+  // linear across the canvas, so it is largest at one of the corners.
+  const r0 = (b * h - d * g) / det;
+  const r1 = -(a * h - c * g) / det;
+  const r2 = (a * d - c * b) / det;
+  const width = ctx.canvas.width;
+  const height = ctx.canvas.height;
+  const most = Math.max(r2, r0 * width + r2, r1 * height + r2, r0 * width + r1 * height + r2);
+  return most >= PLANE_NEAR_W0;
+}
 
 /** Draws what comes next through the picture the camera of a perspective layer has of a plane. */
 function applyPlane(ctx: CanvasRenderingContext2D, item: PlaneItem): void {
@@ -234,7 +264,7 @@ function drawGlow(
       case 'plane':
         ctx.save();
         applyPlane(ctx, item);
-        drawGlow(ctx, item.items, paint, covers, seen, state);
+        if (seesPlane(ctx)) drawGlow(ctx, item.items, paint, covers, seen, state);
         ctx.restore();
         break;
       default: {
@@ -366,7 +396,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     for (const item of leaves) {
       if (item.kind !== 'shape') continue;
       const node = item.node.node as ShapeNode;
-      const strength = node.glow * item.alpha * Math.min(1, item.xf.scale);
+      // A shape with a lift draws that share of it; one without draws all of it (a product with 1 is exact).
+      const strength = node.glow * item.alpha * Math.min(1, item.xf.scale) * (node.lift ?? 1);
       if (strength <= 0) continue;
       const share = seen ? seen.get(item) ?? 1 : 1;
       if (share <= 0) continue;
@@ -375,7 +406,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       const y = item.xf.y * v.zoom + v.ty;
       const r = shapeExtent(itemShape(item)).outer * item.xf.scale * v.zoom * GLOW.liftRadius;
       if (r < 1) continue;
-      const color = paint.tone('base', item.node.colors['fill']!);
+      const color = paint.tone('base', itemFill(item));
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       const a = seen ? GLOW.liftAlpha * strength * share : GLOW.liftAlpha * strength;
       g.addColorStop(0, withAlpha(color, a));
@@ -464,29 +495,61 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   };
 }
 
-/** Evaluates and draws one frame. */
+/**
+ * Evaluates and draws one frame. Its canvases hold native memory until `dispose`; while they are alive, another frame
+ * drawn on the GPU may come out with other pixels (see `oneFrameAtATime`), so dispose of it before the next one.
+ */
 export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): DrawnFrame {
   return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
 }
 
+/** The frame of this process that is being drawn and read back, if there is one. */
+let frameInHand: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs the drawing and the read-back of a frame when no other frame of this process is drawn or read back, and the
+ * canvases of the one before are freed. On the GPU a frame is not the same frame while the canvases of another are
+ * alive: a heavy frame (many layers, several of them blurred) is drawn with other edges, by a few levels, when the
+ * canvases of the frame before still exist, also when that frame was read back before this one was drawn. So frames
+ * are made one at a time, whoever asks for them and however many are asked for at once: a frame is the same in a
+ * still, in a sheet, and at any place of a chunk of a render.
+ */
+function oneFrameAtATime<T>(job: () => Promise<T>): Promise<T> {
+  const run = frameInHand.then(job, job);
+  frameInHand = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** The pixels of a drawn frame as raw RGBA bytes. */
+export function readRaw(drawn: DrawnFrame, gpu: boolean): Promise<Buffer> {
+  return drawn.canvas.toBuffer('raw', { colorType: 'rgba', msaa: gpu ? GPU_MSAA : false });
+}
+
 /** One frame as raw RGBA bytes (width * height * 4). */
-export async function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
-  const drawn = drawFrame(c, bake, frame, opts);
-  try {
-    return await drawn.canvas.toBuffer('raw', { colorType: 'rgba', msaa: opts.gpu ? GPU_MSAA : false });
-  } finally {
-    drawn.dispose();
-  }
+export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
+  return oneFrameAtATime(async () => {
+    const drawn = drawFrame(c, bake, frame, opts);
+    try {
+      return await readRaw(drawn, opts.gpu);
+    } finally {
+      drawn.dispose();
+    }
+  });
 }
 
 /** One frame as PNG bytes. */
-export async function framePng(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
-  const drawn = drawFrame(c, bake, frame, opts);
-  try {
-    return await drawn.canvas.toBuffer('png', { msaa: opts.gpu ? GPU_MSAA : false });
-  } finally {
-    drawn.dispose();
-  }
+export function framePng(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
+  return oneFrameAtATime(async () => {
+    const drawn = drawFrame(c, bake, frame, opts);
+    try {
+      return await drawn.canvas.toBuffer('png', { msaa: opts.gpu ? GPU_MSAA : false });
+    } finally {
+      drawn.dispose();
+    }
+  });
 }
 
 /** Which renderer skia-canvas actually uses for the given preference. */

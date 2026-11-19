@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { concatChunks, openEncoder, type Encoder } from './encode.ts';
-import { frameRaw, heightFor } from './frame.ts';
+import { drawFrame, heightFor, readRaw, type DrawnFrame } from './frame.ts';
 
 export interface RenderJob {
   /** Absolute path of the scene module. */
@@ -46,6 +46,13 @@ const CLI_ENTRY = fileURLToPath(new URL('../../bin/skink3.mjs', import.meta.url)
 /** A worker tells its parent how far it is after this many frames. */
 const REPORT_EVERY = 5;
 
+/** A frame whose pixels are being read back, and the canvases it was drawn on. */
+interface Reading {
+  readonly frame: number;
+  readonly drawn: DrawnFrame;
+  readonly raw: Promise<Buffer>;
+}
+
 /** Renders one contiguous range of frames into one video file (used by each worker). */
 export async function renderChunk(
   c: CompiledShot,
@@ -69,28 +76,60 @@ export async function renderChunk(
   const sink = openEncoder(opts.out, opts.width, height, opts.encoder);
   const lines: string[] = [];
   let unreported = 0;
+  const ropts = { width: opts.width, lang: opts.lang, gpu: opts.gpu };
+  // The frame whose pixels are being read back, and the frame recorded meanwhile.
+  let reading: Reading | null = null;
+  let recorded: DrawnFrame | null = null;
+  /** Starts reading back a recorded frame. Its failure is reported when it is awaited, in turn. */
+  const start = (frame: number, drawn: DrawnFrame): Reading => {
+    const raw = readRaw(drawn, opts.gpu);
+    raw.catch(() => undefined);
+    return { frame, drawn, raw };
+  };
+  /** The pixels of a frame being read back; its canvases are freed as soon as they are in. */
+  const finish = async (r: Reading): Promise<Buffer> => {
+    try {
+      return await r.raw;
+    } finally {
+      r.drawn.dispose();
+    }
+  };
+  const put = async (frame: number, raw: Buffer): Promise<void> => {
+    if (raw.length !== opts.width * height * 4) throw new Error(`frame ${frame}: unexpected raw size ${raw.length}`);
+    if (opts.hashesFile) lines.push(`${frame} ${createHash('sha256').update(raw).digest('hex')}`);
+    await sink.write(raw);
+    if (++unreported >= REPORT_EVERY) {
+      opts.onFrames?.(unreported);
+      unreported = 0;
+    }
+  };
   try {
-    // Draw one frame ahead while the previous one is being handed to the encoder.
-    let pending: Promise<Buffer> | null = null;
-    for (let f = opts.from; f <= opts.to; f++) {
+    // A frame is recorded while the one before is read back. It is read back itself only once the canvases of the one
+    // before are freed, and the one before is then hashed and handed to the encoder. On the GPU a frame read back while
+    // the canvases of another frame are alive can have other pixels, so that a frame would depend on its place in the
+    // chunk; a frame that is only recorded holds nothing there and changes nothing of the frame being read back.
+    for (let f = opts.from; f < opts.to; f++) {
       if (f === opts.failAtFrame) throw new Error(`injected failure at frame ${f}`);
-      const next = f < opts.to ? frameRaw(c, bake, f, { width: opts.width, lang: opts.lang, gpu: opts.gpu }) : null;
-      if (pending) {
-        const raw = await pending;
-        if (raw.length !== opts.width * height * 4) throw new Error(`frame ${f - 1}: unexpected raw size ${raw.length}`);
-        if (opts.hashesFile) lines.push(`${f - 1} ${createHash('sha256').update(raw).digest('hex')}`);
-        await sink.write(raw);
-        if (++unreported >= REPORT_EVERY) {
-          opts.onFrames?.(unreported);
-          unreported = 0;
-        }
-      }
-      pending = next;
+      recorded = drawFrame(c, bake, f, ropts);
+      const before = reading;
+      reading = null;
+      const raw = before ? await finish(before) : null;
+      reading = start(f, recorded);
+      recorded = null;
+      if (before && raw) await put(before.frame, raw);
+    }
+    if (reading) {
+      const last: Reading = reading;
+      reading = null;
+      await put(last.frame, await finish(last));
     }
     await sink.close();
   } catch (error) {
     // Do not leave an encoder behind that waits for frames that will never come.
     sink.abort();
+    const left = reading as Reading | null;
+    if (left) await finish(left).catch(() => undefined);
+    (recorded as DrawnFrame | null)?.dispose();
     throw error;
   }
   if (unreported > 0) opts.onFrames?.(unreported);

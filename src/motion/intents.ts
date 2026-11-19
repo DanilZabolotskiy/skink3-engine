@@ -192,6 +192,18 @@ export interface WidthToKey extends Voiced {
   readonly overshoot: number;
 }
 
+/** Change the fill of a shape to another colour of the palette over time: a colour key. */
+export interface FillToKey extends Voiced {
+  readonly kind: 'fillTo';
+  readonly target: string;
+  readonly at: number;
+  /** Palette reference: the fill when the key ends. */
+  readonly to: string;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 export interface PulseKey extends Voiced {
   readonly kind: 'pulse';
   readonly target: string;
@@ -437,6 +449,7 @@ export type Key =
   | SolidToKey
   | BendToKey
   | WidthToKey
+  | FillToKey
   | PulseKey
   | OpenToKey
   | BlinkKey
@@ -1087,6 +1100,36 @@ export function widthTo(id: string, opts: { at: number; to: number; dur?: number
     to: num(w, 'to', opts.to, 0.5, 200),
     dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 60),
     overshoot: num(w, 'overshoot', opts.overshoot ?? 0.15, 0, 0.5),
+  };
+}
+
+/**
+ * Change the fill of a shape over time, from the colour it has to another
+ * colour of the palette: a lamp lights up, a region turns from one side to
+ * the other. `to` is a palette reference, as for the shape's own `fill`.
+ * Everything drawn from the fill follows it: the shadow and the light of the
+ * shape, its glow and the lift of the background around it. The colour runs
+ * round the colour wheel, hue along the short way, so a change never passes
+ * through gray. Several keys chain from the colour reached at that moment.
+ *
+ *   fillTo('lamp', { at: 2, to: 'accent.amber' })
+ */
+export function fillTo(id: string, opts: { at: number; to: string; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number }): FillToKey {
+  const w = `fillTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  if (typeof opts.to !== 'string' || !/^[a-z]+\.\S+$/.test(opts.to)) {
+    throw new IntentError(`${w}: to must be a palette reference "role.name" such as "accent.amber", got ${JSON.stringify(opts.to)}. Raw colour values are not accepted in scenes`);
+  }
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'fillTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: opts.to,
+    dur: num(w, 'dur', opts.dur ?? 0.6, 0.05, 600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
 }
 

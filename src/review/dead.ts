@@ -4,8 +4,8 @@
 // "Alive" means that something visible there changes by itself: a node moves,
 // turns, grows, fades, blinks or changes its outline, a pulse runs along a link, a link or a stroke
 // is being drawn, the dashes of a stroke close, a light runs along a stroke, a
-// link sags or pulls taut, a link or a stroke grows thick or thins, a particle
-// travels, or the background itself
+// link sags or pulls taut, a link or a stroke grows thick or thins, a shape
+// changes its fill, a particle travels, or the background itself
 // changes (which is seen everywhere). The camera is left out on purpose: its
 // drift slides the whole picture, and a picture that only slides is still a
 // hold. The camera of a perspective layer is left out in the same way: a
@@ -97,6 +97,7 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
           (s.outline !== null && Math.abs(s.outline[f]! - s.outline[f - 1]! * (s.node.form?.drive ? 1 : hold)) * zoom >= T.alivePx) ||
           // A width that changes moves the edge of the line by half the change.
           (s.width !== null && (Math.abs(s.width[f]! - s.width[f - 1]! * hold) / 2) * zoom >= T.alivePx) ||
+          (s.fill !== null && s.fill[f]! >= T.aliveFill) ||
           (s.axis !== null && Math.max(Math.abs(s.axis.sx[f]! - s.axis.sx[f - 1]!), Math.abs(s.axis.sy[f]! - s.axis.sy[f - 1]!)) * s.radius * k >= T.alivePx);
       }
       if (moves) alive[f] = alive[f]! | regionsOf(s.x[g]! * zoom + view.tx[g]!, s.y[g]! * zoom + view.ty[g]!, r);

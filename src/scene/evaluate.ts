@@ -37,6 +37,7 @@ import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
 import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
+import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneMap } from './space.ts';
@@ -344,6 +345,8 @@ export interface ShapeItem {
   readonly level?: readonly Vec2[];
   /** A region whose outline is keyed (reshape), driven, or given by points of the space: the shape it has at this frame. Left out: the shape of its node. */
   readonly shape?: ShapeSpec;
+  /** A shape whose fill is keyed (fillTo): the fill it has at this frame (#RRGGBB). Left out: the fill of its node. */
+  readonly fill?: string;
 }
 
 export interface EyeItem {
@@ -497,6 +500,11 @@ export function itemPath(item: StrokeItem): PathSpec {
   if (item.path) return item.path;
   if (item.node.node.type !== 'stroke') throw new Error(`"${item.node.id}" is not a stroke`);
   return item.node.node.path;
+}
+
+/** The fill a shape is drawn with at its frame (#RRGGBB). */
+export function itemFill(item: ShapeItem): string {
+  return item.fill ?? item.node.colors['fill']!;
 }
 
 /** The width a link or a stroke is drawn with at its frame, in its own units. */
@@ -729,6 +737,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
 
   // A region whose outline is keyed, driven or seen in perspective carries the shape it has at this frame; any other item is what it always was.
   const reshaped = (n: CNode): { shape?: ShapeSpec } => (n.outline || n.form ? { shape: shapeOf(n, t) } : {});
+  // A shape without a fillTo is the item it always was.
+  const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
   // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
   const placeOf = (index: number): Xf => places?.flat[index] ?? world[index]!;
 
@@ -831,11 +841,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             const g = levelGeometry(n, xf, t);
             if (g.level <= LEVEL_EMPTY) break;
             if (g.level < 1 - 1e-6) {
-              items.push({ kind: 'shape', node: n, xf, alpha: a, level: levelClip(g), ...reshaped(n) });
+              items.push({ kind: 'shape', node: n, xf, alpha: a, level: levelClip(g), ...reshaped(n), ...filled(n) });
               break;
             }
           }
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;

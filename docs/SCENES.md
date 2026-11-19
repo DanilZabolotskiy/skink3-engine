@@ -401,7 +401,9 @@ All shape factories take these options:
 | `scale` | `1` | |
 | `opacity` | `1` | 0..1 at the start; `fadeTo` animates it (see Opacity) |
 | `lit` | `true` | automatic light: shadow crescent, lit rim, highlight stroke |
+| `highlight` | `true` | `false` keeps the automatic light without its highlight stroke: for a lit outline with deep bays and long capes, where the stroke would cut across the shape. Only on a lit shape |
 | `glow` | `0` | 0..1: halo around the shape and a lift of the background behind it |
+| `lift` | `1` | 0..1: the share of the lift of the background its glow draws. `0` keeps the halo alone: a light that belongs inside something (a core in a shell, a window in a wall) does not brighten the sky around that thing. Only on a glowing shape |
 | `rimLight` | none | palette colour of a thin rim light on the shadow side |
 | `children` | `[]` | nodes that move with the shape and are drawn over it (shapes, groups, eyes) |
 | `follow` | none | spring: the shape lags behind its rest position and overshoots (see Springs) |
@@ -425,7 +427,7 @@ All shape factories take these options:
 
 A concave form is a `region`, or several shapes composed in a `group`.
 
-How a glow is drawn, so that its reach can be planned: a halo around the shape, blurred by 0.2 and by 0.9 of the shape's outer radius (at least 5 and 18 units, at most 14 and 64), and a lift of the background in a soft disc 5.5 outer radii wide. Both grow with the shape, so a long glowing capsule lights a wide part of the sky; both are scaled by `glow` and by the opacity. A shape that waits outside the frame still lifts the part of the frame its disc reaches.
+How a glow is drawn, so that its reach can be planned: a halo around the shape, blurred by 0.2 and by 0.9 of the shape's outer radius (at least 5 and 18 units, at most 14 and 64), and a lift of the background in a soft disc 5.5 outer radii wide. Both grow with the shape, so a long glowing capsule lights a wide part of the sky; both are scaled by `glow` and by the opacity. A shape that waits outside the frame still lifts the part of the frame its disc reaches. `lift` scales the lift alone: `lift: 0` leaves the background as it is and keeps the halo, which a clip or a cover bounds (see Covers, Clipping). The lift takes the colour the fill has at the frame, so a fill keyed with `fillTo` lifts the sky in its new colour.
 
 #### Covers
 
@@ -786,6 +788,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
 | `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
+| `fillTo(shapeId, { at, to, ... })` | shape | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key) |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
 | `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
@@ -1090,6 +1093,25 @@ Every shape, group, eye, label and link has an `opacity` (default 1) that `fadeT
 
 A translucent shape is simply a shape with `opacity` below 1, for example a soft field under a diagram: `circle({ id: 'field', r: 150, fill: 'mid.violet', lit: false, opacity: 0.2 })`.
 
+### A colour key
+
+`fillTo` changes what colour a shape is: a lamp that comes on, a light that turns from one meaning to another, a thing that warms up. The fill eases from the colour it has at `at` to another colour of the palette, and stays there.
+
+```ts
+circle({ id: 'lamp', r: 40, fill: 'dark.indigo', glow: 0.6 }),
+// timeline
+fillTo('lamp', { at: 2, to: 'accent.amber' }),                  // 0.6 s, eased
+fillTo('lamp', { at: 5, to: 'accent.coral', dur: 1.2, profile: 'steady' }),
+```
+
+- `to` is a reference to the palette, as every colour of a scene is; a raw colour is refused, and so is a colour the palette does not have.
+- It blends round the colour wheel, as a background key does: amber to coral passes through the warm hues, not through grey.
+- `profile` is `'ease'` (default), `'in'`, `'out'` or `'steady'`, with a `ramp` as a move has; `'settle'` is refused. `dur` is 0.05 to 600 s.
+- **Keys chain:** each starts from the colour the fill has at its moment, also when the one before is still under way.
+- Everything drawn from the fill follows it: the shadow crescent, the rim, the highlight, the halo of its glow and the lift of the background. A shape keyed to a colour is drawn exactly as a shape made in that colour.
+- It targets a shape. A group, a stroke, a link and a text have no fill of their own and are refused.
+- The contrast review judges the shape by the fill it has at each frame. The motion review flags a fill that pops: one that changes a channel by a third of its range in one frame (see Motion review). A changing fill is life in the frame. A colour key makes no sound.
+
 ### `stagger(ids, { at, each, order? }, make)`
 
 The same intent for a group, each a little later than the one before:
@@ -1167,7 +1189,7 @@ With `perspective: true` a node at z 0 is drawn exactly where a flat layer draws
 
 - Everything in the group is authored flat, in the units of the plane, and drawn through the picture the camera has of that plane: shapes with their light, strokes, texts, clipping and levels.
 - The place of the group is the place of the plane in the space, and its moves move the plane. Its `rotation` and `scale` act in the plane.
-- Seen from behind, a plane is drawn mirrored, as a pane of glass is; `back: false` leaves it out then. A plane the camera looks along has no picture. A plane is drawn while its place is in front of the camera; what of it reaches behind the camera is cut off.
+- Seen from behind, a plane is drawn mirrored, as a pane of glass is; `back: false` leaves it out then. A plane the camera looks along has no picture. A plane is drawn while its place is in front of the camera; what of it reaches behind the camera is cut off. When the camera of the shot pushes in or moves so far that the whole frame lies beyond the horizon of a plane, nothing of it can be seen and it is left out; what the layer draws before and after it is drawn as ever, at any zoom.
 - A group in a plane takes no `follow`, `upright` or `clipTo`, and a node is clipped only to a shape of its own plane.
 - What reads a place (a label's tail, a link's end, an eye that looks) gets the place of a node in a plane where it is drawn.
 

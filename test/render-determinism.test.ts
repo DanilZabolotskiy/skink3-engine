@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { palette } from '../examples/demo/palette.ts';
 import demo from '../examples/demo/scene.ts';
-import { bakeHash, bakeShot, compileShot, evaluate, frameRaw, heightFor, rawToPng, rendererInfo, renderSheet } from '../src/index.ts';
+import { bakeHash, bakeShot, circle, compileShot, evaluate, frameRaw, heightFor, layer, moveTo, rawToPng, rendererInfo, renderSheet, shot } from '../src/index.ts';
+import { ffmpegAvailable } from '../src/render/encode.ts';
+import { renderChunk } from '../src/render/parallel.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'bin', 'skink3.mjs');
@@ -77,6 +80,64 @@ test('render: the same frame gives the same pixels, alone or after other frames'
     relative: false,
   });
   assert.equal(sheet.subarray(1, 4).toString('ascii'), 'PNG');
+});
+
+/**
+ * A heavy picture: many layers, every third of them blurred. On the GPU such a frame came out with other pixels when
+ * it was drawn while the canvases of another frame were still alive, as a chunk drew the next frame while the one
+ * before was read back.
+ */
+const heavy = shot({
+  id: 'heavy',
+  seconds: 1,
+  seed: 1,
+  palette,
+  strings: { en: {} },
+  background: { inner: 'deep.night', outer: 'deep.abyss' },
+  atmosphere: 'mid.mist',
+  layers: Array.from({ length: 28 }, (_, i) =>
+    layer({
+      id: `l${i}`,
+      depth: 3 - i * 0.12,
+      blur: i % 3 === 0 ? 6 + i : 0,
+      nodes: [
+        ...(i === 10 ? [circle({ id: 'a', r: 80, fill: 'accent.amber' })] : []),
+        ...Array.from({ length: 6 }, (_, k) => circle({ id: `d${i}x${k}`, at: [-800 + k * 160, -300 + (k % 4) * 160], r: 60, fill: 'accent.aqua' })),
+      ],
+    }),
+  ),
+  timeline: [moveTo('a', { at: 0, to: [300, 100], dur: 1 })],
+});
+
+test('render: a frame of a chunk is the frame of a still, wherever the chunk starts and on the GPU too', { skip: !ffmpegAvailable() }, async () => {
+  const c = compileShot(heavy);
+  const bake = await bakeShot(c);
+  const dir = mkdtempSync(join(tmpdir(), 'skink3-chunk-'));
+  try {
+    for (const gpu of [false, true]) {
+      if (gpu && rendererInfo(true).renderer !== 'GPU') continue;
+      const name = gpu ? 'GPU' : 'CPU';
+      const opts = { width: 1920, lang: 'en', gpu };
+      const stills = new Map<number, string>();
+      for (let f = 28; f < 33; f++) stills.set(f, sha(await frameRaw(c, bake, f, opts)));
+      // Chunks that start one frame apart: each frame of them is the still of that frame.
+      for (const from of [28, 29]) {
+        const out = join(dir, `${name}-${from}.mp4`);
+        await renderChunk(c, bake, { from, to: 33, out, lang: 'en', width: 1920, gpu, encoder: 'x264', hashesFile: `${out}.txt` });
+        const lines = readFileSync(`${out}.txt`, 'utf8').trim().split(/\r?\n/);
+        assert.equal(lines.length, 33 - from);
+        for (const line of lines) {
+          const [frame, hash] = line.split(' ');
+          assert.equal(hash, stills.get(Number(frame)), `${name}: frame ${frame} of a chunk from ${from} is its still`);
+        }
+      }
+      // Frames asked for at once are drawn one at a time, each as it is alone.
+      const together = await Promise.all([28, 29, 30].map((f) => frameRaw(c, bake, f, opts)));
+      assert.deepEqual(together.map(sha), [28, 29, 30].map((f) => stills.get(f)), `${name}: frames asked for at once`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
 });
 
 test('bake: two separate processes write the same cache, byte for byte', () => {

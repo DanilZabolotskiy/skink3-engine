@@ -1,8 +1,8 @@
 // Speed graph: one picture of what a node does over time. The large panel is
 // its speed; small panels below show whatever else changes on it (position,
-// rotation, scale, opacity, the width of a stroke). Findings of the motion
-// review, or of the physics review, are marked where they were raised. It
-// works for a placed node, an emitter and the camera.
+// rotation, scale, opacity, the width of a stroke, the change of a fill).
+// Findings of the motion review, or of the physics review, are marked where
+// they were raised. It works for a placed node, an emitter and the camera.
 //
 // Every panel has one scale of its own. A move with ease is a hump; a linear
 // move is a plateau with vertical sides; a jump is a single spike; a spring is
@@ -167,6 +167,10 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
       // A stroke whose width is keyed.
       if (s.width && changes(s.width, from, to, 0.05)) {
         panels.push({ title: 'width of the line in its layer, units', lines: [{ name: 'width', data: s.width }], fromZero: true, height: 120, peak: false });
+      }
+      // A shape whose fill is keyed: how fast its colour changes.
+      if (s.fill && changes(s.fill, from, to, 0.001)) {
+        panels.push({ title: 'change of its fill per frame, share of the range of a channel', lines: [{ name: 'fill', data: s.fill }], fromZero: true, height: 120, peak: false });
       }
     } else if (n.emitterSlot >= 0 && series.emitters[n.emitterSlot]) {
       const e = series.emitters[n.emitterSlot]!;

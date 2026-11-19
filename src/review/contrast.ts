@@ -24,7 +24,7 @@ import { atmosphereTone, hexToLab, mix } from '../look/color.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, itemPath, itemShape, type FrameState, type Item, type LeafItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, itemFill, itemPath, itemShape, type FrameState, type Item, type LeafItem, type StretchItem } from '../scene/evaluate.ts';
 import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
 import { outlineOf } from '../shape/geometry.ts';
@@ -234,7 +234,7 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
   switch (item.kind) {
     case 'shape': {
       const ring = outlineOf(itemShape(item)).map((p) => screen(xfApply(item.xf, p)));
-      return [{ part: 'outline', color: tone(item.node.colors['fill']!), probes: edgeProbes(ring, PROBES), mode: 'edge', ground: null }];
+      return [{ part: 'outline', color: tone(itemFill(item)), probes: edgeProbes(ring, PROBES), mode: 'edge', ground: null }];
     }
     case 'stroke': {
       const table = pathTable(itemPath(item));
@@ -282,7 +282,7 @@ function surfaceOf(c: CompiledShot, state: FrameState, leaf: Leaf): Surface | nu
   let alpha: number;
   if (item.kind === 'shape') {
     poly = outlineOf(itemShape(item)).map((p) => screen(xfApply(item.xf, p)));
-    color = item.node.colors['fill']!;
+    color = itemFill(item);
     alpha = item.alpha;
   } else if (item.kind === 'label') {
     const g = item.geometry.box;

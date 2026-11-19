@@ -13,7 +13,7 @@ import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
-import { itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import { itemFill, itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { shapeExtent } from '../shape/geometry.ts';
 import { shapePath } from '../shape/path.ts';
@@ -64,6 +64,8 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number, hues: T
         let v = cache.get(k);
         if (!v) {
           v = atmosphereTone(derive(kind, hex, hues), atmosphere, tint);
+          // A fill that changes gives every frame colours of its own: the cache is emptied before it grows without end.
+          if (cache.size >= 4096) cache.clear();
           cache.set(k, v);
         }
         return v;
@@ -119,7 +121,7 @@ export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint:
     // The surface catches the light: a pale line along it, inside the shape.
     ctx.clip(placedPath(item));
     const width = Math.max(2, Math.min(5, shapeExtent(itemShape(item)).inner * 0.06)) * item.xf.scale;
-    ctx.strokeStyle = paint.tone('rim', item.node.colors['fill']!);
+    ctx.strokeStyle = paint.tone('rim', itemFill(item));
     // Half of the stroke lies above the surface, where nothing is drawn.
     ctx.lineWidth = 2 * width;
     ctx.lineJoin = 'round';
@@ -131,7 +133,7 @@ export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint:
 function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
   const node = item.node.node as ShapeNode;
   const { xf } = item;
-  const base = item.node.colors['fill']!;
+  const base = itemFill(item);
   const shape = itemShape(item);
   const path = shapePath(shape);
   ctx.save();
@@ -155,11 +157,14 @@ function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint)
     }
     ctx.fillStyle = paint.tone('rim', base);
     ctx.fill(parts.rim);
-    ctx.strokeStyle = paint.tone('highlight', base);
-    ctx.lineWidth = parts.highlightWidth;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.stroke(parts.highlight);
+    // highlight: false keeps the crescents alone: on a long outline with deep bays the stroke would cut across it.
+    if (node.highlight !== false) {
+      ctx.strokeStyle = paint.tone('highlight', base);
+      ctx.lineWidth = parts.highlightWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke(parts.highlight);
+    }
   }
   ctx.restore();
 }
@@ -177,7 +182,7 @@ export function drawShapeGlow(ctx: CanvasRenderingContext2D, item: ShapeItem, pa
   ctx.translate(xf.x, xf.y);
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
-  ctx.fillStyle = withAlpha(paint.tone('glow', item.node.colors['fill']!), node.glow * item.alpha);
+  ctx.fillStyle = withAlpha(paint.tone('glow', itemFill(item)), node.glow * item.alpha);
   ctx.fill(shapePath(itemShape(item)));
   ctx.restore();
 }
