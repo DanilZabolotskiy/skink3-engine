@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Code-first engine for animated science-explainer videos: flat vector with automatic light, physics-driven motion, deterministic 60 fps rendering with Skia on the GPU.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=26"
@@ -20,7 +21,8 @@
     "assets",
     "docs",
     "examples",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

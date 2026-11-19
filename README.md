@@ -198,4 +198,19 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 
-Not specified yet for the engine's own code. Third-party components keep their own licenses: skia-canvas (MIT), Skia (BSD-3-Clause), Rapier (Apache-2.0); ffmpeg is used as an external binary. The bundled fonts are under the SIL Open Font License 1.1, each with its licence next to it: Nunito, copyright The Nunito Project Authors ([assets/fonts/nunito/OFL.txt](assets/fonts/nunito/OFL.txt)); Noto Sans and Noto Sans Symbols, copyright The Noto Project Authors ([assets/fonts/noto-sans/OFL.txt](assets/fonts/noto-sans/OFL.txt), [assets/fonts/noto-sans-symbols/OFL.txt](assets/fonts/noto-sans-symbols/OFL.txt)). They are the files their projects publish, unmodified.
+The engine's own code, documentation and examples are under the MIT License: see [LICENSE](LICENSE). Copyright (c) 2026 DanilZabolotskiy.
+
+Third-party components keep their own licenses, and the MIT License of the engine does not cover them:
+
+| Component | Its part in the engine | License |
+|---|---|---|
+| skia-canvas | dependency, installed from npm | MIT |
+| Skia | the graphics library inside skia-canvas | BSD-3-Clause |
+| Rapier (`@dimforge/rapier2d-deterministic-compat`) | dependency, installed from npm | Apache-2.0 |
+| TypeScript, `@types/node` | development dependencies, installed from npm | Apache-2.0, MIT |
+| ffmpeg | an external binary the engine calls to encode; not distributed with it | its own: LGPL or GPL, depending on the build |
+| Nunito | bundled font, `assets/fonts/nunito/` | SIL Open Font License 1.1, copyright The Nunito Project Authors: [OFL.txt](assets/fonts/nunito/OFL.txt) |
+| Noto Sans | bundled font, `assets/fonts/noto-sans/` | SIL Open Font License 1.1, copyright The Noto Project Authors: [OFL.txt](assets/fonts/noto-sans/OFL.txt) |
+| Noto Sans Symbols | bundled font, `assets/fonts/noto-sans-symbols/` | SIL Open Font License 1.1, copyright The Noto Project Authors: [OFL.txt](assets/fonts/noto-sans-symbols/OFL.txt) |
+
+The fonts are the files their projects publish, unmodified, each with its licence next to it.
