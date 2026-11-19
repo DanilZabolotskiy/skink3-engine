@@ -8,7 +8,7 @@
 // scene API are degrees, clockwise on screen.
 
 import type { SpringSpec } from '../core/dynamics.ts';
-import type { Vec2 } from '../core/math.ts';
+import type { Vec2, Vec3 } from '../core/math.ts';
 import type { LightSpec } from '../look/light.ts';
 import type { ColorRef, Palette } from '../look/palette.ts';
 import type { MoveProfile } from '../motion/curves.ts';
@@ -17,6 +17,7 @@ import type { PathSpec } from '../motion/paths.ts';
 import type { ShapeSpec } from '../shape/geometry.ts';
 import type { TextAlign } from '../text/block.ts';
 import type { StringTables } from '../text/strings.ts';
+import type { PerspSpec, PlaneAxes } from './space.ts';
 
 /** Design size of the stage in units. */
 export const STAGE_W = 1920;
@@ -86,6 +87,13 @@ interface NodeBase {
    * contacts sound like. It never changes the picture or the bake.
    */
   readonly sound?: string;
+  /** A node listed in a perspective layer: how far away it is, the third number of its place. Left out: a place of two numbers. */
+  readonly z?: number;
+  /**
+   * A node listed in a layer: its place in the draw order of that layer. What has the larger depth is drawn first, behind
+   * the rest; in a perspective layer it is added to the node's distance from the camera. Left out: 0.
+   */
+  readonly depth?: number;
 }
 
 export interface ShapeNode extends NodeBase {
@@ -119,6 +127,13 @@ export interface ShapeNode extends NodeBase {
   readonly clipTo?: string | null;
   /** The shape is a content: it fills its own outline from the bottom up to a level. */
   readonly level?: LevelSpec | null;
+  /**
+   * A region of a perspective layer given by points of its space, around the node's place: `shape` is then the
+   * outline they have when the region is seen straight on, and the camera of the layer gives the one that is drawn.
+   */
+  readonly points3?: readonly Vec3[];
+  /** Such a region: false does not draw it when the camera sees its back. Left out: it is drawn from both sides. */
+  readonly back?: boolean;
 }
 
 export interface GroupNode extends NodeBase {
@@ -135,6 +150,13 @@ export interface GroupNode extends NodeBase {
   readonly idle: IdleSpec | null;
   /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /**
+   * A group listed in a perspective layer that lies in a plane of its space: the two axes of the plane, through the
+   * group's place. Everything in the group is drawn on that plane, as on a page or a map seen through the camera.
+   */
+  readonly plane?: PlaneAxes;
+  /** Such a group: false does not draw it when the camera sees the back of its plane. Left out: it is drawn from both sides. */
+  readonly back?: boolean;
 }
 
 /** The widest a link can be, in units: the limit of its `width`, and of a `widthTo` on it. */
@@ -198,6 +220,11 @@ export interface StrokeNode extends NodeBase {
   readonly pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /**
+   * A stroke of a perspective layer given by points of its space, around the node's place: `path` is then the line
+   * they make seen straight on, and the camera of the layer gives the one that is drawn.
+   */
+  readonly points3?: readonly Vec3[];
 }
 
 /**
@@ -365,6 +392,11 @@ export interface LayerSpec {
    * moves this far toward the shot's atmosphere colour. null derives it from the depth.
    */
   readonly tint: number | null;
+  /**
+   * Makes the layer a perspective layer: its nodes take a place of three numbers and are seen through this camera.
+   * Left out: a flat layer.
+   */
+  readonly perspective?: PerspSpec;
 }
 
 /** A free-form path for the camera: the places it looks at, in units of the focus plane. */

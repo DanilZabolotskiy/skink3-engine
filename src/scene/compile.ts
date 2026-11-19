@@ -8,6 +8,7 @@ import { buildCameraTrack, type CameraTrack } from '../camera/camera.ts';
 import { hashOf } from '../core/hash.ts';
 import type { Vec2 } from '../core/math.ts';
 import { Noise } from '../core/noise.ts';
+import { buildDriveTrack, type DriveSeg, type DriveTrack } from '../motion/drive.ts';
 import { Rng } from '../core/rng.ts';
 import { frameCount } from '../core/time.ts';
 import { HIGHLIGHT_HUE, SHADOW_HUE } from '../look/color.ts';
@@ -21,12 +22,14 @@ import type {
   CameraToKey,
   CountToKey,
   DrawOnKey,
+  DriveKey,
   FadeToKey,
   HopKey,
   Key,
   LevelToKey,
   MoveToKey,
   OpenToKey,
+  PerspectiveToKey,
   PopInKey,
   PopOutKey,
   PulseKey,
@@ -40,6 +43,7 @@ import type {
   ZoomToKey,
 } from '../motion/intents.ts';
 import {
+  buildAwayTrack,
   buildAxisTrack,
   buildCountTrack,
   buildLevelTrack,
@@ -52,6 +56,7 @@ import {
   buildStretchTrack,
   buildStrokeTrack,
   buildWidthTrack,
+  type AwayTrack,
   type AxisTrack,
   type CountTrack,
   type LevelTrack,
@@ -68,7 +73,9 @@ import {
 import { COUNT_MARK } from '../text/count.ts';
 import { isRegion } from '../shape/geometry.ts';
 import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
+import type { FormTrack } from './form.ts';
 import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
+import { buildPerspTrack, type PerspTrack } from './space.ts';
 import { resolveString } from '../text/strings.ts';
 import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_MAX_WIDTH, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
 
@@ -127,6 +134,22 @@ export interface CNode {
   readonly idleNoise: Noise | null;
   /** Eyes: the moments (seconds) a blink starts, scheduled and asked for, in order. */
   readonly blinks: readonly number[];
+  /** A node listed in a perspective layer: how far away it is over time, and the camera of its layer; null for every other node. */
+  readonly away: AwayTrack | null;
+  readonly persp: PerspTrack | null;
+  /** Index of the group that lies in a plane and holds this node (its own index for that group), or -1. */
+  readonly plane: number;
+  /** A group that lies in a plane and turns on a hinge: its turn about its own x axis and about its own y axis; null for any other node. */
+  readonly hinge: { readonly x: RotTrack | null; readonly y: RotTrack | null } | null;
+  /** A node whose place in the draw order of its layer is driven: its depth over time; null for a node that keeps the depth it was given. */
+  readonly depth: DriveTrack | null;
+  /**
+   * A region or a stroke whose outline is worked out at every frame: its points follow a drive, or they are points
+   * of the space of a perspective layer; null for a node that is the outline it was given.
+   */
+  readonly form: FormTrack | null;
+  /** True when a drive sets something of the node. */
+  readonly driven: boolean;
 }
 
 export interface CLayer {
@@ -138,6 +161,10 @@ export interface CLayer {
   readonly blur: number;
   /** 0..1 atmospheric tint. */
   readonly tint: number;
+  /** A perspective layer: its camera over time; null for a flat layer. */
+  readonly persp: PerspTrack | null;
+  /** True when the layer orders what it draws: it is a perspective layer, or a node listed in it has a depth. */
+  readonly ordered: boolean;
 }
 
 export interface CompiledShot {
@@ -169,6 +196,8 @@ export interface CompiledShot {
   readonly cameraTrack: CameraTrack | null;
   /** The background keys of the shot, or null: the background is what the shot says on every frame. */
   readonly backgroundTrack: BackgroundTrack | null;
+  /** True when some layer of the shot is a perspective layer. */
+  readonly spatial: boolean;
 }
 
 type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 'text' }>;
@@ -282,6 +311,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const cameraKeys: CameraToKey[] = [];
   const zoomKeys: ZoomToKey[] = [];
   const backgroundKeys: BackgroundToKey[] = [];
+  const drives = new Map<number, DriveKey[]>();
+  // Hinges of the groups that lie in a plane: their turns about their own x axis and about their own y axis.
+  const hingesX = new Map<number, TurnToKey[]>();
+  const hingesY = new Map<number, TurnToKey[]>();
+  // The camera keys of the perspective layers, by layer.
+  const perspKeys = new Map<number, PerspectiveToKey[]>();
   const push =<T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
     if (list) list.push(item);
@@ -319,6 +354,15 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       backgroundKeys.push(key);
       continue;
     }
+    if (key.kind === 'perspectiveTo') {
+      // A key of the camera of a perspective layer: it has no node either.
+      if (key.at > spec.seconds) fail(`${where}: perspectiveTo("${key.layer}") starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      const li = spec.layers.findIndex((layer) => layer.id === key.layer);
+      if (li < 0) fail(`${where}: perspectiveTo names the layer "${key.layer}", which does not exist (layers: ${spec.layers.map((layer) => layer.id).join(', ')})`);
+      if (!spec.layers[li]!.perspective) fail(`${where}: perspectiveTo("${key.layer}"): the layer is flat; give it the option perspective to make it a perspective layer`);
+      push(perspKeys, li, key);
+      continue;
+    }
     const index = idIndex.get(key.target);
     if (index === undefined) fail(`${where}: ${key.kind} targets "${key.target}", which does not exist (nodes: ${known()})`);
     const node = drafts[index]!.node;
@@ -354,7 +398,17 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       case 'turnTo':
         need(node.type === 'shape' || node.type === 'group' || node.type === 'stroke' || node.type === 'text', 'shapes, groups, strokes and texts');
         if (node.type === 'shape' && node.body) fail(`${where}: turnTo cannot target "${node.id}": a rigid body is turned by the physics bake`);
-        push(turns, index, key);
+        if (key.about !== undefined) {
+          // A hinge: the plane of a group turns about one of its own axes.
+          if (node.type !== 'group' || !node.plane) {
+            fail(`${where}: turnTo("${node.id}") with about turns a plane on a hinge; it applies to a group that lies in a plane of a perspective layer (give the group the option plane)`);
+          }
+          push(key.about === 'x' ? hingesX : hingesY, index, key);
+        } else push(turns, index, key);
+        break;
+      case 'drive':
+        need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
+        push(drives, index, key);
         break;
       case 'popIn':
         need(isPlaced(node) || node.type === 'label', 'shapes, groups, eyes, strokes, texts and labels');
@@ -461,6 +515,20 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     for (const p of list) if (p.bump > 0) push(bumps, toIndex, { at: p.at + p.dur, amount: p.bump });
   }
 
+  // The cameras of the perspective layers, and the group that lies in a plane around each node.
+  const perspTracks: (PerspTrack | null)[] = spec.layers.map((layer, li) => (layer.perspective ? buildPerspTrack(layer.perspective, perspKeys.get(li) ?? []) : null));
+  const planeOf: number[] = [];
+  for (const d of drafts) planeOf.push(d.node.type === 'group' && d.node.plane ? d.index : d.parent >= 0 ? planeOf[d.parent]! : -1);
+  /** The track of one channel of the drives of a node, or null when none of them sets it. */
+  const driveTrack = (id: string, channel: string, stride: number, keys: readonly DriveKey[], pick: (k: DriveKey) => readonly number[] | undefined): DriveTrack | null => {
+    const segs: DriveSeg[] = [];
+    for (const k of keys) {
+      const data = pick(k);
+      if (data) segs.push({ at: k.at, dur: k.dur, count: k.count, data });
+    }
+    return segs.length > 0 ? buildDriveTrack(id, channel, stride, segs) : null;
+  };
+
   // 3. Build the compiled nodes.
   const bodies: number[] = [];
   const springs: number[] = [];
@@ -485,6 +553,26 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     let blinks: number[] = [];
     let idleNoise: Noise | null = null;
     let clipIndex = -1;
+    // What the node is in the space of a perspective layer, if its layer is one.
+    const view = spec.layers[d.layer]!.perspective;
+    const top = d.parent < 0;
+    const listed = `that is for a node listed directly in a perspective layer (a layer with the option perspective)`;
+    if (isPlaced(node)) {
+      if (node.z !== undefined && !(top && view)) fail(`${where}: ${node.type} "${node.id}" has a place of three numbers, [x, y, z]: ${listed}`);
+      if (node.depth !== undefined && !top) fail(`${where}: ${node.type} "${node.id}" has a depth: that is for a node listed directly in a layer's nodes; inside a parent, the order of the children is the draw order`);
+    }
+    if (node.type === 'group' && node.plane) {
+      if (!(top && view)) fail(`${where}: group "${node.id}" lies in a plane: ${listed}`);
+      if (node.follow || node.upright || node.clipTo) fail(`${where}: group "${node.id}" lies in a plane: it cannot also have follow, upright or clipTo`);
+    }
+    if ((node.type === 'shape' || node.type === 'stroke') && node.points3) {
+      if (!(top && view)) fail(`${where}: ${node.type} "${node.id}" has points of three numbers, [x, y, z]: ${listed}`);
+      if (reshapes.has(d.index)) fail(`${where}: reshape cannot target "${node.id}": its points are points of the space of a perspective layer; drive them with drive()`);
+      if (node.type === 'shape' && node.idle) fail(`${where}: region "${node.id}" has points of three numbers, [x, y, z]: it cannot also have idle; put it in motion with drive()`);
+    }
+    if (view && node.type === 'shape' && node.body) {
+      fail(`${where}: rigid body "${node.id}" is in the perspective layer "${spec.layers[d.layer]!.id}"; the physics bake is flat: put the bodies in a flat layer`);
+    }
 
     if (node.type !== 'label' && node.type !== 'eye' && node.clipTo) {
       const index = idIndex.get(node.clipTo);
@@ -493,6 +581,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (other.node.type !== 'shape') fail(`${where}: ${node.type} "${node.id}" clipTo refers to ${other.node.type} "${node.clipTo}"; it must be a shape`);
       if (other.layer !== d.layer) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${node.clipTo}", must be in the same layer`);
       if (index >= d.index && index <= d.subtreeEnd) fail(`${where}: ${node.type} "${node.id}" cannot be clipped to itself or to something inside it ("${node.clipTo}")`);
+      if (planeOf[index] !== planeOf[d.index]) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${node.clipTo}", must lie in the same plane`);
       clipIndex = index;
     }
 
@@ -619,6 +708,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     let scale: ScaleTrack | null = null;
     let linkTrack: LinkTrack | null = null;
     let outline: OutlineTrack | null = null;
+    let opacity: OpacityTrack | null = null;
+    let away: AwayTrack | null = null;
+    let hinge: CNode['hinge'] = null;
+    let depth: DriveTrack | null = null;
+    let form: FormTrack | null = null;
+    const driven = drives.get(d.index) ?? [];
     try {
       if (isPlaced(node)) {
         pos = buildPosTrack(node.id, node.at, moves.get(d.index) ?? []);
@@ -626,9 +721,86 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         if (pos.turns && rot.segs.length > 0) {
           fail(`"${node.id}" has a travel that rolls or orients it and a turnTo; a node is turned by one or the other`);
         }
+        // Listed in a perspective layer: its third coordinate rides its moves.
+        if (top && view) away = buildAwayTrack(node.z ?? 0, pos, moves.get(d.index) ?? []);
+        else if ((moves.get(d.index) ?? []).some((k) => k.kind === 'moveTo' && k.z !== undefined)) {
+          fail(`moveTo("${node.id}") has a place of three numbers, [x, y, z]: ${listed}`);
+        }
+        const body = node.type === 'shape' && node.body !== null;
+        // A drive sets a channel instead of the keys of that channel, never beside them.
+        const place = driveTrack(node.id, 'place', 2, driven, (k) => (k.place && k.placeDims === 3 ? k.place.filter((_, i) => i % 3 !== 2) : k.place));
+        if (place) {
+          if (body) fail(`drive("${node.id}") cannot set the place of a rigid body: it is moved by the physics bake`);
+          if (pos.segs.length > 0) fail(`"${node.id}" has a drive that sets its place and a moveTo, a hop or a travel; a place is driven or keyed, not both: put the node in a group and move that`);
+          const dims = new Set(driven.filter((k) => k.place).map((k) => k.placeDims));
+          if (dims.size > 1) fail(`the drives of "${node.id}" set its place with two numbers and with three; a place keeps its form`);
+          if (dims.has(3) && !away) fail(`drive("${node.id}") sets a place of three numbers, [x, y, z]: ${listed}`);
+          pos = { ...pos, drive: place };
+          if (dims.has(3)) away = { ...away!, drive: driveTrack(node.id, 'place', 1, driven, (k) => k.place && k.place.filter((_, i) => i % 3 === 2))! };
+        }
+        const turn = driveTrack(node.id, 'rotation', 1, driven, (k) => k.rotation);
+        if (turn) {
+          if (node.type === 'eye') fail(`drive("${node.id}") cannot set the rotation of an eye: an eye does not turn; put it in a group and drive that`);
+          if (body) fail(`drive("${node.id}") cannot set the rotation of a rigid body: it is turned by the physics bake`);
+          if (rot.segs.length > 0 || pos.turns) fail(`"${node.id}" has a drive that sets its rotation and a turnTo, or a travel that rolls or orients it; a rotation is driven or keyed, not both`);
+          rot = { ...rot, drive: turn };
+        }
+        depth = driveTrack(node.id, 'depth', 1, driven, (k) => k.depth);
+        if (depth && !top) fail(`drive("${node.id}") sets a depth: that is for a node listed directly in a layer's nodes; inside a parent, the order of the children is the draw order`);
+        if (node.type === 'group' && node.plane && (hingesX.has(d.index) || hingesY.has(d.index))) {
+          hinge = {
+            x: hingesX.has(d.index) ? buildRotTrack(node.id, 0, hingesX.get(d.index)!) : null,
+            y: hingesY.has(d.index) ? buildRotTrack(node.id, 0, hingesY.get(d.index)!) : null,
+          };
+        }
       }
       if (isPlaced(node) || node.type === 'label') {
         scale = buildScaleTrack(node.id, popIns.get(d.index) ?? [], popOuts.get(d.index) ?? [], bumps.get(d.index) ?? [], scales.get(d.index) ?? []);
+        const size = driveTrack(node.id, 'scale', 1, driven, (k) => k.scale);
+        if (size) {
+          if (node.type === 'shape' && node.body) fail(`drive("${node.id}") cannot set the scale of a rigid body: its size is fixed by the physics bake`);
+          if (scale.grows.length > 0) fail(`"${node.id}" has a drive that sets its scale and a scaleTo; a size is driven or keyed, not both (popIn, popOut and bump still apply)`);
+          scale = { ...scale, drive: size };
+        }
+      }
+      if (node.type !== 'emitter') {
+        opacity = buildOpacityTrack(node.opacity, fades.get(d.index) ?? []);
+        const shown = driveTrack(node.id, 'opacity', 1, driven, (k) => k.opacity);
+        if (shown) {
+          if (opacity.segs.length > 0) fail(`"${node.id}" has a drive that sets its opacity and a fadeTo; an opacity is driven or keyed, not both`);
+          opacity = { ...opacity, drive: shown };
+        }
+      }
+      // An outline that is worked out at every frame: its points are driven, or they are points of the space.
+      const outlined = node.type === 'stroke' || (node.type === 'shape' && isRegion(node.shape));
+      const solid = node.type === 'shape' || node.type === 'stroke' ? node.points3 : undefined;
+      const shaped = driven.filter((k) => k.points);
+      if (shaped.length > 0 && !outlined) fail(`drive("${node.id}") sets points: that is for a region or a stroke, whose outline is a list of points`);
+      if (outlined && (shaped.length > 0 || solid)) {
+        const flat = node.type === 'stroke' ? node.path.points : node.type === 'shape' && isRegion(node.shape) ? node.shape.points : [];
+        const dims = solid ? 3 : 2;
+        const base = (solid ?? flat).flatMap((point) => [...point]);
+        if (shaped.length > 0 && reshapes.has(d.index)) fail(`"${node.id}" has a drive that sets its points and a reshape; an outline is driven or keyed, not both`);
+        for (const k of shaped) {
+          if (k.pointDims !== dims) {
+            fail(
+              solid
+                ? `drive("${node.id}") sets points of two numbers, and the node has points of the space, [x, y, z]`
+                : `drive("${node.id}") sets points of three numbers, [x, y, z]: give the node itself points of three numbers, in a perspective layer`,
+            );
+          }
+          if (k.points![0]!.length !== base.length) fail(`drive("${node.id}") sets ${k.points![0]!.length / dims} points, and the node has ${base.length / dims}; an outline keeps its number of points`);
+        }
+        form = {
+          kind: node.type === 'stroke' ? 'stroke' : 'region',
+          dims,
+          base,
+          smooth: node.type === 'stroke' ? node.path.smooth : node.type === 'shape' && isRegion(node.shape) ? node.shape.smooth : 0,
+          closed: node.type === 'stroke' ? node.path.closed : true,
+          back: node.type === 'shape' ? node.back !== false : true,
+          drive: shaped.length > 0 ? buildDriveTrack(node.id, 'points', base.length, shaped.map((k) => ({ at: k.at, dur: k.dur, count: k.count, data: k.points!.flat() }))) : null,
+          persp: solid ? perspTracks[d.layer]! : null,
+        };
       }
       if (node.type === 'link') {
         linkTrack = buildLinkTrack(node.id, draws.get(d.index) ?? [], pulses.get(d.index) ?? [], bends.get(d.index) ?? [], node.bend);
@@ -648,7 +820,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       layer: d.layer,
       parent: d.parent,
       subtreeEnd: d.subtreeEnd,
-      opacity: node.type === 'emitter' ? null : buildOpacityTrack(node.opacity, fades.get(d.index) ?? []),
+      opacity,
       pos,
       rot,
       scale,
@@ -677,6 +849,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       particleColors,
       idleNoise,
       blinks,
+      away,
+      persp: away ? perspTracks[d.layer]! : null,
+      plane: planeOf[d.index]!,
+      hinge,
+      depth,
+      form,
+      driven: driven.length > 0,
     };
   });
 
@@ -690,6 +869,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       parallax: layer.parallax ?? 1 / (1 + depth),
       blur: layer.blur ?? (depth >= 0 ? cam.focus.far * depth : cam.focus.near * -depth),
       tint: layer.tint ?? defaultTint(depth),
+      persp: perspTracks[li]!,
+      ordered: layer.perspective !== undefined || layerNodes[li]!.some((i) => nodes[i]!.depth !== null || (nodes[i]!.node as { depth?: number }).depth !== undefined),
     };
   });
 
@@ -699,7 +880,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   // 5. Intended exceptions to the motion review and to the physics review must
   // name things that exist, so that an exception does not outlive the node it
   // was written for.
-  const subjects = new Set<string>([CAMERA_SUBJECT, FRAME_SUBJECT, ...FRAME_REGIONS.map((r) => `(frame:${r})`)]);
+  const subjects = new Set<string>([CAMERA_SUBJECT, FRAME_SUBJECT, ...FRAME_REGIONS.map((r) => `(frame:${r})`), ...spec.layers.filter((layer) => layer.perspective).map((layer) => perspectiveSubject(layer.id))]);
   for (const x of spec.intended ?? []) {
     if (!x || typeof x !== 'object' || !Array.isArray(x.nodes) || !FINDING_KINDS_ALL.includes(x.kind)) {
       fail(`${where}: intended holds something that was not made with intended()`);
@@ -788,7 +969,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     clips: nodes.some((n) => n.clipIndex >= 0),
     cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,
     backgroundTrack,
+    spatial: perspTracks.some((track) => track !== null),
   };
+}
+
+/** The name the camera of a perspective layer has in the motion review, and in intended(). */
+export function perspectiveSubject(layerId: string): string {
+  return `(perspective:${layerId})`;
 }
 
 /** The track of a counter; a key that cannot be is reported as a mistake of the shot. */

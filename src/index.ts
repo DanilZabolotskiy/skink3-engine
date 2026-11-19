@@ -9,6 +9,7 @@ export { shot, layer, circle, capsule, polygon, rect, blob, region, group, link,
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
 export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo, zoomTo, countTo, bendTo, widthTo, backgroundTo, reshape } from './motion/intents.ts';
+export { drive, perspectiveTo, type Driven, type DriveSamples } from './motion/intents.ts';
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile, type SpeedKeys } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, type PathSpec, type PathPoint } from './motion/paths.ts';
@@ -44,7 +45,7 @@ export type {
   TurbulenceSpec,
 } from './scene/types.ts';
 export { STAGE_W, STAGE_H, MOTION_FINDING_KINDS, PHYSICS_FINDING_KINDS, CONTRAST_FINDING_KINDS, CAMERA_SUBJECT, FRAME_SUBJECT, FRAME_REGIONS } from './scene/types.ts';
-export type { Vec2 } from './core/math.ts';
+export type { Vec2, Vec3 } from './core/math.ts';
 
 // --- Core helpers a scene may use to generate content ----------------------
 export { Rng } from './core/rng.ts';
@@ -56,6 +57,8 @@ export { ease, EASINGS, type EaseName } from './core/easing.ts';
 export { compileShot, defaultTint, CompileError, type CompiledShot, type CNode, type CLayer } from './scene/compile.ts';
 export { evaluate, computeWorld, flatItems, labelLayout, posesFromBake, type FrameState, type GroupItem, type Item, type LayerState, type LeafItem } from './scene/evaluate.ts';
 export { levelGeometry, type ClipItem, type LevelGeometry, type ShapeItem, type StretchItem } from './scene/evaluate.ts';
+export { drawOrder, newPlaces, seenThrough, type Places, type PlaneItem } from './scene/evaluate.ts';
+export { eyeOf, perspAt, planeMap, planePoint, project, type Eye, type PerspSpec, type PlaneAxes, type PlaneMap } from './scene/space.ts';
 export { bakeShot, ensureBake, bakeKey } from './physics/bake.ts';
 export { Bake, bakeHash, readBake, writeBake, type BakeHeader, type ContactEvent } from './physics/cache.ts';
 export { runChecks, formatReport, checkTextFit, checkGlyphs, type CheckReport, type CheckIssue, type CheckOptions, type GlyphIssue } from './checks/index.ts';

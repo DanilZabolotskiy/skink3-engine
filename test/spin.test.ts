@@ -53,7 +53,7 @@ test('spin: a turnTo without a profile is the key it was; with one it carries it
   bad({ at: 0, to: 90, ramp: 0.2 }, /ramp applies to the profiles ease, in and out/);
   bad({ at: 0, to: 90, profile: 'steady', ramp: 0.2 }, /ramp applies to the profiles ease, in and out/);
   bad({ at: 0, to: 90, profile: 'settle' }, /profile must be one of ease, steady, in, out/);
-  bad({ at: 0, to: 90, turns: 2 }, /turnTo\("a"\): unknown option "turns" \(allowed: at, to, speed, speeds, dur, overshoot, profile, ramp, sound\)/);
+  bad({ at: 0, to: 90, turns: 2 }, /turnTo\("a"\): unknown option "turns" \(allowed: at, to, speed, speeds, dur, overshoot, profile, ramp, about, sound\)/);
 });
 
 test('spin: steady is one speed, ease goes from rest to rest, and two keys with one speed join without a step', async () => {

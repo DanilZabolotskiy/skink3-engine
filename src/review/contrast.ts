@@ -25,6 +25,7 @@ import { pathAt, pathTable } from '../motion/paths.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, itemPath, itemShape, type FrameState, type Item, type LeafItem, type StretchItem } from '../scene/evaluate.ts';
+import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
 import { outlineOf } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
@@ -155,6 +156,8 @@ function leavesOf(state: FrameState): Leaf[] {
       for (const item of items) {
         if (item.kind === 'group') walk(item.items, clips, place);
         else if (item.kind === 'stretch') walk(item.items, clips, (p) => place(stretched(item, p)));
+        // What lies in a plane of a perspective layer: through the picture the camera has of that plane.
+        else if (item.kind === 'plane') walk(item.items, clips, (p) => place(planePoint(item.map, p)));
         else if (item.kind === 'clip') {
           const outline = outlineOf(itemShape(item)).map((p) => place(xfApply(item.xf, p)));
           walk(item.items, item.level ? [...clips, outline, item.level.map((p) => place(p as Vec2))] : [...clips, outline], place);

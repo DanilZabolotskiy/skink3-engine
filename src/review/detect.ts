@@ -17,6 +17,19 @@
 // ease. A key of the width has no steady speed, so there is no mechanical
 // change of width to look for.
 //
+// The camera of a perspective layer whose view is keyed (perspectiveTo) is
+// judged as the camera is, under the subject "(perspective:<layer id>)": for
+// a jump and for a start or a stop without an ease, on how far the picture
+// slides, how far the camera turns about the point it looks at (as the travel
+// of what is at the edge of the frame) and how fast the picture grows. The
+// nodes of that layer are judged on what they do in its space, not on what
+// the camera does to their place on the layer.
+//
+// A node that follows a drive is judged like any other: the engine knows only
+// the samples, so a drive that leaps, or that starts or stops at full speed,
+// is found as on a key. A driven group with nothing in it, to which a link
+// holds on, is judged while that link is seen: the link shows its every step.
+//
 // A rigid body gets its place and its turn from a solver: a contact is a
 // legitimate change of velocity within a frame, a nudge from a neighbour moves
 // it a few pixels at once, and a body that rolls or slides at a constant speed
@@ -36,9 +49,9 @@ import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { PULSE_LENGTH, strokePulseLength } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import type { CompiledShot } from '../scene/compile.ts';
+import { perspectiveSubject, type CompiledShot } from '../scene/compile.ts';
 import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
-import { CAMERA_SUBJECT, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
+import { CAMERA_SUBJECT, STAGE_H, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
 import { restForms } from '../scene/outline.ts';
 import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
@@ -48,7 +61,7 @@ export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 
 
 export interface Finding {
   readonly kind: MotionFindingKind;
-  /** A node id, "(camera)", "(frame)" or "(frame:<region>)". */
+  /** A node id, "(camera)", "(perspective:<layer id>)", "(frame)" or "(frame:<region>)". */
   readonly subject: string;
   readonly channel: Channel;
   /** First and last frame of the finding. */
@@ -603,13 +616,15 @@ export function detectMotion(series: MotionSeries): Finding[] {
 
   for (const s of series.placed) {
     if (!s) continue;
-    // A group with nothing in it is an anchor: it is never seen. And what nothing animates has no motion to judge.
-    if (s.still || (s.type === 'group' && s.radius <= 0)) continue;
+    // A group with nothing in it is an anchor: it is never seen, unless it is driven and a link holds on to
+    // it. And what nothing animates has no motion to judge.
+    const anchor = s.type === 'group' && s.radius <= 0;
+    if (s.still || (anchor && !s.node.driven)) continue;
     ownSteps(series, s, st);
     const zoom = series.views[s.node.layer]!.zoom;
     for (let f = 1; f < F; f++) {
       const r = s.radius * Math.max(s.scale[f - 1]!, s.scale[f]!) * zoom[f]!;
-      big[f] = r >= T.minRadiusPx ? 1 : 0;
+      big[f] = anchor || r >= T.minRadiusPx ? 1 : 0;
     }
     const mine: Finding[] = [];
     const [pos, rot, scl] = st.channels;
@@ -837,6 +852,33 @@ export function detectMotion(series: MotionSeries): Finding[] {
     for (const ch of [pos, scl]) {
       jumps(CAMERA_SUBJECT, ch, all, F, out);
       abrupt(CAMERA_SUBJECT, ch, cam, F, new Set(), out);
+    }
+  }
+
+  // The camera of a perspective layer: the same, on its slide, its turn and the growth of its picture.
+  for (const p of series.perspectives ?? []) {
+    const subject = perspectiveSubject(p.id);
+    const pos = chan('position', F);
+    const rot = chan('rotation', F);
+    const scl = chan('scale', F);
+    const all = new Uint8Array(F).fill(1);
+    all[0] = 0;
+    for (let f = 1; f < F; f++) {
+      pos.a[f] = p.slideX[f]!;
+      pos.b[f] = p.slideY[f]!;
+      pos.d[f] = Math.hypot(pos.a[f]!, pos.b[f]!);
+      // A turn about the point the camera looks at moves what is at the edge of the frame by the angle times half the frame height.
+      rot.a[f] = p.round[f]! * (STAGE_H / 2);
+      rot.b[f] = p.tilt[f]! * (STAGE_H / 2);
+      rot.d[f] = Math.hypot(rot.a[f]!, rot.b[f]!);
+      // A picture that grows moves the edge of the frame by half the frame width times the share it grows by.
+      scl.a[f] = p.grow[f]! * (STAGE_W / 2);
+      scl.d[f] = Math.abs(scl.a[f]!);
+    }
+    const cam: Steps = { seen: all, faintless: all, inFrame: all, channels: [pos, rot, scl], largest: [0, 0, 0] };
+    for (const ch of [pos, rot, scl]) {
+      jumps(subject, ch, all, F, out);
+      abrupt(subject, ch, cam, F, new Set(), out);
     }
   }
 

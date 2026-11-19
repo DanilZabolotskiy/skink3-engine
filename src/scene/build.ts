@@ -3,7 +3,7 @@
 // message that says what to change.
 
 import { springParams, type SpringSpec } from '../core/dynamics.ts';
-import type { Vec2 } from '../core/math.ts';
+import type { Vec2, Vec3 } from '../core/math.ts';
 import { lightVector, type LightSpec } from '../look/light.ts';
 import { ROLES, type ColorRef, type Palette } from '../look/palette.ts';
 import { DEFAULT_RAMP, type MoveProfile } from '../motion/curves.ts';
@@ -22,6 +22,7 @@ import {
 import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
+import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
 import { FINDING_KINDS_ALL, LINK_MAX_WIDTH } from './types.ts';
 import type {
   BackgroundSpec,
@@ -81,6 +82,70 @@ function vec(where: string, name: string, value: unknown): Vec2 {
     fail(where, `${name} must be [x, y], got ${JSON.stringify(value)}`);
   }
   return [value[0] as number, value[1] as number];
+}
+
+function vec3(where: string, name: string, value: unknown): Vec3 {
+  if (!Array.isArray(value) || value.length !== 3 || !value.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    fail(where, `${name} must be [x, y, z], got ${JSON.stringify(value)}`);
+  }
+  return [value[0] as number, value[1] as number, value[2] as number];
+}
+
+/** A place: [x, y], or [x, y, z] for a node listed in a perspective layer. The third number is written only when it is given. */
+function place(where: string, at: unknown): { at: Vec2; z?: number } {
+  if (at === undefined) return { at: [0, 0] };
+  if (Array.isArray(at) && at.length === 3) {
+    const [x, y, z] = vec3(where, 'at', at);
+    return { at: [x, y], z };
+  }
+  return { at: vec(where, 'at', at) };
+}
+
+/** The place of a node in the draw order of its layer, written only when it is given. */
+function order(where: string, depth: unknown): { depth?: number } {
+  return depth === undefined ? {} : { depth: num(where, 'depth', depth, -1e6, 1e6) };
+}
+
+/** Points of the space of a perspective layer, [x, y, z] each, or null: points of two numbers. */
+function spacePoints(where: string, points: readonly unknown[]): Vec3[] | null {
+  if (!points.some((p) => Array.isArray(p) && p.length === 3)) return null;
+  return points.map((p, i) => vec3(where, `points[${i}]`, p));
+}
+
+/** The axes of the plane a group lies in: a name, or two directions of the space at right angles. */
+function planeAxes(where: string, value: unknown): PlaneAxes {
+  const expected = `plane must be one of ${Object.keys(PLANES).join(', ')}, or { x, y } with two directions [x, y, z]; got ${JSON.stringify(value)}`;
+  if (typeof value === 'string') {
+    if (!Object.hasOwn(PLANES, value)) fail(where, expected);
+    return PLANES[value as keyof typeof PLANES];
+  }
+  if (value === null || typeof value !== 'object') fail(where, expected);
+  checkKeys(`${where} plane`, value, ['x', 'y']);
+  const unit = (name: string, v: unknown): Vec3 => {
+    const d = vec3(where, `plane.${name}`, v);
+    const len = Math.hypot(d[0], d[1], d[2]);
+    if (!(len > 1e-9)) fail(where, `plane.${name} must be a direction; it has no length`);
+    return [d[0] / len, d[1] / len, d[2] / len];
+  };
+  const x = unit('x', (value as { x?: unknown }).x);
+  const y = unit('y', (value as { y?: unknown }).y);
+  if (Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2]) > 1e-6) fail(where, 'plane.x and plane.y must be at right angles');
+  return { x, y };
+}
+
+/** The camera of a perspective layer, with what is left out filled in. */
+function perspective(where: string, value: unknown): PerspSpec {
+  const o = (value === true ? {} : value) as { aim?: unknown; distance?: unknown; tilt?: unknown; turn?: unknown; lens?: unknown };
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) fail(where, `perspective must be true or { aim, distance, tilt, turn, lens }, got ${JSON.stringify(value)}`);
+  checkKeys(`${where} perspective`, o, ['aim', 'distance', 'tilt', 'turn', 'lens']);
+  const distance = o.distance === undefined ? 1600 : num(where, 'perspective.distance', o.distance, 1, 1e6);
+  return {
+    aim: o.aim === undefined ? [0, 0, 0] : vec3(where, 'perspective.aim', o.aim),
+    distance,
+    tilt: o.tilt === undefined ? 0 : num(where, 'perspective.tilt', o.tilt, -90, 90),
+    turn: o.turn === undefined ? 0 : num(where, 'perspective.turn', o.turn, -36000, 36000),
+    lens: o.lens === undefined ? distance : num(where, 'perspective.lens', o.lens, 1, 1e6),
+  };
 }
 
 function range(where: string, name: string, value: unknown, min: number, max: number): Vec2 {
@@ -156,7 +221,10 @@ export interface ShapeOptions {
   /** Palette reference, e.g. "mid.violet". */
   fill: ColorRef;
   /** Position in the parent's space; default [0, 0]. */
-  at?: Vec2;
+  /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
+  at?: Vec2 | Vec3;
+  /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
+  depth?: number;
   /** Degrees, clockwise; default 0. */
   rotation?: number;
   /** Default 1. */
@@ -195,7 +263,7 @@ export interface ShapeOptions {
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'glow', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth',
 ];
 
 function flag(where: string, name: string, value: unknown): boolean {
@@ -238,12 +306,13 @@ function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: Sprin
   if (o.level !== undefined && o.body !== undefined) fail(where, 'a rigid body cannot have a level');
   return {
     ...extras(where, o),
+    ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'shape',
     id: idOf(where, o.id),
     shape,
     fill: color(where, 'fill', o.fill),
-    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    ...place(where, o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
@@ -312,13 +381,18 @@ export function polygon(
  * straight edges. It is lit, glows, fades, clips and fills like any shape; it
  * cannot be a rigid body.
  */
-export function region(o: ShapeOptions & { points: readonly Vec2[]; smooth?: number }): ShapeNode {
+export function region(o: ShapeOptions & { points: readonly Vec2[] | readonly Vec3[]; smooth?: number; back?: boolean }): ShapeNode {
   const where = `region("${o?.id}")`;
-  checkKeys(where, o, [...SHAPE_KEYS, 'points', 'smooth']);
+  checkKeys(where, o, [...SHAPE_KEYS, 'points', 'smooth', 'back']);
   if (o.body !== undefined) fail(where, 'a region cannot be a rigid body: a body is a convex shape (compose the ground of several)');
   if (!Array.isArray(o.points)) fail(where, 'points must be a list of points [x, y]');
-  const shape = wrapShape(where, () => regionShape(o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1)));
-  return shapeNode(where, o, shape, null);
+  // Points of three numbers: a region of the space of a perspective layer. Its shape is then the outline seen straight on.
+  const solid = spacePoints(where, o.points);
+  if (o.back !== undefined && !solid) fail(where, 'back is for a region of points of the space of a perspective layer, [x, y, z] each');
+  if (solid && o.level !== undefined) fail(where, 'a region of points [x, y, z] cannot have a level');
+  const shape = wrapShape(where, () => regionShape(solid ? seenStraightOn(solid).flat : o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1)));
+  const node = shapeNode(where, o, shape, null);
+  return solid ? { ...node, points3: solid, ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) } : node;
 }
 
 /** A rounded rectangle centred on its position. */
@@ -342,7 +416,10 @@ export function blob(o: ShapeOptions & { r: number; points?: number; wobble?: nu
 /** An invisible parent: its children move, turn and scale with it. */
 export function group(o: {
   id: string;
-  at?: Vec2;
+  /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
+  at?: Vec2 | Vec3;
+  /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
+  depth?: number;
   rotation?: number;
   scale?: number;
   /** 0..1 at the start; default 1. The group fades as one picture. */
@@ -354,18 +431,30 @@ export function group(o: {
   idle?: IdleSpec;
   /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
   clipTo?: string;
+  /**
+   * Listed in a perspective layer: the group lies in a plane of its space, through its place, and everything in it is
+   * drawn on that plane. 'floor': the ground seen from above; 'wall': it faces the viewer; 'side': it runs away from
+   * the viewer and faces right; or { x, y }: where its own x and y point, as two directions [x, y, z] at right angles.
+   */
+  plane?: 'floor' | 'wall' | 'side' | { x: Vec3; y: Vec3 };
+  /** With plane: false does not draw the group when the camera sees the back of its plane; default true. */
+  back?: boolean;
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back']);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
+  if (o.back !== undefined && o.plane === undefined) fail(where, 'back is for a group that lies in a plane of a perspective layer: give plane');
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...order(where, o.depth),
+    // Written only when it is given: a group without a plane is the data it always was.
+    ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) }),
     ...voice(where, o.sound),
     type: 'group',
     id: idOf(where, o.id),
-    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    ...place(where, o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
@@ -430,7 +519,8 @@ export function link(o: {
  */
 export function stroke(o: {
   id: string;
-  points: readonly Vec2[];
+  /** The points of the line: [x, y] each; listed in a perspective layer, [x, y, z] each: points of its space. */
+  points: readonly Vec2[] | readonly Vec3[];
   color: ColorRef;
   /** Default 7. */
   width?: number;
@@ -444,7 +534,10 @@ export function stroke(o: {
   solid?: number;
   /** 0..1: the share that is drawn before the first drawOn; default all of it, or none when the stroke has a drawOn. */
   drawn?: number;
-  at?: Vec2;
+  /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
+  at?: Vec2 | Vec3;
+  /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
+  depth?: number;
   rotation?: number;
   scale?: number;
   /** 0..1 at the start; default 1. */
@@ -459,11 +552,13 @@ export function stroke(o: {
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth']);
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
+  // Points of three numbers: a line of the space of a perspective layer. Its path is then the line seen straight on.
+  const solid = spacePoints(where, o.points);
   const closed = o.closed === undefined ? false : flag(where, 'closed', o.closed);
   if (closed && o.points.length < 3) fail(where, 'a closed stroke needs at least three points');
-  const path: PathSpec = { points: o.points.map((p, i) => vec(where, `points[${i}]`, p)), closed, smooth: o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1) };
+  const path: PathSpec = { points: solid ? seenStraightOn(solid).flat : o.points.map((p, i) => vec(where, `points[${i}]`, p)), closed, smooth: o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1) };
   if (!(pathLength(path) > 1e-6)) fail(where, 'the points give a line without length');
   const width = o.width === undefined ? 7 : num(where, 'width', o.width, 0.5, 200);
   let dash: [number, number] | null = null;
@@ -477,6 +572,8 @@ export function stroke(o: {
     ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
     // Written only when it is given: a stroke without it is the data it always was.
     ...(o.pulseColor === undefined ? {} : { pulseColor: color(where, 'pulseColor', o.pulseColor) }),
+    ...(solid ? { points3: solid } : {}),
+    ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'stroke',
     id: idOf(where, o.id),
@@ -485,7 +582,7 @@ export function stroke(o: {
     color: color(where, 'color', o.color),
     dash,
     solid: o.solid === undefined ? 0 : num(where, 'solid', o.solid, 0, 1),
-    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    ...place(where, o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
@@ -564,7 +661,10 @@ export function text(o: {
   /** String-table key, e.g. "title.main". */
   text: string;
   ink: ColorRef;
-  at?: Vec2;
+  /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
+  at?: Vec2 | Vec3;
+  /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
+  depth?: number;
   rotation?: number;
   scale?: number;
   /** 0..1 at the start; default 1. */
@@ -594,7 +694,7 @@ export function text(o: {
   sound?: string;
 }): TextNode {
   const where = `text("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'count', 'clipTo', 'sound']);
+  checkKeys(where, o, ['id', 'text', 'ink', 'at', 'rotation', 'scale', 'opacity', 'size', 'minSize', 'maxWidth', 'maxLines', 'weight', 'align', 'box', 'count', 'clipTo', 'sound', 'depth']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "title.main", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
@@ -615,6 +715,7 @@ export function text(o: {
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(count === undefined ? {} : { count }),
+    ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'text',
     id: idOf(where, o.id),
@@ -627,7 +728,7 @@ export function text(o: {
     weight: o.weight === undefined ? 800 : num(where, 'weight', o.weight, 200, 1000),
     align,
     box: o.box === undefined ? null : color(where, 'box', o.box),
-    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    ...place(where, o.at),
     rotation: o.rotation === undefined ? 0 : num(where, 'rotation', o.rotation, -1e5, 1e5),
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
@@ -644,7 +745,10 @@ export function eye(o: {
   r: number;
   white: ColorRef;
   pupil: ColorRef;
-  at?: Vec2;
+  /** [x, y]; listed in a perspective layer, [x, y, z]: the third number is how far away it is. */
+  at?: Vec2 | Vec3;
+  /** Listed in a layer: its place in the draw order. The larger depth is drawn first, behind the rest; default 0. */
+  depth?: number;
   scale?: number;
   /** 0..1 at the start; default 1. */
   opacity?: number;
@@ -657,12 +761,13 @@ export function eye(o: {
   sound?: string;
 }): EyeNode {
   const where = `eye("${o?.id}")`;
-  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open', 'sound']);
+  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open', 'sound', 'depth']);
   return {
+    ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'eye',
     id: idOf(where, o.id),
-    at: o.at === undefined ? [0, 0] : vec(where, 'at', o.at),
+    ...place(where, o.at),
     rotation: 0,
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     r: num(where, 'r', o.r, 1, 2000),
@@ -795,9 +900,16 @@ export function layer(o: {
   parallax?: number;
   /** 0..1 atmospheric perspective (paler, less saturated, toward the atmosphere colour); default derived from depth. */
   tint?: number;
+  /**
+   * Makes the layer a perspective layer: the nodes listed in it take a place [x, y, z] and are seen through a camera
+   * that looks at `aim` (default [0, 0, 0]) from `distance` (default 1600), `tilt` degrees down (0 level, 90 straight
+   * down) and `turn` degrees round it, with the lens `lens` (default: the distance, so that what lies at the aim is
+   * drawn at its own size). true takes every default. Move the camera with perspectiveTo().
+   */
+  perspective?: true | { aim?: Vec3; distance?: number; tilt?: number; turn?: number; lens?: number };
 }): LayerSpec {
   const where = `layer("${o?.id}")`;
-  checkKeys(where, o, ['id', 'depth', 'nodes', 'blur', 'parallax', 'tint']);
+  checkKeys(where, o, ['id', 'depth', 'nodes', 'blur', 'parallax', 'tint', 'perspective']);
   if (!Array.isArray(o.nodes)) fail(where, 'nodes must be an array');
   return {
     id: idOf(where, o.id),
@@ -806,6 +918,8 @@ export function layer(o: {
     blur: o.blur === undefined ? null : num(where, 'blur', o.blur, 0, 200),
     parallax: o.parallax === undefined ? null : num(where, 'parallax', o.parallax, 0, 20),
     tint: o.tint === undefined ? null : num(where, 'tint', o.tint, 0, 1),
+    // Written only when it is given: a flat layer is the data it always was.
+    ...(o.perspective === undefined ? {} : { perspective: perspective(where, o.perspective) }),
   };
 }
 

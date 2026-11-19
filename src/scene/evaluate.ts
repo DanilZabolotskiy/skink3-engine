@@ -6,8 +6,10 @@ import { cameraAt, layerView, type CameraState, type LayerView } from '../camera
 import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
+import { sampleDriven } from '../motion/drive.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
 import {
+  sampleAway,
   sampleAxis,
   sampleBend,
   sampleCount,
@@ -35,7 +37,9 @@ import { layoutText, type TextLayout } from '../text/layout.ts';
 import { resolveString } from '../text/strings.ts';
 import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
+import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
+import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneMap } from './space.ts';
 import type { LabelSide } from './types.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
@@ -80,15 +84,20 @@ const SIDE_DIR: Readonly<Record<LabelSide, Vec2>> = {
   right: [1, 0],
 };
 
-/** The shape of a shape node at time t: the one it was given, or what its reshape keys have made of it by then. */
+/**
+ * The shape of a shape node at time t: the one it was given, what its reshape keys have made of it by then, or,
+ * for a region whose points are driven or lie in the space of a perspective layer, the outline they give at t.
+ */
 export function shapeOf(n: CNode, t: number): ShapeSpec {
   if (n.node.type !== 'shape') throw new Error(`"${n.id}" is not a shape`);
+  if (n.form) return formAt(n, t).shape ?? n.node.shape;
   return n.outline ? regionAt(n.outline, t) : n.node.shape;
 }
 
-/** The path of a stroke at time t: the one it was given, or what its reshape keys have made of it by then. */
+/** The path of a stroke at time t: the one it was given, what its reshape keys have made of it by then, or the line its driven points or its points of the space give at t. */
 export function strokePathOf(n: CNode, t: number): PathSpec {
   if (n.node.type !== 'stroke') throw new Error(`"${n.id}" is not a stroke`);
+  if (n.form) return formAt(n, t).path ?? n.node.path;
   return n.outline ? strokePathAt(n.outline, t) : n.node.path;
 }
 
@@ -185,15 +194,49 @@ export function levelClip(g: LevelGeometry): Vec2[] {
 }
 
 /**
+ * What a frame of a shot with a perspective layer holds beside the world
+ * transforms: where its nodes lie in their planes and in the space.
+ */
+export interface Places {
+  /** By node index: the transform of a node that lies in a plane, in that plane; undefined for every other node. */
+  readonly flat: (Xf | undefined)[];
+  /** By node index of a group that lies in a plane: the map of its plane at the frame, or null while the camera cannot see it. */
+  readonly planes: Map<number, PlaneMap | null>;
+  /** By node index, for the nodes listed in a perspective layer: how far each is from the camera, and its place in the space (three numbers each). */
+  readonly far: Float64Array;
+  readonly point: Float64Array;
+  /** By layer index: the camera of a perspective layer at the frame; null for a flat layer. */
+  readonly eyes: (Eye | null)[];
+}
+
+export function newPlaces(c: CompiledShot): Places {
+  return { flat: new Array<Xf | undefined>(c.nodes.length), planes: new Map(), far: new Float64Array(c.nodes.length), point: new Float64Array(3 * c.nodes.length), eyes: c.layers.map(() => null) };
+}
+
+/**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
  * Nodes without a place of their own (links, emitters) get the identity.
+ *
+ * In a perspective layer the transform of a node is where the camera of the
+ * layer draws it: its place, and its size there. For a node that lies in a
+ * plane that is its place exactly and its size and its turn as they are at
+ * that place; what such a node is in its plane goes to `places`.
  */
-export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource): Xf[] {
+export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, places?: Places): Xf[] {
   const t = frame / FPS;
   const out: Xf[] = new Array<Xf>(c.nodes.length).fill(XF_IDENTITY);
   // The children of a shape with a level ride on its surface: their frame is the middle of the surface.
   let surfaces: Map<number, Xf> | null = null;
+  // A shot with a perspective layer: the cameras of this frame, and the planes as they are found.
+  const space = c.spatial ? places ?? newPlaces(c) : null;
+  if (space) {
+    space.planes.clear();
+    space.flat.fill(undefined);
+    c.layers.forEach((layer, li) => {
+      space.eyes[li] = layer.persp ? eyeOf(perspAt(layer.persp, t)) : null;
+    });
+  }
 
   for (const n of c.nodes) {
     const node = n.node;
@@ -210,12 +253,46 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       x += node.idle.amp * n.idleNoise.n1(u);
       y += node.idle.amp * n.idleNoise.n1(u + 71.3);
     }
-    const parent = n.parent >= 0 ? surfaces?.get(n.parent) ?? out[n.parent]! : XF_IDENTITY;
+    // A node inside a group that lies in a plane is placed in that plane.
+    const inPlane = space !== null && n.plane >= 0;
+    const parent = n.parent >= 0 ? surfaces?.get(n.parent) ?? (inPlane ? space.flat[n.parent]! : out[n.parent]!) : XF_IDENTITY;
     // A travel may turn the node: it rolls along its path, or faces along it.
     const rot = (n.pos!.turns ? sampleRot(n.rot!, t) + samplePathTurn(n.pos!, t) : sampleRot(n.rot!, t)) * DEG;
-    let xf = xfCompose(parent, { x, y, rot, scale });
-    // An upright group keeps its own rotation, whatever it is attached to.
-    if (node.type === 'group' && node.upright) xf = { ...xf, rot };
+    let xf: Xf;
+    if (space && n.persp) {
+      // Listed in a perspective layer: a place of the space, seen through the camera of the layer.
+      const eye = space.eyes[n.layer]!;
+      const z = sampleAway(n.away!, t);
+      space.point[3 * n.index] = x;
+      space.point[3 * n.index + 1] = y;
+      space.point[3 * n.index + 2] = z;
+      if (node.type === 'group' && node.plane) {
+        // It lies in a plane: everything in it is drawn through the map of that plane.
+        const axes = n.hinge ? hingedAxes(node.plane, n.hinge.x ? sampleRot(n.hinge.x, t) : 0, n.hinge.y ? sampleRot(n.hinge.y, t) : 0) : node.plane;
+        let map = planeMap(eye, [x, y, z], axes);
+        if (map && !map.front && node.back === false) map = null;
+        const flat: Xf = { x: 0, y: 0, rot, scale };
+        space.flat[n.index] = flat;
+        space.planes.set(n.index, map);
+        space.far[n.index] = project(eye, [x, y, z]).far;
+        out[n.index] = map ? throughPlane(map, flat) : { x: 0, y: 0, rot, scale: 0 };
+        continue;
+      }
+      if (n.form && n.form.dims === 3) {
+        // Its outline is points of the space: it is drawn around the picture of their middle.
+        const state = formAt(n, t);
+        space.far[n.index] = state.far;
+        xf = { x: state.x, y: state.y, rot, scale: scale * state.k };
+      } else {
+        const p = project(eye, [x, y, z]);
+        space.far[n.index] = p.far;
+        xf = { x: p.x, y: p.y, rot, scale: scale * p.k };
+      }
+    } else {
+      xf = xfCompose(parent, { x, y, rot, scale });
+      // An upright group keeps its own rotation, whatever it is attached to.
+      if (node.type === 'group' && node.upright) xf = { ...xf, rot };
+    }
     if (n.springKind === 'follow') {
       const p = poses.spring(n.springSlot, frame, [xf.x, xf.y]);
       xf = { ...xf, x: p[0], y: p[1] };
@@ -224,7 +301,11 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource):
       const lever = (node.shape.length - 2 * node.shape.r) * Math.max(xf.scale, 0.05);
       xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
-    out[n.index] = xf;
+    if (inPlane) {
+      space.flat[n.index] = xf;
+      const map = space.planes.get(n.plane);
+      out[n.index] = map ? throughPlane(map, xf) : { ...xf, scale: 0 };
+    } else out[n.index] = xf;
     if (n.level && n.subtreeEnd > n.index) {
       const g = levelGeometry(n, xf, t);
       (surfaces ??= new Map<number, Xf>()).set(n.index, { x: g.cx, y: g.y, rot: xf.rot, scale: xf.scale });
@@ -261,7 +342,7 @@ export interface ShapeItem {
    * layer's space, of everything below its surface. The shape is drawn inside it.
    */
   readonly level?: readonly Vec2[];
-  /** A region whose outline is keyed (reshape): the shape it has at this frame. Left out: the shape of its node. */
+  /** A region whose outline is keyed (reshape), driven, or given by points of the space: the shape it has at this frame. Left out: the shape of its node. */
   readonly shape?: ShapeSpec;
 }
 
@@ -391,6 +472,19 @@ export interface StretchItem {
   readonly items: readonly Item[];
 }
 
+/**
+ * A group that lies in a plane of a perspective layer, together with
+ * everything inside it: the items are placed in the plane, and the renderer
+ * draws them through `map`, the picture the camera of the layer has of that
+ * plane at this frame.
+ */
+export interface PlaneItem {
+  readonly kind: 'plane';
+  readonly node: CNode;
+  readonly map: PlaneMap;
+  readonly items: readonly Item[];
+}
+
 /** The shape an item is drawn with, or clips to, at its frame. */
 export function itemShape(item: { readonly node: CNode; readonly shape?: ShapeSpec }): ShapeSpec {
   if (item.shape) return item.shape;
@@ -413,13 +507,29 @@ export function itemWidth(item: LinkItem | StrokeItem): number {
   return node.width;
 }
 
-export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem;
-export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem>;
+export type Item = ShapeItem | EyeItem | LinkItem | LabelItem | ParticlesItem | StrokeItem | TextItem | GroupItem | ClipItem | StretchItem | PlaneItem;
+export type LeafItem = Exclude<Item, GroupItem | ClipItem | StretchItem | PlaneItem>;
 
-/** All items of a list with the groups, clips and stretches opened up, in draw order. */
+/**
+ * An item that lies in a plane as the layer sees it: its place exactly, its
+ * size and its turn as they are at that place. For what measures the layer;
+ * the renderer draws the item itself, through the map.
+ */
+export function seenThrough(item: LeafItem, map: PlaneMap): LeafItem {
+  if (item.kind !== 'shape' && item.kind !== 'eye' && item.kind !== 'stroke' && item.kind !== 'text') return item;
+  const xf = throughPlane(map, item.xf);
+  if (item.kind === 'shape' && item.level) return { ...item, xf, level: item.level.map((p) => planePoint(map, p)) };
+  return { ...item, xf };
+}
+
+/**
+ * All items of a list with the groups, clips, stretches and planes opened up,
+ * in draw order. What lies in a plane comes as the layer sees it (seenThrough).
+ */
 export function flatItems(items: readonly Item[], out: LeafItem[] = []): LeafItem[] {
   for (const item of items) {
     if (item.kind === 'group' || item.kind === 'clip' || item.kind === 'stretch') flatItems(item.items, out);
+    else if (item.kind === 'plane') for (const leaf of flatItems(item.items)) out.push(seenThrough(leaf, item.map));
     else out.push(item);
   }
   return out;
@@ -513,7 +623,7 @@ const OPAQUE = 0.998;
 function prune(items: readonly Item[]): Item[] {
   const out: Item[] = [];
   for (const item of items) {
-    if (item.kind !== 'group' && item.kind !== 'clip' && item.kind !== 'stretch') out.push(item);
+    if (item.kind !== 'group' && item.kind !== 'clip' && item.kind !== 'stretch' && item.kind !== 'plane') out.push(item);
     else {
       const inner = prune(item.items);
       if (inner.length > 0) out.push({ ...item, items: inner });
@@ -559,6 +669,48 @@ export function opacities(c: CompiledShot, t: number): { own: Float64Array; alph
   return { own, alpha };
 }
 
+/**
+ * The place of a node in the draw order of a layer that orders what it draws:
+ * in a perspective layer its distance from the camera, plus its depth. The
+ * larger, the earlier it is drawn.
+ */
+export function orderKey(c: CompiledShot, layer: CLayer, index: number, t: number, places: Places | undefined): number {
+  const n = c.nodes[index]!;
+  const given = (n.node as { depth?: number }).depth ?? 0;
+  return (layer.persp && places ? places.far[index]! : 0) + (n.depth ? sampleDriven(n.depth, t, given) : given);
+}
+
+/**
+ * The nodes of a layer that orders what it draws, in the order they are drawn
+ * at time t: the nodes listed in the layer farthest first, each with
+ * everything inside it. A link is as far as the middle between the two nodes
+ * it joins. A label and an emitter have no place in the space: in a
+ * perspective layer they are drawn last, over everything else; in a flat
+ * layer they keep their place in the list, among the nodes without a depth.
+ * What is equally far keeps the order it was listed in.
+ */
+export function drawOrder(c: CompiledShot, layer: CLayer, t: number, places: Places | undefined): number[] {
+  const listed = (index: number): number => {
+    let i = index;
+    while (c.nodes[i]!.parent >= 0) i = c.nodes[i]!.parent;
+    return i;
+  };
+  const units: { index: number; key: number; at: number }[] = [];
+  for (const index of layer.nodes) {
+    const n = c.nodes[index]!;
+    if (n.parent >= 0) continue;
+    let key: number;
+    if (n.node.type === 'link') key = (orderKey(c, layer, listed(n.fromIndex), t, places) + orderKey(c, layer, listed(n.toIndex), t, places)) / 2;
+    else if (n.node.type === 'label' || n.node.type === 'emitter') key = layer.persp ? -Infinity : 0;
+    else key = orderKey(c, layer, index, t, places);
+    units.push({ index, key, at: units.length });
+  }
+  units.sort((p, q) => (p.key === q.key ? p.at - q.at : q.key - p.key));
+  const out: number[] = [];
+  for (const u of units) for (let i = u.index; i <= c.nodes[u.index]!.subtreeEnd; i++) out.push(i);
+  return out;
+}
+
 /** The display list of a shot at a frame. */
 export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: string): FrameState {
   if (!Number.isInteger(frame) || frame < 0 || frame >= c.frames) {
@@ -568,25 +720,35 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     throw new Error('the bake does not belong to this shot (scene hash or length differs); bake again');
   }
   const t = frame / FPS;
-  const world = computeWorld(c, frame, posesFromBake(bake));
+  // A shot with a perspective layer also says where its nodes lie in their planes and in the space.
+  const places = c.spatial ? newPlaces(c) : undefined;
+  const world = computeWorld(c, frame, posesFromBake(bake), places);
   const camera = cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames, c.cameraTrack);
 
   const { own, alpha } = opacities(c, t);
 
-  // A region whose outline is keyed carries the shape it has at this frame; any other item is what it always was.
-  const reshaped = (n: CNode): { shape?: ShapeSpec } => (n.outline ? { shape: shapeOf(n, t) } : {});
+  // A region whose outline is keyed, driven or seen in perspective carries the shape it has at this frame; any other item is what it always was.
+  const reshaped = (n: CNode): { shape?: ShapeSpec } => (n.outline || n.form ? { shape: shapeOf(n, t) } : {});
+  // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
+  const placeOf = (index: number): Xf => places?.flat[index] ?? world[index]!;
 
   const layers = c.layers.map((layer): LayerState => {
     const root: Item[] = [];
     // Open groups: the items of a faded node and of its subtree go into its group.
     const open: { end: number; items: Item[] }[] = [];
     let skipUntil = -1;
-    for (const index of layer.nodes) {
+    // A layer that orders what it draws lists its nodes farthest first; any other layer as they were given.
+    for (const index of layer.ordered ? drawOrder(c, layer, t, places) : layer.nodes) {
+      const n = c.nodes[index]!;
+      if (layer.ordered && n.parent < 0) {
+        // The next node of the order: nothing of the one before it is open.
+        open.length = 0;
+        skipUntil = -1;
+      }
       if (index <= skipUntil) continue;
       while (open.length > 0 && index > open[open.length - 1]!.end) open.pop();
-      const n = c.nodes[index]!;
       const node = n.node;
-      const xf = world[index]!;
+      const xf = placeOf(index);
       const a = alpha[index]!;
       if (own[index]! <= FAINT) {
         // Invisible, and so is everything inside it.
@@ -594,6 +756,19 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         continue;
       }
       let items = open.length > 0 ? open[open.length - 1]!.items : root;
+      if (n.plane === index) {
+        // A group that lies in a plane: everything in it is drawn through the map of that plane.
+        const map = places?.planes.get(index);
+        if (!map) {
+          // The camera cannot see the plane at this frame.
+          skipUntil = n.subtreeEnd;
+          continue;
+        }
+        const inner: Item[] = [];
+        items.push({ kind: 'plane', node: n, map, items: inner });
+        open.push({ end: n.subtreeEnd, items: inner });
+        items = inner;
+      }
       if (n.clipIndex >= 0) {
         // Drawn only inside the outline of a shape. Neighbours clipped to the same shape share one clip.
         const clipNode = c.nodes[n.clipIndex]!;
@@ -603,17 +778,17 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           inner = last.items as Item[];
         } else if (clipNode.level) {
           // Clipped to a content: only its filled part holds anything.
-          const g = levelGeometry(clipNode, world[n.clipIndex]!, t);
+          const g = levelGeometry(clipNode, placeOf(n.clipIndex), t);
           if (g.level <= LEVEL_EMPTY) {
             skipUntil = n.subtreeEnd;
             continue;
           }
           inner = [];
-          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, level: levelClip(g), ...reshaped(clipNode), items: inner });
-          else items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, ...reshaped(clipNode), items: inner });
+          if (g.level < 1 - 1e-6) items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), level: levelClip(g), ...reshaped(clipNode), items: inner });
+          else items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), items: inner });
         } else {
           inner = [];
-          items.push({ kind: 'clip', node: clipNode, xf: world[n.clipIndex]!, ...reshaped(clipNode), items: inner });
+          items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), items: inner });
         }
         open.push({ end: n.subtreeEnd, items: inner });
         items = inner;
@@ -649,6 +824,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           break;
         case 'shape':
           if (xf.scale <= HIDDEN) break;
+          // An outline worked out at this frame may have nothing to show: it is edge-on, or seen from a back that is not drawn.
+          if (n.form && formAt(n, t).hidden) break;
           if (n.level) {
             // A content: nothing of it while it is empty, all of it when it is full, else the part below its surface.
             const g = levelGeometry(n, xf, t);
@@ -666,7 +843,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           if (lid <= SHUT) break;
           let look: Vec2 = [0, 0];
           if (n.lookAtIndex >= 0) {
-            const target = world[n.lookAtIndex]!;
+            // An eye that lies in a plane looks at where its target is in that plane.
+            const map = n.plane >= 0 ? places?.planes.get(n.plane) : undefined;
+            const there = world[n.lookAtIndex]!;
+            const target = map ? (c.nodes[n.lookAtIndex]!.plane === n.plane ? placeOf(n.lookAtIndex) : { ...there, ...intoPlane(map, there) }) : there;
             const dx = target.x - xf.x;
             const dy = target.y - xf.y;
             const dist = Math.hypot(dx, dy);
@@ -695,9 +875,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           if (xf.scale <= HIDDEN) break;
           const drawn = sampleDrawn(n.stroke!, t);
           if (drawn <= 1e-6) break;
+          if (n.form && formAt(n, t).hidden) break;
           // A stroke without a pulse is the item it always was.
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
           break;
         }
         case 'link': {

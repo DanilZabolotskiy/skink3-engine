@@ -40,6 +40,7 @@ import type {
   TurnToKey,
   WidthToKey,
 } from './intents.ts';
+import { sampleDrive, sampleDriven, type DriveTrack } from './drive.ts';
 import { pathAt, pathTable, type PathSpec } from './paths.ts';
 
 /** A move never backs away or overshoots by more than this many units, however long it is. */
@@ -84,6 +85,8 @@ export interface PosTrack {
   readonly turns: boolean;
   /** A path of this track shows the node only while it travels. */
   readonly onlyWhile: boolean;
+  /** The place follows the samples of a drive: the track then has no moves. */
+  readonly drive?: DriveTrack;
 }
 
 const NAMES = { moveTo: 'moveTo', hop: 'hop', travel: 'travel' } as const;
@@ -130,6 +133,10 @@ function plainProgress(seg: MoveSeg, u: number): number {
 }
 
 export function samplePos(track: PosTrack, t: number): Vec2 {
+  if (track.drive) {
+    const v = sampleDrive(track.drive, t);
+    return v ? [v[0]!, v[1]!] : track.base;
+  }
   let seg: MoveSeg | null = null;
   for (const s of track.segs) {
     if (t >= s.at) seg = s;
@@ -168,6 +175,54 @@ export function samplePos(track: PosTrack, t: number): Vec2 {
   }
   const h = Math.sign(seg.arc) * Math.min(Math.abs(seg.arc) * dist, MAX_ARC_UNITS) * arcBump(p);
   return [seg.from[0] + dx * p + px * h, seg.from[1] + dy * p + py * h];
+}
+
+/**
+ * The third coordinate of a node of a perspective layer over time: how far
+ * away it is. A moveTo with a place of three numbers carries it along, in
+ * step with the move; a drive of a place of three numbers sets it.
+ */
+export interface AwayTrack {
+  readonly base: number;
+  /** The moves that change it, each with the stretch of the place track it runs with. */
+  readonly segs: readonly { readonly move: MoveSeg; readonly from: number; readonly to: number }[];
+  readonly drive?: DriveTrack;
+}
+
+/** The moves of a node that reach a third coordinate, in the order of the place track built from the same keys. */
+export function buildAwayTrack(base: number, pos: PosTrack, keys: readonly (MoveToKey | HopKey | TravelKey)[]): AwayTrack {
+  const segs: { move: MoveSeg; from: number; to: number }[] = [];
+  let from = base;
+  keys
+    .slice()
+    .sort((a, b) => a.at - b.at)
+    .forEach((k, i) => {
+      if (k.kind !== 'moveTo' || k.z === undefined) return;
+      segs.push({ move: pos.segs[i]!, from, to: k.z });
+      from = k.z;
+    });
+  return { base, segs };
+}
+
+export function sampleAway(track: AwayTrack, t: number): number {
+  if (track.drive) return sampleDriven(track.drive, t, track.base);
+  let seg: AwayTrack['segs'][number] | null = null;
+  for (const s of track.segs) {
+    if (t >= s.move.at) seg = s;
+    else break;
+  }
+  if (!seg) return track.base;
+  const m = seg.move;
+  const u = (t - m.at) / m.dur;
+  if (u >= 1) return seg.to;
+  let p: number;
+  if (m.profile === 'settle') {
+    // In step with the place: the anticipation and the overshoot of the move, measured on its way across, or on its way in depth when it has none.
+    const across = Math.hypot(m.to[0] - m.from[0], m.to[1] - m.from[1]);
+    const dist = across >= 1e-9 ? across : Math.abs(seg.to - seg.from);
+    p = dist < 1e-9 ? u : moveProgress(u, Math.min(m.anticipation, MAX_ANTICIPATION_UNITS / dist), Math.min(m.overshoot, MAX_OVERSHOOT_UNITS / dist));
+  } else p = plainProgress(m, u);
+  return seg.from + (seg.to - seg.from) * p;
 }
 
 /**
@@ -303,6 +358,8 @@ export interface ScaleTrack {
   /** Lasting changes of size (scaleTo), each starting from the size reached before it. */
   readonly grows: readonly GrowSeg[];
   readonly bumps: readonly { readonly at: number; readonly amount: number }[];
+  /** The lasting size follows the samples of a drive, as a factor of the authored size: the track then has no scaleTo. */
+  readonly drive?: DriveTrack;
 }
 
 /** The lasting size multiplier at time t: 1 before the first scaleTo. */
@@ -382,7 +439,7 @@ export function sampleScale(track: ScaleTrack, t: number): number {
     const tau = t - b.at;
     if (tau < BUMP_SECONDS) extra += bumpScale(tau, b.amount);
   }
-  return s * sampleGrow(track.grows, t) * (1 + extra);
+  return s * (track.drive ? sampleDriven(track.drive, t, 1) : sampleGrow(track.grows, t)) * (1 + extra);
 }
 
 /** The number of a counter over time. */
@@ -495,10 +552,13 @@ export interface OpacityTrack {
   /** Opacity before the first fadeTo. */
   readonly base: number;
   readonly segs: readonly FadeSeg[];
+  /** The opacity follows the samples of a drive: the track then has no fades. */
+  readonly drive?: DriveTrack;
 }
 
 /** Opacity at time t, 0..1. */
 export function sampleOpacity(track: OpacityTrack, t: number): number {
+  if (track.drive) return Math.min(1, Math.max(0, sampleDriven(track.drive, t, track.base)));
   let seg: FadeSeg | null = null;
   for (const f of track.segs) {
     if (t >= f.at) seg = f;
@@ -573,6 +633,8 @@ export interface RotTrack {
   /** Degrees. */
   readonly base: number;
   readonly segs: readonly TurnSeg[];
+  /** The angle follows the samples of a drive: the track then has no turns. */
+  readonly drive?: DriveTrack;
 }
 
 export function buildRotTrack(id: string, base: number, keys: readonly TurnToKey[]): RotTrack {
@@ -595,6 +657,7 @@ export function buildRotTrack(id: string, base: number, keys: readonly TurnToKey
 
 /** Rotation in degrees at time t. */
 export function sampleRot(track: RotTrack, t: number): number {
+  if (track.drive) return sampleDriven(track.drive, t, track.base);
   let seg: TurnSeg | null = null;
   for (const s of track.segs) {
     if (t >= s.at) seg = s;

@@ -2,7 +2,8 @@
 // (plain data). The engine turns keys into curves with anticipation, an arc,
 // overshoot and settle; see curves.ts and tracks.ts.
 
-import type { Vec2 } from '../core/math.ts';
+import type { Vec2, Vec3 } from '../core/math.ts';
+import { FPS } from '../core/time.ts';
 import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDistance, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
 import { pathLength, type PathSpec } from './paths.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
@@ -37,6 +38,8 @@ export interface MoveToKey extends Voiced {
   readonly profile?: MoveProfile;
   /** Share of the duration each eased end takes, for the profiles ease, in and out. */
   readonly ramp?: number;
+  /** In a perspective layer: how far away the destination is. Left out: as far as the node is. */
+  readonly z?: number;
 }
 
 /** A jump: it leaves at `at`, flies a parabola and lands at `at + dur`. */
@@ -115,6 +118,12 @@ export interface TurnToKey extends Voiced {
    * last key it stays. Left out: a turn to an angle, or at one speed with the eased ends of its profile.
    */
   readonly speeds?: SpeedKeys;
+  /**
+   * A hinge: the turn is about this axis of a group that lies in a plane of a
+   * perspective layer, through its origin, out of the plane. Left out: the
+   * turn in its own plane, as ever.
+   */
+  readonly about?: 'x' | 'y';
 }
 
 export interface BumpKey extends Voiced {
@@ -353,6 +362,53 @@ export interface BackgroundToKey extends Voiced {
   readonly ramp: number;
 }
 
+/**
+ * A node that follows a computed function of time. The key holds no function:
+ * it holds what the function gave at `count` moments, evenly spaced from `at`
+ * to `at + dur`, and the engine plays those samples back. Each channel is
+ * there only when the key drives it.
+ */
+export interface DriveKey extends Voiced {
+  readonly kind: 'drive';
+  readonly target: string;
+  readonly at: number;
+  readonly dur: number;
+  readonly count: number;
+  /** The place at every sample, one after another: x, y, and z when `placeDims` is 3. */
+  readonly place?: readonly number[];
+  readonly placeDims?: 2 | 3;
+  /** Degrees. */
+  readonly rotation?: readonly number[];
+  /** A factor of the authored size. */
+  readonly scale?: readonly number[];
+  readonly opacity?: readonly number[];
+  /** The draw order inside the layer: what has the larger depth is drawn first. */
+  readonly depth?: readonly number[];
+  /** The outline of a region, or the line of a stroke, at every sample: its points one after another, `pointDims` numbers each. */
+  readonly points?: readonly (readonly number[])[];
+  readonly pointDims?: 2 | 3;
+}
+
+/**
+ * A move of the camera of a perspective layer. It has no node: it is a key of
+ * the timeline that the layer reads. What a key leaves out stays as it is.
+ */
+export interface PerspectiveToKey extends Voiced {
+  readonly kind: 'perspectiveTo';
+  /** A key of a layer's camera has no node. */
+  readonly target: null;
+  readonly layer: string;
+  readonly at: number;
+  readonly dur: number;
+  readonly aim?: Vec3;
+  readonly distance?: number;
+  readonly tilt?: number;
+  readonly turn?: number;
+  readonly lens?: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
 export interface SfxKey {
   readonly kind: 'sfx';
@@ -389,6 +445,8 @@ export type Key =
   | ZoomToKey
   | BackgroundToKey
   | ReshapeKey
+  | DriveKey
+  | PerspectiveToKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -496,7 +554,8 @@ export function moveTo(
   opts: {
     at?: number;
     arrive?: number;
-    to: Vec2;
+    /** The destination: [x, y]; in a perspective layer [x, y, z] moves it in depth too. */
+    to: Vec2 | Vec3;
     dur?: number;
     anticipation?: number;
     overshoot?: number;
@@ -509,7 +568,7 @@ export function moveTo(
 ): MoveToKey {
   const w = `moveTo("${id}")`;
   only(w, opts, ['at', 'arrive', 'to', 'dur', 'anticipation', 'overshoot', 'arc', 'profile', 'ramp', 'sound']);
-  if (!Array.isArray(opts.to) || opts.to.length !== 2) throw new IntentError(`${w}: to must be [x, y]`);
+  if (!Array.isArray(opts.to) || (opts.to.length !== 2 && opts.to.length !== 3)) throw new IntentError(`${w}: to must be [x, y] (or [x, y, z] in a perspective layer)`);
   const profile = profileOf(w, opts.profile, MOVE_PROFILES, 'settle');
   const settle = profile === 'settle';
   if (!settle && ((opts.anticipation ?? 0) !== 0 || (opts.overshoot ?? 0) !== 0)) {
@@ -539,6 +598,8 @@ export function moveTo(
     arc: num(w, 'arc', opts.arc ?? 0.12, -1, 1),
     // A settle move carries no profile: its key is what it always was.
     ...(settle ? {} : { profile, ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5) }),
+    // A move across the layer carries no depth either.
+    ...(opts.to.length === 3 ? { z: num(w, 'to[2]', opts.to[2], -1e6, 1e6) } : {}),
     ...voiced(w, opts),
   };
 }
@@ -718,11 +779,14 @@ export function turnTo(
     overshoot?: number;
     profile?: Exclude<MoveProfile, 'settle'>;
     ramp?: number;
+    /** A hinge: turn a group that lies in a plane of a perspective layer about its own x or y axis, out of its plane. */
+    about?: 'x' | 'y';
     sound?: string | false;
   },
 ): TurnToKey {
   const w = `turnTo("${id}")`;
-  only(w, opts, ['at', 'to', 'speed', 'speeds', 'dur', 'overshoot', 'profile', 'ramp', 'sound']);
+  only(w, opts, ['at', 'to', 'speed', 'speeds', 'dur', 'overshoot', 'profile', 'ramp', 'about', 'sound']);
+  if (opts.about !== undefined && opts.about !== 'x' && opts.about !== 'y') throw new IntentError(`${w}: about must be "x" or "y": the axis of the group the hinge runs along; got ${JSON.stringify(opts.about)}`);
   if (opts.speeds !== undefined) return turnAtSpeeds(w, id, opts);
   if ((opts.to === undefined) === (opts.speed === undefined)) throw new IntentError(`${w}: give either to (an angle in degrees) or speed (degrees per second, from where it is), or speeds (keys of speed over time)`);
   // A speed is the speed of a steady stretch: it asks for a profile, and takes 'steady' when none is named.
@@ -747,6 +811,7 @@ export function turnTo(
     // A turn without a profile is the key it always was.
     ...(profile === undefined ? {} : { profile, ...(profile === 'steady' ? {} : { ramp }) }),
     ...(by === undefined ? {} : { by }),
+    ...(opts.about === undefined ? {} : { about: opts.about }),
     ...voiced(w, opts),
   };
 }
@@ -777,6 +842,7 @@ function turnAtSpeeds(w: string, id: string, opts: Parameters<typeof turnTo>[1])
     overshoot: 0,
     by: speedDistance(speeds, dur),
     speeds,
+    ...(opts.about === undefined ? {} : { about: opts.about }),
     ...voiced(w, opts),
   };
 }
@@ -1230,6 +1296,197 @@ export function reshape(
     dur: num(w, 'dur', opts.dur ?? 1.2, 0.1, 600),
     points: opts.points.map((p, i) => point(w, `points[${i}]`, p)),
     ...(opts.smooth === undefined ? {} : { smooth: num(w, 'smooth', opts.smooth, 0, 1) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/** What a drive may set at one moment. Each is left out when the drive does not drive it. */
+export interface Driven {
+  /** The place of the node in its parent's space: [x, y], or [x, y, z] for a node of a perspective layer. */
+  readonly at?: Vec2 | Vec3;
+  /** Degrees, clockwise. */
+  readonly rotation?: number;
+  /** A factor of the authored size. */
+  readonly scale?: number;
+  /** 0..1. */
+  readonly opacity?: number;
+  /** The draw order inside the layer: what has the larger depth is drawn first, behind the rest. */
+  readonly depth?: number;
+  /** The outline of a region or the line of a stroke: as many points as the node has. */
+  readonly points?: readonly (Vec2 | Vec3)[];
+}
+
+/** The samples of a drive given ready: per channel, one value per sample. */
+export interface DriveSamples {
+  readonly at?: readonly (Vec2 | Vec3)[];
+  readonly rotation?: readonly number[];
+  readonly scale?: readonly number[];
+  readonly opacity?: readonly number[];
+  readonly depth?: readonly number[];
+  readonly points?: readonly (readonly (Vec2 | Vec3)[])[];
+}
+
+const DRIVE_CHANNELS = ['at', 'rotation', 'scale', 'opacity', 'depth', 'points'] as const;
+/** The most numbers one drive key may hold. */
+export const DRIVE_MAX_NUMBERS = 6_000_000;
+
+/**
+ * Drive a node by a computed function of time: what no move profile says. A
+ * corner of a frame that is turned in more dimensions than the screen has, a
+ * body on an orbit, the outline of a sheet that curls. `by` is a function of
+ * the seconds since the key starts; it returns what the node is at that
+ * moment: its place (`at`), its `rotation`, its `scale` (a factor of the
+ * authored size), its `opacity`, its `depth` (the draw order in its layer)
+ * and, for a region or a stroke, its `points`. It returns the same channels
+ * every time. The function must be pure: the same seconds, the same answer.
+ * It is called once for every frame of the key when the shot is built, and
+ * the shot keeps those samples, not the function.
+ *
+ *   drive('moon', { at: 1, dur: 6, by: (t) => ({ at: [300 * Math.cos(t), 120 * Math.sin(t)], depth: Math.sin(t) }) })
+ *
+ * Instead of `by`, `samples` gives the values themselves, evenly spaced over
+ * `dur`, at least two per channel: a track computed elsewhere. Between two
+ * samples the node follows a smooth curve through them.
+ *
+ *   drive('probe', { dur: 4, samples: { at: [[0, 0], [40, -10], [90, -12], [150, 0]] } })
+ *
+ * Before the key the node is as authored; after it, it stays as the last
+ * sample left it. A channel that a drive sets is not also keyed: a driven
+ * place takes no moveTo, hop or travel, a driven rotation no turnTo, a driven
+ * scale no scaleTo, a driven opacity no fadeTo, driven points no reshape. Put
+ * the node in a group to add such a move. The motion review judges a driven
+ * node like any other.
+ */
+export function drive(id: string, opts: { at?: number; dur: number; by?: (seconds: number) => Driven; samples?: DriveSamples }): DriveKey {
+  const w = `drive("${id}")`;
+  only(w, opts, ['at', 'dur', 'by', 'samples']);
+  const at = num(w, 'at', opts.at ?? 0, MIN_T, MAX_T);
+  const dur = num(w, 'dur', opts.dur, 1 / FPS, 3600);
+  if ((opts.by === undefined) === (opts.samples === undefined)) {
+    throw new IntentError(`${w}: give either by (a function of the seconds since the key starts) or samples (the values themselves, evenly spaced over dur)`);
+  }
+  let count: number;
+  let names: string[];
+  let read: (name: string, i: number) => unknown;
+  if (opts.by !== undefined) {
+    if (typeof opts.by !== 'function') throw new IntentError(`${w}: by must be a function of the seconds since the key starts, e.g. (t) => ({ at: [100 * t, 0] })`);
+    count = Math.max(2, Math.round(dur * FPS) + 1);
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < count; i++) {
+      const seconds = (dur * i) / (count - 1);
+      const row = opts.by(seconds) as unknown;
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) throw new IntentError(`${w}: by must return an object such as { at: [x, y] }; at ${seconds.toFixed(3)} s it returned ${JSON.stringify(row)}`);
+      only(`${w}: what by returns`, row, DRIVE_CHANNELS);
+      rows.push(row as Record<string, unknown>);
+    }
+    names = Object.keys(rows[0]!).filter((name) => rows[0]![name] !== undefined);
+    rows.forEach((row, i) => {
+      const mine = Object.keys(row).filter((name) => row[name] !== undefined);
+      if (mine.length !== names.length || mine.some((name) => !names.includes(name))) {
+        throw new IntentError(`${w}: by must return the same channels every time; at 0 s it returned ${names.join(', ') || 'none'}, at ${((dur * i) / (count - 1)).toFixed(3)} s ${mine.join(', ') || 'none'}`);
+      }
+    });
+    read = (name, i) => rows[i]![name];
+  } else {
+    const given = opts.samples as Record<string, unknown>;
+    only(`${w}: samples`, given, DRIVE_CHANNELS);
+    names = Object.keys(given).filter((name) => given[name] !== undefined);
+    count = 0;
+    for (const name of names) {
+      const list = given[name];
+      if (!Array.isArray(list) || list.length < 2) throw new IntentError(`${w}: samples.${name} must be a list of at least two samples, evenly spaced over dur`);
+      if (count !== 0 && list.length !== count) throw new IntentError(`${w}: every channel of samples holds one value per sample; ${names[0]} has ${count}, ${name} has ${list.length}`);
+      count = list.length;
+    }
+    read = (name, i) => (given[name] as unknown[])[i];
+  }
+  if (names.length === 0) throw new IntentError(`${w}: nothing is driven; give at least one of ${DRIVE_CHANNELS.join(', ')}`);
+
+  const when = (i: number): string => `at ${((dur * i) / (count - 1)).toFixed(3)} s`;
+  // A sample of -0 is kept as 0: the key is the same data when it has been written out and read back.
+  const scalars = (name: string, min: number, max: number): number[] => Array.from({ length: count }, (_, i) => num(w, `${name} ${when(i)}`, read(name, i), min, max) + 0);
+  const dimsOf = (name: string, p: unknown, i: number): 2 | 3 => {
+    if (!Array.isArray(p) || (p.length !== 2 && p.length !== 3)) throw new IntentError(`${w}: ${name} ${when(i)} must be [x, y], or [x, y, z] in a perspective layer; got ${JSON.stringify(p)}`);
+    return p.length as 2 | 3;
+  };
+  let total = 0;
+  const key: { -readonly [K in keyof DriveKey]: DriveKey[K] } = { kind: 'drive', target: target(w, id), at, dur, count };
+  if (names.includes('at')) {
+    const dims = dimsOf('at', read('at', 0), 0);
+    const place: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const p = read('at', i) as unknown[];
+      if (dimsOf('at', p, i) !== dims) throw new IntentError(`${w}: at has ${dims} numbers at 0 s and ${p.length} ${when(i)}; a place keeps its form`);
+      for (let k = 0; k < dims; k++) place.push(num(w, `at[${k}] ${when(i)}`, p[k], -1e6, 1e6) + 0);
+    }
+    key.place = place;
+    key.placeDims = dims;
+    total += place.length;
+  }
+  if (names.includes('rotation')) key.rotation = scalars('rotation', -1e7, 1e7);
+  if (names.includes('scale')) key.scale = scalars('scale', 0, 1000);
+  if (names.includes('opacity')) key.opacity = scalars('opacity', 0, 1);
+  if (names.includes('depth')) key.depth = scalars('depth', -1e6, 1e6);
+  if (names.includes('points')) {
+    const first = read('points', 0);
+    if (!Array.isArray(first) || first.length < 2 || first.length > 200) throw new IntentError(`${w}: points must be the outline: a list of 2 to 200 points, as many as the node has`);
+    const dims = dimsOf('points[0]', first[0], 0);
+    const points: number[][] = [];
+    for (let i = 0; i < count; i++) {
+      const list = read('points', i);
+      if (!Array.isArray(list) || list.length !== first.length) throw new IntentError(`${w}: points holds ${first.length} points at 0 s and ${Array.isArray(list) ? list.length : 'none'} ${when(i)}; an outline keeps its number of points`);
+      const flat: number[] = [];
+      list.forEach((p: unknown, j: number) => {
+        if (dimsOf(`points[${j}]`, p, i) !== dims) throw new IntentError(`${w}: points[${j}] ${when(i)} has not the ${dims} numbers the first point has`);
+        for (let k = 0; k < dims; k++) flat.push(num(w, `points[${j}][${k}] ${when(i)}`, (p as unknown[])[k], -1e6, 1e6) + 0);
+      });
+      points.push(flat);
+      total += flat.length;
+    }
+    key.points = points;
+    key.pointDims = dims;
+  }
+  total += count * names.filter((name) => name !== 'at' && name !== 'points').length;
+  if (total > DRIVE_MAX_NUMBERS) throw new IntentError(`${w}: the key holds ${total} numbers, more than ${DRIVE_MAX_NUMBERS}; shorten it, split it, or drive fewer points`);
+  return key;
+}
+
+/**
+ * Move the camera of a perspective layer at a moment (a layer made with the
+ * option `perspective`). `aim` is the point it looks at; `distance` how far it
+ * stands from it (a dolly: what is near grows faster than what is far);
+ * `tilt` the degrees it looks down by (0 level, 90 straight down); `turn` the
+ * degrees it has gone round the point; `lens` its zoom. Give at least one;
+ * what is left out stays. Keys chain: each takes over from where the camera
+ * is at its moment. The camera moves one way along its profile.
+ *
+ *   perspectiveTo('room', { at: 2, dur: 4, tilt: 90, distance: 2400 })    // rise and look straight down
+ */
+export function perspectiveTo(
+  layerId: string,
+  opts: { at: number; dur?: number; aim?: Vec3; distance?: number; tilt?: number; turn?: number; lens?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): PerspectiveToKey {
+  const w = `perspectiveTo("${layerId}")`;
+  if (typeof layerId !== 'string' || layerId.length === 0) throw new IntentError('perspectiveTo: the first argument is the id of the perspective layer');
+  only(w, opts, ['at', 'dur', 'aim', 'distance', 'tilt', 'turn', 'lens', 'profile', 'ramp']);
+  if (opts.aim === undefined && opts.distance === undefined && opts.tilt === undefined && opts.turn === undefined && opts.lens === undefined) {
+    throw new IntentError(`${w}: give at least one of aim, distance, tilt, turn, lens`);
+  }
+  if (opts.aim !== undefined && (!Array.isArray(opts.aim) || opts.aim.length !== 3)) throw new IntentError(`${w}: aim must be [x, y, z]: the point the camera looks at`);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'perspectiveTo',
+    target: null,
+    layer: layerId,
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    dur: num(w, 'dur', opts.dur ?? 1.6, 0.05, 600),
+    ...(opts.aim === undefined ? {} : { aim: [num(w, 'aim[0]', opts.aim[0], -1e6, 1e6), num(w, 'aim[1]', opts.aim[1], -1e6, 1e6), num(w, 'aim[2]', opts.aim[2], -1e6, 1e6)] as Vec3 }),
+    ...(opts.distance === undefined ? {} : { distance: num(w, 'distance', opts.distance, 1, 1e6) }),
+    ...(opts.tilt === undefined ? {} : { tilt: num(w, 'tilt', opts.tilt, -90, 90) }),
+    ...(opts.turn === undefined ? {} : { turn: num(w, 'turn', opts.turn, -36000, 36000) }),
+    ...(opts.lens === undefined ? {} : { lens: num(w, 'lens', opts.lens, 1, 1e6) }),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

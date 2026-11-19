@@ -69,7 +69,7 @@ test('turn speeds: the key carries its speeds and the angle they add up to; a tu
   bad({ speeds: [[0, 90], [2, 1e6]] }, /speeds\[1\]\[1\] must be a number in -100000\.\.100000/);
   bad({ speeds, dur: 1.5 }, /dur \(1\.5 s\) ends the turn before its last key of speed, at 2 s/);
   bad({}, /give either to \(an angle in degrees\) or speed .*, or speeds \(keys of speed over time\)/);
-  bad({ speeds, turns: 2 }, /unknown option "turns" \(allowed: at, to, speed, speeds, dur, overshoot, profile, ramp, sound\)/);
+  bad({ speeds, turns: 2 }, /unknown option "turns" \(allowed: at, to, speed, speeds, dur, overshoot, profile, ramp, about, sound\)/);
 });
 
 test('turn speeds: the speed is what the keys say at their moments, changes smoothly between them, and stays after the last', async () => {

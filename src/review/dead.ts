@@ -8,7 +8,9 @@
 // travels, or the background itself
 // changes (which is seen everywhere). The camera is left out on purpose: its
 // drift slides the whole picture, and a picture that only slides is still a
-// hold. An area with nothing in it counts as dead too.
+// hold. The camera of a perspective layer is left out in the same way: a
+// node of such a layer is alive while it, or something it is in, moves in the
+// space of the layer. An area with nothing in it counts as dead too.
 //
 // The frame is cut into a grid of 3 x 2 regions. A thing is counted in every
 // region that the circle around it touches, which errs toward "alive".
@@ -17,15 +19,52 @@ import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { FRAME_REGIONS, FRAME_SUBJECT } from '../scene/types.ts';
 import { finding, type Finding } from './detect.ts';
-import { DRAWN, REGION_COLS, REGION_ROWS, regionsOf, visibleAt, type MotionSeries } from './series.ts';
+import { DRAWN, REGION_COLS, REGION_ROWS, regionsOf, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
 const REGIONS = REGION_COLS * REGION_ROWS;
+
+/**
+ * The nodes of perspective layers: per frame, 1 while the node, or something
+ * it is in, moves, turns or grows in the space of its layer. By node index;
+ * null for the nodes of flat layers and for what nothing animates.
+ */
+function spaceMoves(series: MotionSeries): (Uint8Array | null)[] {
+  const c = series.shot;
+  const F = series.frames;
+  const out: (Uint8Array | null)[] = series.placed.map(() => null);
+  const fill = (s: PlacedSeries, up: Uint8Array | null): void => {
+    const zoom = series.views[s.node.layer]!.zoom;
+    const moves = new Uint8Array(F);
+    for (let f = 1; f < F; f++) {
+      const u = s.unit[f]!;
+      moves[f] =
+        (up !== null && up[f] === 1) ||
+        Math.hypot(s.ownX[f]! - s.ownX[f - 1]!, s.ownY[f]! - s.ownY[f - 1]!) * u >= T.alivePx ||
+        Math.abs(s.ownRot[f]! - s.ownRot[f - 1]!) * DEG * s.turnRadius * s.scale[f]! * zoom[f]! >= T.alivePx ||
+        Math.abs(s.ownScale[f]! - s.ownScale[f - 1]!) * s.radius * u >= T.alivePx
+          ? 1
+          : 0;
+    }
+    out[s.node.index] = moves;
+  };
+  // Parents come before their children in the node list. A label takes what its target does, so labels come last.
+  for (const s of series.placed) {
+    if (!s || s.still || s.type === 'label' || !c.layers[s.node.layer]!.persp) continue;
+    fill(s, s.node.parent >= 0 ? out[s.node.parent] ?? null : null);
+  }
+  for (const s of series.placed) {
+    if (!s || s.still || s.type !== 'label' || !c.layers[s.node.layer]!.persp) continue;
+    fill(s, out[s.node.targetIndex] ?? null);
+  }
+  return out;
+}
 
 /** Per frame, the regions (as bits) in which something moves on its own. Frame 0 takes the value of frame 1. */
 export function aliveRegions(series: MotionSeries): Uint8Array {
   const F = series.frames;
   const alive = new Uint8Array(F);
+  const inSpace = series.shot.spatial ? spaceMoves(series) : null;
   for (const s of series.placed) {
     if (!s || s.type === 'group' || s.still) continue;
     const view = series.views[s.node.layer]!;
@@ -40,17 +79,24 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
       let moves = now !== before;
       if (!moves) {
         const k = s.scale[f]! * zoom;
+        const mine = inSpace ? inSpace[s.node.index]! : null;
+        // What is measured at the size of the node (how much of a line is drawn, a keyed outline, a width): in a
+        // perspective layer that size changes with the camera, so there the step is taken at the size of this frame.
+        const hold = mine === null ? 1 : s.scale[f - 1]! > 1e-9 ? s.scale[f]! / s.scale[f - 1]! : NaN;
         moves =
-          Math.hypot(s.x[f]! - s.x[f - 1]!, s.y[f]! - s.y[f - 1]!) * zoom >= T.alivePx ||
-          Math.abs(s.rot[f]! - s.rot[f - 1]!) * DEG * s.turnRadius * k >= T.alivePx ||
-          Math.abs(s.scale[f]! - s.scale[f - 1]!) * s.radius * zoom >= T.alivePx ||
+          (mine !== null
+            ? mine[f] === 1
+            : Math.hypot(s.x[f]! - s.x[f - 1]!, s.y[f]! - s.y[f - 1]!) * zoom >= T.alivePx ||
+              Math.abs(s.rot[f]! - s.rot[f - 1]!) * DEG * s.turnRadius * k >= T.alivePx ||
+              Math.abs(s.scale[f]! - s.scale[f - 1]!) * s.radius * zoom >= T.alivePx) ||
           Math.abs(s.alpha[f]! - s.alpha[f - 1]!) >= T.aliveOpacity ||
           (s.open !== null && Math.abs(s.open[f]! - s.open[f - 1]!) * s.radius * k >= T.alivePx) ||
           (s.level !== null && Math.abs(s.level[f]! - s.level[f - 1]!) * zoom >= T.alivePx) ||
-          (s.life !== null && Math.abs(s.life[f]! - s.life[f - 1]!) * zoom >= T.alivePx) ||
-          (s.outline !== null && Math.abs(s.outline[f]! - s.outline[f - 1]!) * zoom >= T.alivePx) ||
+          (s.life !== null && Math.abs(s.life[f]! - s.life[f - 1]! * hold) * zoom >= T.alivePx) ||
+          // The way of a driven outline is summed step by step: it holds no size to take out.
+          (s.outline !== null && Math.abs(s.outline[f]! - s.outline[f - 1]! * (s.node.form?.drive ? 1 : hold)) * zoom >= T.alivePx) ||
           // A width that changes moves the edge of the line by half the change.
-          (s.width !== null && (Math.abs(s.width[f]! - s.width[f - 1]!) / 2) * zoom >= T.alivePx) ||
+          (s.width !== null && (Math.abs(s.width[f]! - s.width[f - 1]! * hold) / 2) * zoom >= T.alivePx) ||
           (s.axis !== null && Math.max(Math.abs(s.axis.sx[f]! - s.axis.sx[f - 1]!), Math.abs(s.axis.sy[f]! - s.axis.sy[f - 1]!)) * s.radius * k >= T.alivePx);
       }
       if (moves) alive[f] = alive[f]! | regionsOf(s.x[g]! * zoom + view.tx[g]!, s.y[g]! * zoom + view.ty[g]!, r);

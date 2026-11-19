@@ -2,6 +2,8 @@
 // the scene API takes degrees and converts at the boundary.
 
 export type Vec2 = readonly [number, number];
+/** A point of the space of a perspective layer: x to the right, y down, z away from the viewer. */
+export type Vec3 = readonly [number, number, number];
 
 export const TAU = Math.PI * 2;
 export const DEG = Math.PI / 180;

@@ -4,13 +4,13 @@
 //
 // No texture, no grain: flat fills and gradients only.
 
-import { Canvas, type CanvasRenderingContext2D } from 'skia-canvas';
+import { Canvas, DOMMatrix, type CanvasRenderingContext2D } from 'skia-canvas';
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -118,7 +118,7 @@ function drawItems(
   items: readonly Item[],
   paint: Paint,
   target: LayerTarget,
-  stretches: readonly StretchItem[] = NO_STRETCH,
+  stretches: readonly (StretchItem | PlaneItem)[] = NO_STRETCH,
 ): void {
   for (const item of items) {
     switch (item.kind) {
@@ -131,8 +131,11 @@ function drawItems(
       case 'text': drawText(ctx, item, paint); break;
       case 'group': {
         const { canvas, ctx: gx } = layerCanvas(target);
-        // A canvas of its own starts without the stretches it is nested in.
-        for (const s of stretches) applyStretch(gx, s);
+        // A canvas of its own starts without the stretches and the planes it is nested in.
+        for (const s of stretches) {
+          if (s.kind === 'plane') applyPlane(gx, s);
+          else applyStretch(gx, s);
+        }
         drawItems(gx, item.items, paint, target, stretches);
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -153,11 +156,32 @@ function drawItems(
         drawItems(ctx, item.items, paint, target, [...stretches, item]);
         ctx.restore();
         break;
+      case 'plane':
+        ctx.save();
+        applyPlane(ctx, item);
+        drawItems(ctx, item.items, paint, target, [...stretches, item]);
+        ctx.restore();
+        break;
     }
   }
 }
 
 const NO_STRETCH: readonly StretchItem[] = [];
+
+/** Draws what comes next through the picture the camera of a perspective layer has of a plane. */
+function applyPlane(ctx: CanvasRenderingContext2D, item: PlaneItem): void {
+  const m = item.map;
+  const matrix = new DOMMatrix();
+  matrix.m11 = m.a;
+  matrix.m12 = m.b;
+  matrix.m14 = m.g;
+  matrix.m21 = m.c;
+  matrix.m22 = m.d;
+  matrix.m24 = m.h;
+  matrix.m41 = m.e;
+  matrix.m42 = m.f;
+  ctx.transform(matrix);
+}
 
 /** Squashes or stretches what is drawn next: `height` times as high, 1 / `height` times as wide, about a point. */
 function applyStretch(ctx: CanvasRenderingContext2D, s: StretchItem): void {
@@ -207,6 +231,12 @@ function drawGlow(
         drawGlow(ctx, item.items, paint, covers, seen, state);
         ctx.restore();
         break;
+      case 'plane':
+        ctx.save();
+        applyPlane(ctx, item);
+        drawGlow(ctx, item.items, paint, covers, seen, state);
+        ctx.restore();
+        break;
       default: {
         // A cover has something to hide only once some glow has been drawn.
         if (covers && state.drawn && item.kind === 'shape' && (item.node.node as ShapeNode).cover === true) eraseGlow(ctx, item);
@@ -250,6 +280,8 @@ function seenShares(items: readonly Item[]): Map<LeafItem, number> {
   const walk = (list: readonly Item[], clips: readonly Vec2[][]): void => {
     for (const item of list) {
       if (item.kind === 'group' || item.kind === 'stretch') walk(item.items, clips);
+      // What lies in a plane of a perspective layer is taken as seen: its place under a cover is not worked out.
+      else if (item.kind === 'plane') continue;
       else if (item.kind === 'clip') walk(item.items, item.level ? [...clips, outlineInLayer(item), item.level as Vec2[]] : [...clips, outlineInLayer(item)]);
       else {
         order++;

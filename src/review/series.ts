@@ -11,11 +11,11 @@
 
 import { cameraAt, layerView } from '../camera/camera.ts';
 import type { SpringParams } from '../core/dynamics.ts';
-import { DEG, xfApply, type Vec2, type Xf } from '../core/math.ts';
+import { DEG, xfApply, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
@@ -27,6 +27,7 @@ import {
   labelLayout,
   LEVEL_EMPTY,
   levelGeometry,
+  newPlaces,
   textLayout,
   opacities,
   shapeOf,
@@ -35,7 +36,9 @@ import {
   swayDirection,
   type PoseSource,
 } from '../scene/evaluate.ts';
+import { formAt, formStep } from '../scene/form.ts';
 import { outlineTravel, restForms } from '../scene/outline.ts';
+import { eyeOf, perspAt, project } from '../scene/space.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
 import { outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
@@ -76,7 +79,11 @@ export interface PlacedSeries {
   /**
    * Own motion: place in the parent's space, in the parent's units. For a label
    * and for a node on a follow spring: the offset from its target or parent in
-   * the layer's units, because that is the space such a node moves in.
+   * the layer's units, because that is the space such a node moves in. For a
+   * node listed in a perspective layer: what it does in the space of the
+   * layer, as the camera of each frame sees it, in the layer's units; what
+   * the camera of the layer does is left out (it is judged on that camera).
+   * For a node in a group that lies in a plane: its place in that plane.
    */
   readonly ownX: Float32Array;
   readonly ownY: Float32Array;
@@ -103,9 +110,10 @@ export interface PlacedSeries {
    */
   readonly life: Float32Array | null;
   /**
-   * Regions and strokes whose outline is keyed (reshape): how far the outline
-   * has changed by each frame, as the way of the point that travels farthest,
-   * in the layer's units. It only grows; null for other nodes.
+   * Regions and strokes whose outline is keyed (reshape) or driven (drive
+   * with points): how far the outline has changed by each frame, as the way
+   * of the point that travels farthest, in the layer's units. It only grows;
+   * null for other nodes.
    */
   readonly outline: Float32Array | null;
   /** Strokes whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other nodes. */
@@ -126,7 +134,7 @@ export interface LinkSeries {
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly half: Float32Array;
-  /** 1 while a pulse travels along it, it is being drawn on, or its bend or its width changes. */
+  /** 1 while a pulse travels along it, it is being drawn on, its bend or its width changes, or a driven node at one of its ends moves. */
   readonly active: Uint8Array;
   readonly flags: Uint8Array;
   /** Links whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other links. */
@@ -159,6 +167,24 @@ export interface SpringSeries {
   readonly y: Float32Array;
 }
 
+/**
+ * The camera of a perspective layer whose view is keyed (perspectiveTo): what
+ * it does from the frame before to each frame.
+ */
+export interface PerspectiveSeries {
+  /** Index of the layer in the shot, and its id. */
+  readonly layer: number;
+  readonly id: string;
+  /** How far the picture slides at the point the camera looks at, in px: to the right and down. */
+  readonly slideX: Float32Array;
+  readonly slideY: Float32Array;
+  /** How far the camera goes round that point, and how far it tilts, in radians. */
+  readonly round: Float32Array;
+  readonly tilt: Float32Array;
+  /** By what share the picture grows at that point: 0.01 is one per cent in a frame. */
+  readonly grow: Float32Array;
+}
+
 /** How a layer is mapped to the screen at every frame: screen = layer * zoom + (tx, ty). */
 export interface ViewSeries {
   readonly zoom: Float64Array;
@@ -187,6 +213,8 @@ export interface MotionSeries {
    * of the gradient). Left out in a shot whose background stays as it is.
    */
   readonly background?: Float32Array;
+  /** The cameras of the perspective layers whose view is keyed. Left out in a shot without one. */
+  readonly perspectives?: readonly PerspectiveSeries[];
 }
 
 export interface SampleOptions {
@@ -263,6 +291,8 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
     const i = n.index;
     const node = n.node;
     if (!drawn[i] || (node.type !== 'shape' && node.type !== 'eye')) continue;
+    // What lies in a plane of a perspective layer is taken as seen: the layer has its place only roughly.
+    if (n.plane >= 0) continue;
     const xf = world[i]!;
     const points: Vec2[] = [];
     if (node.type === 'shape') {
@@ -277,7 +307,8 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
     // The shapes this node is clipped to: its own and those of everything it is in.
     const clips: number[] = [];
     for (let k = i; k >= 0; k = c.nodes[k]!.parent) if (c.nodes[k]!.clipIndex >= 0) clips.push(c.nodes[k]!.clipIndex);
-    const later = covers.filter((ci) => ci > n.subtreeEnd && c.nodes[ci]!.layer === n.layer);
+    // A layer that orders what it draws has no fixed "after": there a cover hides nothing from the review.
+    const later = c.layers[n.layer]!.ordered ? [] : covers.filter((ci) => ci > n.subtreeEnd && c.nodes[ci]!.layer === n.layer);
     if (clips.length === 0 && later.length === 0) continue;
     let seen = false;
     for (const p of points) {
@@ -383,6 +414,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       n.axis !== null ||
       n.outline !== null ||
       n.width !== null ||
+      // A drive, a hinge that turns, and the camera of a perspective layer: where the node is drawn changes with each.
+      n.driven ||
+      n.hinge !== null ||
+      (c.layers[n.layer]!.persp?.segs.length ?? 0) > 0 ||
       (n.count !== null && n.count.segs.length > 0) ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length + n.stroke.pulses.length > 0) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
@@ -416,7 +451,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       level: n.level ? f32() : null,
       axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
       life: type === 'stroke' || n.count !== null ? f32() : null,
-      outline: n.outline ? f32() : null,
+      outline: n.outline || n.form?.drive ? f32() : null,
       width: n.width ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
@@ -430,6 +465,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     return { node: n, id: n.id, kind: n.springKind!, params: n.springParams!, restX: f32(), restY: f32(), x: f32(), y: f32() };
   });
   const camera = { x: new Float64Array(frames), y: new Float64Array(frames), zoom: new Float64Array(frames) };
+  const perspectives: PerspectiveSeries[] = [];
+  c.layers.forEach((layer, li) => {
+    if (layer.persp && layer.persp.segs.length > 0) perspectives.push({ layer: li, id: layer.spec.id, slideX: f32(), slideY: f32(), round: f32(), tilt: f32(), grow: f32() });
+  });
   const views: ViewSeries[] = c.layers.map(() => ({ zoom: new Float64Array(frames), tx: new Float64Array(frames), ty: new Float64Array(frames) }));
 
   // The bake, read through a source that also notes where each spring would rest.
@@ -469,6 +508,22 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   const trigSin = new Float64Array(N);
   // Length of the current run of frames in which a node's parent has no size.
   const gap = new Uint32Array(N);
+  // A shot with a perspective layer: what lies in its planes, and for every node listed in such a layer where
+  // it was in the space at the frame before, and what its own motion has come to (x, y, and the size its
+  // distance gives it).
+  const places = c.spatial ? newPlaces(c) : undefined;
+  const before = new Float64Array(places ? 3 * N : 0);
+  const ownAt = new Float64Array(places ? 3 * N : 0);
+  // How far the points of a driven outline have travelled so far, in the layer's units.
+  const formWay = new Float64Array(N);
+  // Driven nodes above each end of a link, the end itself included: by link, by end.
+  const drivers = links.map((l): number[][] =>
+    [l.node.fromIndex, l.node.toIndex].map((end) => {
+      const list: number[] = [];
+      for (let k = end; k >= 0; k = c.nodes[k]!.parent) if (c.nodes[k]!.driven) list.push(k);
+      return list;
+    }),
+  );
   const unwrap = (prev: number, prevRaw: number, raw: number): number => {
     const step = raw - prevRaw;
     if (step > -180 && step <= 180) return prev + step;
@@ -480,7 +535,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
   for (let f = 0; f < frames; f++) {
     const t = f / FPS;
-    const world = computeWorld(c, f, poses);
+    const world = computeWorld(c, f, poses, places);
     const cam = cameraAt(c.spec.camera, c.cameraNoise, f, frames, c.cameraTrack);
     camera.x[f] = cam.x;
     camera.y[f] = cam.y;
@@ -492,6 +547,22 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       views[li]!.ty[f] = v.ty;
     });
     const { own, alpha } = opacities(c, t);
+    for (const p of perspectives) {
+      if (f === 0) continue;
+      const track = c.layers[p.layer]!.persp!;
+      const now = perspAt(track, t);
+      const was = perspAt(track, (f - 1) / FPS);
+      const eye = eyeOf(now);
+      const step: Vec3 = [now.aim[0] - was.aim[0], now.aim[1] - was.aim[1], now.aim[2] - was.aim[2]];
+      const along = (axis: Vec3): number => step[0] * axis[0] + step[1] * axis[1] + step[2] * axis[2];
+      const k = (now.lens / now.distance) * views[p.layer]!.zoom[f]!;
+      p.slideX[f] = along(eye.right) * k;
+      p.slideY[f] = along(eye.down) * k;
+      p.round[f] = (now.turn - was.turn) * DEG * Math.cos(now.tilt * DEG);
+      p.tilt[f] = (now.tilt - was.tilt) * DEG;
+      // A camera that comes nearer makes the picture grow, as a longer lens does.
+      p.grow[f] = now.lens / now.distance / (was.lens / was.distance) - 1 + along(eye.fwd) / now.distance;
+    }
 
     // What is drawn: the rules of the evaluator.
     drawn.fill(0);
@@ -504,6 +575,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       if (node.type === 'shape' || node.type === 'label' || node.type === 'text') drawn[i] = xf.scale > HIDDEN && (n.level === null || sampleLevel(n.level, t) > LEVEL_EMPTY) ? 1 : 0;
       else if (node.type === 'eye') drawn[i] = xf.scale > HIDDEN && (n.lid ? sampleLid(n.lid, t) : 1) > SHUT ? 1 : 0;
       else if (node.type === 'stroke') drawn[i] = xf.scale > HIDDEN && sampleDrawn(n.stroke!, t) > 1e-6 ? 1 : 0;
+      // An outline that is worked out at each frame may have nothing to show: seen edge-on, or from a back that is not drawn.
+      if (drawn[i] && n.form && formAt(n, t).hidden) drawn[i] = 0;
     }
     // What lies wholly behind a cover, or wholly outside the shape it is clipped to, is not seen.
     if (hides) markHidden(c, world, alpha, drawn, t);
@@ -550,32 +623,63 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.ownY[f] = xf.y - target.y;
         s.ownScale[f] = xf.scale;
         s.unit[f] = zoom;
+      } else if (places && n.persp && node.type !== 'link' && node.type !== 'emitter') {
+        // Listed in a perspective layer: its own motion is what it does in the space, as the camera of
+        // this frame sees it. What the camera does is judged on the camera.
+        const eye = places.eyes[n.layer]!;
+        const at: Vec3 = [places.point[3 * i]!, places.point[3 * i + 1]!, places.point[3 * i + 2]!];
+        const now = project(eye, at);
+        if (f === 0) {
+          ownAt[3 * i] = now.x;
+          ownAt[3 * i + 1] = now.y;
+          ownAt[3 * i + 2] = 1;
+        } else {
+          const was = project(eye, [before[3 * i]!, before[3 * i + 1]!, before[3 * i + 2]!]);
+          // While it is behind the camera it has no place on the layer, and no step.
+          if (now.k > 0 && was.k > 0) {
+            ownAt[3 * i] = ownAt[3 * i]! + now.x - was.x;
+            ownAt[3 * i + 1] = ownAt[3 * i + 1]! + now.y - was.y;
+            ownAt[3 * i + 2] = (ownAt[3 * i + 2]! * now.k) / was.k;
+          }
+        }
+        before.set(at, 3 * i);
+        s.ownX[f] = ownAt[3 * i]!;
+        s.ownY[f] = ownAt[3 * i + 1]!;
+        s.ownScale[f] = node.scale * (n.scale ? sampleScale(n.scale, t) : 1) * ownAt[3 * i + 2]!;
+        s.unit[f] = zoom;
+        // A group that lies in a plane: its turn in the plane, and the turns of its hinges.
+        const flat = places.flat[i];
+        if (flat) ownRaw = flat.rot / DEG + (n.hinge?.x ? sampleRot(n.hinge.x, t) : 0) + (n.hinge?.y ? sampleRot(n.hinge.y, t) : 0);
       } else if (n.parent >= 0) {
         const p = world[n.parent]!;
+        // In a group that lies in a plane, a node moves in that plane.
+        const inPlane = places !== undefined && n.plane >= 0;
+        const me = inPlane ? places.flat[i] ?? xf : xf;
+        const base = inPlane ? places.flat[n.parent] ?? p : p;
         if (n.springKind === 'follow') {
           // A follower lives in the layer's space: its spring pulls it toward a place, not along
           // with the parent's size or turn. Its own motion is its offset from the parent's origin.
-          s.ownX[f] = xf.x - p.x;
-          s.ownY[f] = xf.y - p.y;
-          s.ownScale[f] = xf.scale / Math.max(p.scale, 1e-9);
-          s.unit[f] = zoom;
-        } else if (p.scale <= HIDDEN) {
+          s.ownX[f] = me.x - base.x;
+          s.ownY[f] = me.y - base.y;
+          s.ownScale[f] = me.scale / Math.max(base.scale, 1e-9);
+          s.unit[f] = inPlane ? (p.scale / Math.max(base.scale, 1e-9)) * zoom : zoom;
+        } else if (p.scale <= HIDDEN || base.scale <= HIDDEN) {
           // The parent has no size: the node's place inside it is not defined. It is filled in below.
           gap[i] = gap[i]! + 1;
         } else {
-          const dx = xf.x - p.x;
-          const dy = xf.y - p.y;
+          const dx = me.x - base.x;
+          const dy = me.y - base.y;
           // The parent's turn is the same for all its children: its sine and cosine are worked out once per frame.
           if (trigFrame[n.parent] !== f) {
             trigFrame[n.parent] = f;
-            trigCos[n.parent] = Math.cos(-p.rot);
-            trigSin[n.parent] = Math.sin(-p.rot);
+            trigCos[n.parent] = Math.cos(-base.rot);
+            trigSin[n.parent] = Math.sin(-base.rot);
           }
           const cos = trigCos[n.parent]!;
           const sin = trigSin[n.parent]!;
-          s.ownX[f] = (dx * cos - dy * sin) / p.scale;
-          s.ownY[f] = (dx * sin + dy * cos) / p.scale;
-          s.ownScale[f] = xf.scale / p.scale;
+          s.ownX[f] = (dx * cos - dy * sin) / base.scale;
+          s.ownY[f] = (dx * sin + dy * cos) / base.scale;
+          s.ownScale[f] = me.scale / base.scale;
           s.unit[f] = p.scale * zoom;
           // Frames without a parent size take the first values after them, so that no step appears where the parent pops in.
           for (let g = f - gap[i]!; g < f; g++) {
@@ -586,7 +690,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
           gap[i] = 0;
         }
         // An upright group keeps its rotation in the layer's space: that is its own.
-        if (!(node.type === 'group' && node.upright)) ownRaw = (xf.rot - p.rot) / DEG;
+        if (!(node.type === 'group' && node.upright)) ownRaw = (me.rot - base.rot) / DEG;
+        else if (inPlane) ownRaw = me.rot / DEG;
       } else {
         s.ownX[f] = xf.x;
         s.ownY[f] = xf.y;
@@ -616,6 +721,11 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.life[f] = life * xf.scale;
       }
       if (s.outline && n.outline) s.outline[f] = outlineTravel(n.outline, t) * xf.scale;
+      if (s.outline && n.form?.drive) {
+        // A driven outline: the way of its points, summed step by step at the size the node has at each.
+        if (f > 0) formWay[i] = formWay[i]! + formStep(n.form, (f - 1) / FPS, t) * xf.scale;
+        s.outline[f] = formWay[i]!;
+      }
       if (s.width && n.width) s.width[f] = sampleWidth(n.width, t) * xf.scale;
 
       if (drawn[i]) {
@@ -627,7 +737,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       }
     }
 
-    for (const s of links) {
+    for (let li = 0; li < links.length; li++) {
+      const s = links[li]!;
       const n = s.node;
       const from = world[n.fromIndex]!;
       const to = world[n.toIndex]!;
@@ -658,6 +769,15 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       }
       // A width that changes moves the edge of the line by half the change.
       if (!active && n.width) active = (Math.abs(sampleWidth(n.width, t) - sampleWidth(n.width, t - 1 / FPS)) / 2) * zoom >= T.alivePx;
+      for (const end of drivers[li]!) {
+        for (const k of end) {
+          const d = placed[k]!;
+          // A driven node with nothing in it is a place for links to hold on to: it is seen while one of them is.
+          if (d.type === 'group' && d.radius <= 0) d.flags[f] = d.flags[f]! | s.flags[f]!;
+          // A link moves with a driven node at its end.
+          if (!active && f > 0) active = Math.hypot(d.ownX[f]! - d.ownX[f - 1]!, d.ownY[f]! - d.ownY[f - 1]!) * d.unit[f]! >= T.alivePx;
+        }
+      }
       s.active[f] = active ? 1 : 0;
     }
   }
@@ -728,9 +848,9 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   if (c.backgroundTrack) {
     const background = f32();
     for (let f = 1; f < frames; f++) background[f] = backgroundStep(c.backgroundTrack, (f - 1) / FPS, f / FPS);
-    return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, background };
+    return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, background, ...(perspectives.length > 0 ? { perspectives } : {}) };
   }
-  return { shot: c, frames, lang, camera, views, placed, links, emitters, springs };
+  return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, ...(perspectives.length > 0 ? { perspectives } : {}) };
 }
 
 /** Place of a node on screen at a frame, in px of a 1080p frame. */

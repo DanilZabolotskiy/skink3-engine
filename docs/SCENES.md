@@ -80,6 +80,7 @@ Two larger examples: `examples/demo/scene.ts` (a network, a creature, a pile of 
 - Times are **seconds** from the start of the shot. The engine renders 60 frames per second; frame *n* shows time *n*/60.
 - Angles are **degrees, clockwise** on screen; 0 points right, -90 points up.
 - A node's `at` is in the space of its parent (the layer for top-level nodes).
+- A layer made with the option `perspective` holds a space of three dimensions. A place in it is `[x, y, z]`, with z running away from the viewer (see A perspective layer).
 - The camera moves (see `camera` below), so a node at `[0, 0]` is in the centre of the frame only at the start.
 
 ## Colours: the palette
@@ -365,7 +366,7 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 
 `prewarm` is the number of seconds the world is simulated before the shot starts. With it a body may be released at a negative time, so a pile already lies there, or a stream already falls, at frame 0 (see Rigid bodies).
 
-## `layer({ id, depth, nodes, blur?, parallax?, tint? })`
+## `layer({ id, depth, nodes, blur?, parallax?, tint?, perspective? })`
 
 | `depth` | Meaning | Derived defaults |
 |---|---|---|
@@ -374,6 +375,10 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 | below 0 (down to -0.9) | nearer: moves more, heavily blurred | parallax `1 / (1 + depth)`, blur `focus.near × -depth`, tint 0 |
 
 `blur` (units), `parallax` and `tint` (0..1) override the derived values. Nodes are drawn in the order listed; children are drawn after their parent. Layers are drawn farthest first; two layers of the same depth are drawn in the order they are listed.
+
+**A `depth` on a node changes the draw order.** Every placed node listed directly in a layer's `nodes` (a shape, a group, an eye, a stroke, a text) takes `depth`, a number, 0 when left out. The node with the larger depth is drawn first, behind the others; nodes of one depth keep the order of the list. A `drive` may set it over time (see A node that follows a function of time), so that a thing passes in front of another and then behind it. A link is drawn at the mean of the depths of the two nodes it joins; a label and an emitter keep their place in the list, among the nodes of depth 0. Inside a parent the order of the children is the draw order, and a `depth` there is refused. A layer in which no node has a depth is drawn exactly as listed.
+
+`perspective` makes the layer a space of three dimensions with a camera of its own: see A perspective layer.
 
 A point of a layer lands on the screen at `p × zoom + (tx, ty)` (origin at the top-left corner of the frame), with `zoom = 1 + (camera.zoom - 1) × parallax`, `tx = 960 - camera.x × parallax × zoom` and `ty = 540 - camera.y × parallax × zoom`: a layer with parallax *p* sees the camera move *p* times as far and zoom *p* times as much.
 
@@ -391,7 +396,7 @@ All shape factories take these options:
 |---|---|---|
 | `id` | required | unique in the shot |
 | `fill` | required | palette reference |
-| `at` | `[0, 0]` | position in the parent's space |
+| `at` | `[0, 0]` | position in the parent's space; `[x, y, z]` for a node listed in a perspective layer |
 | `rotation` | `0` | degrees, clockwise |
 | `scale` | `1` | |
 | `opacity` | `1` | 0..1 at the start; `fadeTo` animates it (see Opacity) |
@@ -407,6 +412,7 @@ All shape factories take these options:
 | `clipTo` | none | id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline (see Clipping) |
 | `level` | none | makes the shape a content that fills its outline from the bottom (see Levels) |
 | `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
+| `depth` | `0` | for a shape listed directly in a layer: its place in the draw order; the larger depth is drawn first (see `layer`) |
 
 | Factory | Extra options | Notes |
 |---|---|---|
@@ -415,7 +421,7 @@ All shape factories take these options:
 | `polygon` | `sides`, `r`, `radius?` or `points`, `radius?` | a rounded **convex** polygon: regular (3–12 sides on a circle of radius `r`, corner radius default `0.16 × r`; the first corner points up) or from explicit corners (corner radius default 0: sharp) |
 | `rect` | `w`, `h`, `radius?` | rounded rectangle centred on its position; `radius` (default 22 % of the short side) must stay below half the short side (use a capsule for a pill) |
 | `blob` | `r`, `points?` (9), `wobble?` (0.14), `seed?` (1) | a soft irregular outline; the same seed gives the same blob |
-| `region` | `points`, `smooth?` (1) | a free-form closed outline through its points, concave allowed (see below); not a rigid body |
+| `region` | `points`, `smooth?` (1), `back?` | a free-form closed outline through its points, concave allowed (see below); not a rigid body. Listed in a perspective layer, its points may be points of the space, `[x, y, z]` (see A perspective layer) |
 
 A concave form is a `region`, or several shapes composed in a `group`.
 
@@ -495,9 +501,11 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 - Its outline can change over time: `reshape` runs every point to a new place (see An outline that changes).
 - **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound? })`
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
+
+`depth` is its place in the draw order of its layer (see `layer`). `plane` and `back` are for a group listed in a perspective layer: the group and all it holds lie in a plane of the space (see A perspective layer). A group with nothing in it also serves as a corner: a place that a `drive` moves and that `link`s hold on to (see A node that follows a function of time).
 
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
@@ -562,7 +570,7 @@ widthTo('tie', { at: 6, to: 3, dur: 1 }),     // and it is a hair again
 - A stroke that is scaled (`scale`, `scaleTo`, a parent) scales its width with it, keyed or not. `widthTo` is for a line that changes its width and not its size.
 - A `widthTo` makes no event. The motion review judges it on a channel of its own, `width` (the travel of the edge of the line): a width that changes within a frame or two is a `jump`, and a large, quick change with `overshoot: 0` an `abrupt-start`. While its width changes, a line counts as life in the frame.
 
-### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, sound? })`
+### `stroke({ id, points, color, width?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, sound?, depth? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
 
@@ -656,7 +664,7 @@ The layout wraps the string, balances the lines, and shrinks the font if needed.
 - A label and its target must be in the same layer.
 - A label over ground or a wall gives a covers-node warning unless that shape is marked `backdrop: true`.
 
-### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, count?, clipTo?, sound? })`
+### `text({ id, text, ink, at?, rotation?, scale?, opacity?, size?, minSize?, maxWidth?, maxLines?, weight?, align?, box?, count?, clipTo?, sound?, depth? })`
 
 Free-standing text: a title, a caption, a source line in a corner, a quotation, words on a card. It is a block of lines without a pointer. A `label` points at a thing; a `text` belongs to the frame, or to the shape it lies on.
 
@@ -721,7 +729,7 @@ countTo('grains', { at: 2, to: 2e9, dur: 4, profile: 'steady', ratio: true }),  
 - A `countTo` makes no event. The motion review counts a running number as life in the frame.
 - Digits do not roll like an odometer: a digit is replaced by the next.
 
-### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound? })`
+### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound?, depth? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
 
@@ -774,6 +782,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `turnTo(id, { at, speed, ... })` | shape, group, stroke, text | `dur` (0.8), `profile` (`'steady'`), `ramp` (0.3) | turns at a speed, with a profile (see A turn at a speed) |
 | `turnTo(id, { at, speeds, ... })` | shape, group, stroke, text | `dur` (up to its last key) | turns at a speed that is keyed over time (see A turn whose speed changes) |
 | `turnTo(id, { at, to, ... })` | shape, group, stroke, text | `dur` (0.8), `overshoot` (0.1) | turns to the absolute rotation `to` (degrees), overshoots, settles |
+| `turnTo(groupId, { at, about, ... })` | a group that lies in a plane | `about` (`'x'` or `'y'`), and the options of a turn | turns the plane on a hinge, out of its plane (see A perspective layer) |
 | `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
 | `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
@@ -785,6 +794,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `backgroundTo({ at, ... })` | the background | `dur` (2), `inner`, `outer`, `center`, `radius`, `atmosphere`, `vignette`, `profile` (`'ease'`), `ramp` (0.3) | changes the gradient of the shot, the colour far layers fade toward and the vignette at a moment; keys chain (see A background that changes) |
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
+| `drive(id, { dur, by })` | any node but an emitter | `at` (0), `by` or `samples` | the node follows a function of time that the scene computes: its place, rotation, scale, opacity, depth, and the points of a region or a stroke (see A node that follows a function of time) |
+| `perspectiveTo(layerId, { at, ... })` | the camera of a perspective layer | `dur` (1.6), `aim`, `distance`, `tilt`, `turn`, `lens`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera of that layer: it tilts, goes round, moves in, looks elsewhere; keys chain (see A perspective layer) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `widthTo(id, { at, to, ... })` | link, stroke | `dur` (0.6), `overshoot` (0.15) | changes the width of the line where it lies: it grows thick or thins, shoots past the new width and settles (see A line whose width changes) |
 | `pulse(linkId, { at, ... })` | link | `dur` (0.7), `bump` (0.14) | sends a glowing pulse from `from` to `to`; when it arrives, the node at the far end gets a bump (`bump: 0` turns that off) |
@@ -1021,6 +1032,50 @@ reshape('shore', { at: 2, dur: 2.4, points: COAST, smooth: 1 }),    // the dotte
 - It plays on top of the moves, turns, sizes and fades of the node. Children of a region keep their places.
 - A `reshape` makes no event. The motion review judges it as a move, on the channel `outline`: the travel of the point that goes farthest. `'steady'` between two rests in view is `mechanical`; while an outline changes, the node counts as life in the frame.
 
+### A node that follows a function of time
+
+The moves above bring curves of their own. Some motion is nobody's curve but the subject's: the corner of a wire frame that is turned in four dimensions and projected, a body on an orbit that winds inward, a ring that grows as a square root does, the outline of a sheet that curls into a tube. `drive` hands a node to a function that the scene computes.
+
+```ts
+// A body on an orbit that winds inward, and behind it a trail: a line through the places it had.
+const orbit = (t: number): Vec2 => [(300 - 20 * t) * Math.cos(1.5 * t), (190 - 13 * t) * Math.sin(1.5 * t)];
+const tail = (t: number): Vec2[] => [0, 1, 2, 3, 4, 5].map((i) => orbit(t - 0.1 * i));
+circle({ id: 'body', at: orbit(0), r: 24, fill: 'accent.aqua' }),
+stroke({ id: 'trail', points: tail(0), color: 'accent.aqua', opacity: 0.5 }),
+// timeline
+drive('body', { dur: 8, by: (t) => ({ at: orbit(t) }) }),
+drive('trail', { dur: 8, by: (t) => ({ points: tail(t) }) }),
+```
+
+| Option of `drive` | Default | Meaning |
+|---|---|---|
+| `at` | `0` | seconds: when the key starts |
+| `dur` | required | seconds it lasts, one frame at least |
+| `by` | | a function of the seconds since the key starts. It returns what the node is at that moment: an object with any of the channels below |
+| `samples` | | instead of `by`: the values themselves, per channel a list with one value per sample, evenly spaced over `dur`, two at least. For a track that was computed elsewhere |
+
+| Channel | What it sets | For |
+|---|---|---|
+| `at` | the place: `[x, y]` in the parent's space, or `[x, y, z]` for a node listed in a perspective layer | placed nodes; not a rigid body |
+| `rotation` | degrees, clockwise | placed nodes; not an eye, not a rigid body |
+| `scale` | a factor of the authored size, 0 and up | placed nodes and labels; not a rigid body |
+| `opacity` | 0..1 | every node but an emitter |
+| `depth` | the place in the draw order of the layer (see `layer`) | nodes listed directly in a layer |
+| `points` | the outline of a region or the line of a stroke: as many points as the node has | regions and strokes |
+
+- **The shot keeps samples, not the function.** `by` is called once for every frame of the key, when `drive()` runs, and the key holds what it returned. The shot stays plain data, and the same scene gives the same frames. So the function must be pure: no clock and no `Math.random`; the same seconds, the same answer. It returns the same channels every time.
+- **`samples` are played back smoothly.** A frame that falls on a sample takes it exactly; a frame between two samples takes a smooth curve through them. With `by`, every frame of the key falls on a sample.
+- **Before the key the node is as authored; after it, it stays as the last sample left it.** Two drives of one channel of one node may not overlap in time. A key may start before the shot.
+- **A channel is driven or keyed, not both.** A driven place takes no `moveTo`, `hop` or `travel`; a driven rotation no `turnTo`; a driven scale no `scaleTo` (pops and bumps still multiply in); a driven opacity no `fadeTo`; driven points no `reshape`. To add such a move, put the node in a group and move the group.
+- **Sticks that stay joined.** Make the corners of a frame groups with nothing in them, drive their places, and join them with `link`s (`bend: 0`, `gap: 0`). Each stick runs from corner to corner at every frame, wherever the corners go, and is as long as they are apart.
+- **Driven points.** The node keeps its number of points. A region is the outline of each frame, with the light of that outline, and what reads the outline (a label, a link, a clip, a cover) follows it. A driven outline is not checked for crossing itself: where it does, both lobes are filled, as a sheet looks that turns over. An outline or a line without size is not drawn at that frame.
+- **A fading trail** is two or three strokes through the same places, the longer ones fainter; a path drawn ahead is a stroke of its own that does not move.
+- A drive makes no event and no sound.
+- **The motion review judges a driven node like any other.** The engine knows only the samples: a function that leaps is a `jump`, one that starts or stops at full speed is `abrupt-start` or `abrupt-stop`, and one speed between two rests in view is `mechanical`. Ease the function itself, for example with `u * u * (3 - 2 * u)` of the share of its way. A function that leaves zero with a vertical slope, as a square root does, is a pop: fade the node in over those frames. Driven points are judged on the channel `outline`, by the travel of the point that goes farthest. A driven corner with nothing in it is judged while a link that holds on to it is seen, and a stick between driven corners counts as life in the frame.
+- One key holds 6 million numbers at most: 100 driven points for 500 seconds.
+
+`examples/drive/scene.ts` shows a sheet that curls, an orbit with its trail and a ring whose size follows a square root.
+
 ### Opacity
 
 Every shape, group, eye, label and link has an `opacity` (default 1) that `fadeTo` animates. How it combines:
@@ -1045,6 +1100,101 @@ The same intent for a group, each a little later than the one before:
 ```
 
 `order` is `'forward'` (default), `'reverse'`, `'center-out'` or `'edges-in'`. `make` may return one key or an array of keys.
+
+## A perspective layer
+
+A layer is flat: its nodes lie in one plane, and the camera of the shot slides and zooms that plane. The option `perspective` gives a layer a space of three dimensions, and a camera of its own that looks into it: a ground seen at an angle, a camera that rises over it or moves in, things that pass in front of each other.
+
+```ts
+layer({
+  id: 'room', depth: 0,
+  perspective: { aim: [0, 120, 0], distance: 2000, tilt: 20 },
+  nodes: [
+    // A ground with a map on it, lying in the space: everything in the group is drawn in its plane.
+    group({ id: 'floor', at: [0, 260, 0], plane: 'floor', depth: 4000, children: [
+      rect({ id: 'ground', w: 1500, h: 1100, fill: 'deep.ink', lit: false }),
+      region({ id: 'island', points: ISLAND, fill: 'mid.jade', lit: false }),
+    ] }),
+    // An ordinary node at a place of the space: it stands upright on the island and faces the camera.
+    circle({ id: 'post', at: [-360, 200, 110], r: 60, fill: 'accent.coral' }),
+  ],
+}),
+// timeline: the camera rises and goes round, then moves in
+perspectiveTo('room', { at: 1, dur: 5, tilt: 50, turn: 25 }),
+perspectiveTo('room', { at: 7, dur: 3, distance: 1300 }),
+```
+
+**The space.** x runs to the right and y down, as on the stage, and z away from the viewer, in stage units. A place in it is `[x, y, z]`; a place of two numbers has z 0.
+
+**The camera of the layer** is the option `perspective`: `true`, or an object with any of these.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `aim` | `[0, 0, 0]` | the point of the space the camera looks at. It is drawn at the origin of the layer |
+| `distance` | `1600` | how far the camera stands from that point |
+| `tilt` | `0` | degrees it looks down by: 0 level, 90 straight down on the ground; negative from below |
+| `turn` | `0` | degrees it has gone round the point, to the left: at 90 it stands on the left, and what was at the back is on the left of the picture |
+| `lens` | the `distance` | the zoom of the picture: a thing is drawn `lens / d` times its size, where `d` is how far it is in front of the camera. With the default, what stands at `aim` has its own size |
+
+With `perspective: true` a node at z 0 is drawn exactly where a flat layer draws it; a node twice as far from the camera is half as large and half as far from the middle. The camera of the shot (its drift, its path, `cameraTo`, `zoomTo`) moves the picture of the layer as it moves any layer, by the layer's `depth`.
+
+**`perspectiveTo(layerId, { at, dur?, aim?, distance?, tilt?, turn?, lens?, profile?, ramp? })`** moves the camera of the layer at a moment. Give at least one of `aim`, `distance`, `tilt`, `turn`, `lens`; what is left out stays. `dur` is 1.6 s unless given (0.05 at least), `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each takes over from where the camera is at its moment, also when the key before it is still under way.
+
+- `tilt` and `turn` change the angle on the scene in one move: from a level view to a look straight down, or round a thing while its near parts slide across its far ones.
+- `distance` is a dolly: the camera moves in or out, and what is near grows faster than what is far. `lens` is a zoom: everything grows alike. Both run as ratios: a move from 1600 to 400 passes 800 half-way.
+- `aim` slides the view through the space.
+
+**What stands in the space.** Only the nodes listed directly in the layer's `nodes` have a place in the space. Everything inside them is flat, in the plane of its parent.
+
+| A node listed in the layer | What it is in the space |
+|---|---|
+| a shape, a group, an eye, a stroke, a text | a flat picture that stands at its place, `at: [x, y, z]`, and faces the camera, at the size its distance gives it. Its children go with it |
+| a group with `plane` | a plane of the space through its place: everything in it is drawn in that plane, in perspective |
+| a region or a stroke whose `points` are `[x, y, z]` | an outline or a line through those points of the space, measured from its place and seen through the camera at every frame |
+| a link | a line between the pictures of its two nodes |
+| a label, an emitter | flat, as in any layer: their places are places of the picture. They are drawn over everything else |
+
+`moveTo` takes a place of three numbers for such a node (`to: [x, y, z]`; the third rides the move). With two numbers the node keeps its z, as it does under `hop` and `travel`. `drive` sets a place of three numbers in the same way.
+
+**A group that lies in a plane.** `plane` names the plane:
+
+| `plane` | The plane | Its front |
+|---|---|---|
+| `'floor'` | level. Its x runs to the right, its y toward the viewer: a map drawn in it has its top at the back | its top |
+| `'wall'` | upright, across the view. Its x runs to the right, its y down | the side toward the viewer |
+| `'side'` | upright, along the view. Its x runs away from the viewer, its y down | the side toward the right |
+| `{ x, y }` | any: two directions of the space, at right angles, along which its x and its y run | the side from which x and y read as on the stage |
+
+- Everything in the group is authored flat, in the units of the plane, and drawn through the picture the camera has of that plane: shapes with their light, strokes, texts, clipping and levels.
+- The place of the group is the place of the plane in the space, and its moves move the plane. Its `rotation` and `scale` act in the plane.
+- Seen from behind, a plane is drawn mirrored, as a pane of glass is; `back: false` leaves it out then. A plane the camera looks along has no picture. A plane is drawn while its place is in front of the camera; what of it reaches behind the camera is cut off.
+- A group in a plane takes no `follow`, `upright` or `clipTo`, and a node is clipped only to a shape of its own plane.
+- What reads a place (a label's tail, a link's end, an eye that looks) gets the place of a node in a plane where it is drawn.
+
+**A hinge.** `turnTo` with `about: 'x'` or `'y'` turns such a group about its own x or y axis, out of its plane: a card that falls flat, the faces of a box that fold down, a shape that is lifted off the ground and turned over. The hinge runs through the place of the group, so put its `at` on the hinge and its children beside it.
+
+```ts
+group({ id: 'card', at: [400, 260, 300], plane: 'wall', children: [rect({ id: 'face', at: [0, -170], w: 300, h: 340, fill: 'mid.rose' })] }),
+turnTo('card', { at: 5, to: 90, about: 'x', dur: 1.6, profile: 'ease' }),    // it falls back on its bottom edge and lies face up
+```
+
+- `to` is degrees from the plane as authored. A positive turn about x lifts the edge at its +y toward its front; a positive turn about y lifts the edge at its +x.
+- `speed`, `speeds`, `dur`, `profile` and `overshoot` are those of any turn. Turns about x, turns about y and turns in the plane are three chains of their own.
+
+**A region and a stroke through points of the space.** Give `points` of three numbers: a ramp, the face of a box, a path that climbs. The points of a region run clockwise as its front is seen; `back: false` leaves it out when it is seen from behind. Such a node takes no `level`, no `idle` and no `reshape`; `drive` moves its points (`points: [[x, y, z], ...]`). The whole of a stroke is as wide as a flat stroke at the distance of its middle.
+
+**What is drawn over what.** The nodes listed in the layer are drawn farthest first, by the distance of each one's place from the camera, whatever the order of the list; what is equally far keeps the order of the list. A node is ordered as a whole, by its place, and nodes that pass through each other are not cut. So give a ground that lies under everything a large `depth` (it is added to the distance), and drive the `depth` of a thing where its place alone orders it wrongly. A link is as far as the middle between its two nodes.
+
+**The motion review** judges the camera of the layer as it judges the camera of the shot, under the subject `(perspective:<layer id>)`: a move without an ease at one end is `abrupt-start` or `abrupt-stop`, on the channel `position` (its slide), `rotation` (its tilt and its turn) or `scale` (its dolly and its zoom). Name it in `intended` by that subject. The nodes are judged on what they do in the space, not on what the camera does with their picture: a set that only the camera moves is still a hold of the frame (`dead-area`), and a thing that turns on a hinge or follows a drive is life.
+
+**What it does not do.**
+
+- The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space and no cast shadow: draw a shadow as links or as a region on the ground and drive it.
+- Nothing but a plane is cut at the camera. A node whose place, or one of whose points of the space, is nearer than 2 % of the lens in front of the camera, or behind it, is not drawn at that frame.
+- Rigid bodies are refused in a perspective layer: the physics bake is flat. Springs (`follow`, `sway`) work on the picture, so a move of the layer's camera sets them swinging.
+- No blur by distance: the `blur` of the layer applies to all of it.
+
+`examples/space/scene.ts` shows a floor with a map, a wire cube of driven corners with its shadow, a moon that passes in front of a globe and behind it, a card on a hinge, a ramp, and a camera that rises, goes round and moves in.
 
 ## Springs: secondary motion
 
@@ -1173,6 +1323,7 @@ Things to know when you write a scene:
 - Keep a small thing slow: under half of its own size per frame.
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
+- A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
@@ -1598,7 +1749,9 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 | a layer on screen | `evaluate(...).layers[i].view`: `{ zoom, tx, ty }`, screen = layer × zoom + (tx, ty) |
 | the style defaults | `PHYSICS_DEFAULTS`, `CAMERA_DEFAULTS` |
 
-`evaluate` wraps what it draws in three kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape) and `'stretch'` (a node that is being squashed). `flatItems` opens all three.
+`evaluate` wraps what it draws in four kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape), `'stretch'` (a node that is being squashed) and `'plane'` (what lies in a plane of a perspective layer, with the `map` of that plane at the frame). `flatItems` opens all four; what it takes out of a plane it gives as the layer sees it (`seenThrough(item, map)`).
+
+For a perspective layer, `c.spatial` says that the shot has one and `c.layers[i].persp` is the track of its camera. `eyeOf(perspAt(track, seconds))` is the camera at a moment; `project(eye, [x, y, z])` gives where a point of the space is drawn on the layer (`x`, `y`), how large one unit is there (`k`; 0: not drawn) and how far it is (`far`). `planeMap(eye, origin, axes)` and `planePoint(map, [u, v])` do the same for a point of a plane. `computeWorld(c, frame, poses, places)` with `places = newPlaces(c)` also fills in where the nodes lie in the space (`places.point`, three numbers per node index) and in their planes (`places.flat`, `places.planes`), and `drawOrder(c, layer, seconds, places)` gives the node indices of a layer that orders what it draws, in draw order.
 
 For colour, `checkPalette(palette)` returns the rules of a palette that are broken, `colourDistance(a, b)` the difference of two colours in lightness and in colour, and `reviewContrast(c, bake)` the contrast review of a shot that asks for one (null otherwise); `runChecks(c, bake, langs, { contrast: true })` adds it to the checks.
 
@@ -1610,4 +1763,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile). See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other and no light in the space of a perspective layer. See the roadmap in the README.
