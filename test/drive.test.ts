@@ -120,6 +120,10 @@ test('drive: the key holds what its function gave at every frame, not the functi
   bad({ dur: 1, by: (t: number) => ({ at: [1 / (t - 0.5), 0] }) }, /at\[0\] at 0\.500 s must be a number/);
   bad({ dur: 1, by: () => ({ opacity: 1.5 }) }, /opacity at 0\.000 s must be a number in 0\.\.1/);
   bad({ dur: 1, by: (t: number) => ({ points: t < 0.5 ? [[0, 0], [1, 1]] : [[0, 0], [1, 1], [2, 2]] }) }, /points holds 2 points at 0 s and 3 at 0\.500 s; an outline keeps its number of points/);
+  // An outline of as many points as a region may have, and no more.
+  const ring = (n: number): number[][] => Array.from({ length: n }, (_, i) => [Math.cos(i), Math.sin(i)]);
+  assert.equal(drive('a', { dur: 1, samples: { points: [ring(600), ring(600)] as never } }).points![0]!.length, 1200);
+  bad({ dur: 1, samples: { points: [ring(601), ring(601)] } }, /points must be the outline: a list of 2 to 600 points, as many as the node has/);
   bad({ dur: 1, samples: { rotation: [1] } }, /samples\.rotation must be a list of at least two samples, evenly spaced over dur/);
   bad({ dur: 1, samples: { rotation: [1, 2], scale: [1, 2, 3] } }, /every channel of samples holds one value per sample; rotation has 2, scale has 3/);
   bad({ dur: 1, samples: { speed: [1, 2] } }, /samples: unknown option "speed"/);

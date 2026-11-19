@@ -490,11 +490,11 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 
 | Option | Default | Meaning |
 |---|---|---|
-| `points` | required | 3 to 200 points `[x, y]` in order round the outline, in the shape's own space. Either way round |
+| `points` | required | 3 to 600 points `[x, y]` in order round the outline, in the shape's own space. Either way round |
 | `smooth` | `1` | `1` joins the points with a smooth curve through them, `0` with straight edges; between, the corners are partly rounded. The same curve as a `stroke` and the path of a `travel` |
 
 - **The outline may not cross itself.** The engine says near which points it does; move them apart, or lower `smooth` (a tight bend between distant points makes the curve swing wide).
-- **A few points are enough.** With `smooth: 1` six to twelve points give a recognisable coast; the curve passes through every one of them.
+- **A few points are enough.** With `smooth: 1` six to twelve points give a recognisable coast; the curve passes through every one of them. An outline that is seen close and has to be true, as a real coast is, takes more: up to 600.
 - A closed `stroke` with the same points and the same `smooth` lies exactly on its edge: a coastline, a dashed border.
 - **One shape, one light:** the shadow, the rim and the highlight follow the whole form, into its bays. Its middle, for the light and the glow, is the middle of the largest circle that fits inside it.
 - A label points at its edge, things can be clipped to it (`clipTo`), it can be a `cover`, a `backdrop` or have a `level`.

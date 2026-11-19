@@ -234,15 +234,83 @@ export function regionFault(points: readonly Vec2[], smooth: number, turn: -1 | 
   // The outline as it is drawn must not cross itself: a shape has one inside.
   const ring: Vec2[] = [];
   for (const s of regionSegments({ kind: 'polygon', points, radius: 0, smooth })) for (let k = 0; k < 12; k++) ring.push(cubicAt(s, k / 12));
+  const pair = firstCrossing(ring);
+  return pair ? `the outline crosses itself near point ${Math.floor(pair[0] / 12)} and point ${Math.floor(pair[1] / 12)}` : null;
+}
+
+/**
+ * The first two pieces of the closed line through `ring` that cross, or null
+ * when none do. Piece i runs from point i to the next one; pieces that share
+ * an end are not held against each other. The answer is the one a search of
+ * every pair in turn gives: the smallest i, and for it the smallest j.
+ *
+ * Two pieces can cross only where their boxes meet. So the pieces are sorted
+ * into the cells of a grid, and each is held against the pieces that share a
+ * cell with it, in their order: the work grows with the number of pieces, not
+ * with its square. At worst, when one point lies so far from the rest that
+ * nearly every piece falls into one cell, it is the search of every pair.
+ */
+export function firstCrossing(ring: readonly Vec2[]): readonly [number, number] | null {
   const m = ring.length;
+  if (m < 4) return null;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const p of ring) {
+    x0 = Math.min(x0, p[0]);
+    y0 = Math.min(y0, p[1]);
+    x1 = Math.max(x1, p[0]);
+    y1 = Math.max(y1, p[1]);
+  }
+  // About one piece to a cell. A line without width or without height has one column or one row.
+  const side = Math.ceil(Math.sqrt(m));
+  const cw = (x1 - x0) / side || 1;
+  const ch = (y1 - y0) / side || 1;
+  // The cell of a coordinate never falls as the coordinate grows: boxes that meet share a cell.
+  const cell = (v: number, from: number, size: number): number => {
+    const k = Math.floor((v - from) / size);
+    return k > 0 ? Math.min(side - 1, k) : 0;
+  };
+  const cells: number[][] = Array.from({ length: side * side }, () => []);
+  const box = new Int32Array(4 * m);
   for (let i = 0; i < m; i++) {
-    for (let j = i + 2; j < m; j++) {
-      if (i === 0 && j === m - 1) continue;
-      if (crosses(ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!)) return `the outline crosses itself near point ${Math.floor(i / 12)} and point ${Math.floor(j / 12)}`;
+    const a = ring[i]!;
+    const b = ring[(i + 1) % m]!;
+    const c0 = cell(Math.min(a[0], b[0]), x0, cw);
+    const c1 = cell(Math.max(a[0], b[0]), x0, cw);
+    const r0 = cell(Math.min(a[1], b[1]), y0, ch);
+    const r1 = cell(Math.max(a[1], b[1]), y0, ch);
+    box[4 * i] = c0;
+    box[4 * i + 1] = c1;
+    box[4 * i + 2] = r0;
+    box[4 * i + 3] = r1;
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) cells[r * side + c]!.push(i);
+  }
+  // The pieces that share a cell with piece i and come at least two after it, each once.
+  const near: number[] = [];
+  const seen = new Int32Array(m).fill(-1);
+  for (let i = 0; i < m; i++) {
+    near.length = 0;
+    let inOrder = true;
+    for (let r = box[4 * i + 2]!; r <= box[4 * i + 3]!; r++) {
+      for (let c = box[4 * i]!; c <= box[4 * i + 1]!; c++) {
+        for (const j of cells[r * side + c]!) {
+          if (j < i + 2 || seen[j] === i || (i === 0 && j === m - 1)) continue;
+          seen[j] = i;
+          if (near.length > 0 && j < near[near.length - 1]!) inOrder = false;
+          near.push(j);
+        }
+      }
     }
+    if (!inOrder) near.sort((p, q) => p - q);
+    for (const j of near) if (crosses(ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!)) return [i, j];
   }
   return null;
 }
+
+/** The most points the outline of a region may have. */
+export const REGION_MAX_POINTS = 600;
 
 /**
  * A free-form closed outline through `points`, concave allowed. The outline
@@ -251,7 +319,7 @@ export function regionFault(points: readonly Vec2[], smooth: number, turn: -1 | 
  */
 export function regionShape(points: readonly Vec2[], smooth = 1): RegionSpec {
   need(points.length >= 3, 'region: at least 3 points are required');
-  need(points.length <= 200, `region: at most 200 points, got ${points.length}`);
+  need(points.length <= REGION_MAX_POINTS, `region: at most ${REGION_MAX_POINTS} points, got ${points.length}`);
   need(smooth >= 0 && smooth <= 1, `region: smooth must be in 0..1, got ${smooth}`);
   const cw = (signedArea(points) > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
   const fault = regionFault(cw, smooth);

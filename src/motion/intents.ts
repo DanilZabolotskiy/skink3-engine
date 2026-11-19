@@ -1330,6 +1330,8 @@ export interface DriveSamples {
 const DRIVE_CHANNELS = ['at', 'rotation', 'scale', 'opacity', 'depth', 'points'] as const;
 /** The most numbers one drive key may hold. */
 export const DRIVE_MAX_NUMBERS = 6_000_000;
+/** The most points a driven outline may have: as many as a region may. */
+const DRIVE_MAX_POINTS = 600;
 
 /**
  * Drive a node by a computed function of time: what no move profile says. A
@@ -1430,7 +1432,7 @@ export function drive(id: string, opts: { at?: number; dur: number; by?: (second
   if (names.includes('depth')) key.depth = scalars('depth', -1e6, 1e6);
   if (names.includes('points')) {
     const first = read('points', 0);
-    if (!Array.isArray(first) || first.length < 2 || first.length > 200) throw new IntentError(`${w}: points must be the outline: a list of 2 to 200 points, as many as the node has`);
+    if (!Array.isArray(first) || first.length < 2 || first.length > DRIVE_MAX_POINTS) throw new IntentError(`${w}: points must be the outline: a list of 2 to ${DRIVE_MAX_POINTS} points, as many as the node has`);
     const dims = dimsOf('points[0]', first[0], 0);
     const points: number[][] = [];
     for (let i = 0; i < count; i++) {

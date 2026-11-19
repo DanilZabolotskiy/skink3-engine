@@ -15,6 +15,7 @@ import {
   polygon,
   region,
   reviewMotion,
+  Rng,
   SceneError,
   shot,
   stroke,
@@ -23,7 +24,7 @@ import {
   type ShotSpec,
   type Vec2,
 } from '../src/index.ts';
-import { isRegion, outlineOf, shapeExtent } from '../src/shape/geometry.ts';
+import { firstCrossing, isRegion, outlineOf, REGION_MAX_POINTS, regionFault, regionShape, shapeExtent } from '../src/shape/geometry.ts';
 
 // A region: a free-form closed outline through points, concave allowed, as one shape.
 
@@ -164,4 +165,101 @@ test('region: what it refuses, and that the other shapes are what they were', as
   const cs = compileShot(make([region({ id: 'r', points: C, fill: 'accent.pink', smooth: 0.5, scale: 0.5 })], [moveTo('r', { at: 0.5, to: [0, 250], dur: 1.5, profile: 'steady', arc: 0 })]));
   const kinds = reviewMotion(cs, await bakeShot(cs)).report.findings.filter((f) => f.subject === 'r').map((f) => f.kind);
   assert.ok(kinds.some((k) => k === 'mechanical' || k === 'abrupt-start'), kinds.join(', '));
+});
+
+// --- Outlines of many points --------------------------------------------------
+
+/** A coast: `n` points round a middle, never crossing: a wavy ring with a little noise. */
+function coast(n: number, seed = 5): Vec2[] {
+  const rng = new Rng(seed, 'coast');
+  return Array.from({ length: n }, (_, i) => {
+    const a = (2 * Math.PI * i) / n;
+    const r = 300 + 50 * Math.sin(5 * a) + rng.range(-1, 1);
+    return [r * Math.cos(a), 0.8 * r * Math.sin(a)] as Vec2;
+  });
+}
+
+/** The search the engine made before: every pair of pieces in turn. */
+function everyPair(ring: readonly Vec2[]): [number, number] | null {
+  const side = (p: Vec2, q: Vec2, r: Vec2): number => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const m = ring.length;
+  for (let i = 0; i < m; i++) {
+    for (let j = i + 2; j < m; j++) {
+      if (i === 0 && j === m - 1) continue;
+      const [a, b, c, d] = [ring[i]!, ring[(i + 1) % m]!, ring[j]!, ring[(j + 1) % m]!];
+      const d1 = side(c, d, a);
+      const d2 = side(c, d, b);
+      const d3 = side(a, b, c);
+      const d4 = side(a, b, d);
+      if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return [i, j];
+    }
+  }
+  return null;
+}
+
+test('region: an outline may have 600 points; it is one shape as a small one is, and more points are refused', async () => {
+  assert.equal(REGION_MAX_POINTS, 600);
+  const big = coast(600);
+  const spec = make([region({ id: 'r', points: big, fill: 'accent.pink', lit: false })]);
+  const at = await reader(spec);
+  assert.ok(pink(at(0, 0)) && pink(at(270, 0)) && pink(at(0, -170)), 'filled inside');
+  assert.ok(!pink(at(380, 0)) && !pink(at(0, 300)) && !pink(at(-330, -230)), 'and nowhere else');
+  // Its points are kept as they are given, as those of a small outline are.
+  assert.deepEqual(regionShape(big, 1).points, big);
+  assert.throws(() => region({ id: 'r', fill: 'accent.pink', points: coast(601) }), (e: unknown) => e instanceof SceneError && /region: at most 600 points, got 601/.test(e.message));
+  // A crossing among that many points is found, and named by its two points.
+  const knot = big.slice();
+  [knot[100], knot[400]] = [knot[400]!, knot[100]!];
+  assert.match(regionFault(knot, 0) ?? '', /^the outline crosses itself near point \d+ and point \d+$/);
+  assert.throws(() => region({ id: 'r', fill: 'accent.pink', points: knot, smooth: 0 }), (e: unknown) => e instanceof SceneError && /region: the outline crosses itself near point 99 and point 400; move the points apart or lower smooth/.test(e.message));
+});
+
+test('region: the search for a crossing gives the answer that a search of every pair gives, and its work does not grow with the square of the points', () => {
+  // Sound outlines and outlines that cross themselves, with straight and with curved runs, even and clustered.
+  const rng = new Rng(11, 'rings');
+  let crossing = 0;
+  for (let k = 0; k < 1500; k++) {
+    const n = rng.int(4, 90);
+    const wild = k % 2 === 0;
+    const near = k % 5 === 0;
+    const ring = Array.from({ length: n }, (_, i) => {
+      const a = (2 * Math.PI * i) / n;
+      const r = wild ? rng.range(20, 400) : 300 + rng.range(-30, 30);
+      // Every fifth outline is crowded into a corner, with one point far off.
+      const shrink = near && i > 0 ? 0.001 : 1;
+      return [shrink * (r * Math.cos(a) + (wild ? rng.range(-150, 150) : 0)), shrink * (r * Math.sin(a) + (wild ? rng.range(-150, 150) : 0))] as Vec2;
+    });
+    const want = everyPair(ring);
+    assert.deepEqual(firstCrossing(ring), want, `outline ${k}`);
+    if (want) crossing++;
+  }
+  assert.ok(crossing > 300 && crossing < 1200, `${crossing} of 1500 cross themselves`);
+  // Pieces on one line, a line without width, and too few pieces to cross.
+  assert.equal(firstCrossing([[0, 0], [100, 0], [200, 0], [300, 0], [200, 0], [100, 0]]), null);
+  assert.equal(firstCrossing([[0, 0], [0, 100], [0, 300], [0, 200]]), null);
+  assert.equal(firstCrossing([[0, 0], [100, 0], [0, 100]]), null);
+  assert.deepEqual(firstCrossing([[0, 0], [100, 100], [100, 0], [0, 100]]), [0, 2]);
+
+  // An outline at the limit, as the engine walks it (12 pieces to a point): the search of every pair holds 26
+  // million pairs against each other, this one a few thousand. The better of five runs each, so that a busy
+  // machine does not decide it.
+  const ring: Vec2[] = [];
+  const big = coast(600);
+  for (let i = 0; i < 600; i++) {
+    const [a, b] = [big[i]!, big[(i + 1) % 600]!];
+    for (let k = 0; k < 12; k++) ring.push([a[0] + ((b[0] - a[0]) * k) / 12, a[1] + ((b[1] - a[1]) * k) / 12]);
+  }
+  const best = (run: () => unknown): number => {
+    let ms = Infinity;
+    for (let k = 0; k < 5; k++) {
+      const from = performance.now();
+      run();
+      ms = Math.min(ms, performance.now() - from);
+    }
+    return ms;
+  };
+  assert.equal(firstCrossing(ring), null);
+  const slow = best(() => everyPair(ring));
+  const quick = best(() => firstCrossing(ring));
+  assert.ok(quick < slow / 4, `the search took ${quick.toFixed(1)} ms, every pair ${slow.toFixed(1)} ms`);
 });
