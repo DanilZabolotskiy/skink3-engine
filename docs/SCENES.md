@@ -506,11 +506,12 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 
 | Option | Default | Meaning |
 |---|---|---|
-| `points` | required | 3 to 600 points `[x, y]` in order round the outline, in the shape's own space. Either way round |
+| `points` | required | 3 to 600 points `[x, y]` in order round the outline, in the shape's own space; up to 4000 when the region is drawn flat (`lit: false`). Either way round |
 | `smooth` | `1` | `1` joins the points with a smooth curve through them, `0` with straight edges; between, the corners are partly rounded. The same curve as a `stroke` and the path of a `travel` |
 
 - **The outline may not cross itself.** The engine says near which points it does; move them apart, or lower `smooth` (a tight bend between distant points makes the curve swing wide).
 - **A few points are enough.** With `smooth: 1` six to twelve points give a recognisable coast; the curve passes through every one of them. An outline that is seen close and has to be true, as a real coast is, takes more: up to 600.
+- **The whole coast of a wide map: a flat region, up to 4000 points.** The land that lies under a map, from one edge of the frame to the other, has more bends than 600 points hold, and thinned to 600 it no longer lies under what is drawn on it: it shows beside a country drawn in full over it. Give it `lit: false`, and it takes 4000. The light is the reason for the limit of a lit region: it is cut out of the outline, which costs more with every point and fails on a few thousand; a flat fill costs little (4000 points: a few hundredths of a second a frame). Thin the data to the frame first (a bend smaller than half a unit is not seen), and keep what is lit, the country of the story, within 600.
 - A closed `stroke` with the same points and the same `smooth` lies exactly on its edge: a coastline, a dashed border.
 - **One shape, one light:** the shadow, the rim and the highlight follow the whole form, into its bays. Its middle, for the light and the glow, is the middle of the largest circle that fits inside it.
 - A label points at its edge, things can be clipped to it (`clipTo`), it can be a `cover`, a `backdrop` or have a `level`.
@@ -1069,7 +1070,7 @@ popIn('hut', { at: GROW.at + GROW.dur * (reachedAt(yard, ground, HUT) ?? 1) }), 
 ```
 
 - **`matchPoints(from, to, { points?, closed? })`** returns the two outlines, each as the same number of points a set share of its own length apart. Both are turned clockwise; the first starts at its first point, and the second where the points have the least way to go in all. So neither the place a list starts from nor the way round it is given matters.
-  - `points`: how many; unless given, as many as the outline with more has, and 24 at least. 600 at most, as a region takes. The points are spread evenly, so a corner of the outline falls between two of them: give a few times the number of its corners, and `smooth: 0` keeps them sharp enough.
+  - `points`: how many; unless given, as many as the outline with more has, and 24 at least. 4000 at most, as a flat region takes (600 for a lit one). The points are spread evenly, so a corner of the outline falls between two of them: give a few times the number of its corners, and `smooth: 0` keeps them sharp enough.
   - `closed: false`: for two lines that are not closed (the `points` of an open `stroke`): matched from their first points to their last.
   - It does not promise that a region stays a region on the way. It does for an outline and one round it, or two of a like place and form; where the shot is refused, give more points or reshape in two steps.
 - **`reachedAt(from, to, place, { profile?, ramp? })`** returns the share of the `dur` of that `reshape`, 0 to 1, at which the outline first holds `place`: `0` when the first outline holds it already, `undefined` when the last does not.

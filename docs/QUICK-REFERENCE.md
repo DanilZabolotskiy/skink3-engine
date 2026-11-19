@@ -3,7 +3,7 @@
 What a scene can use. Open [SCENES.md](SCENES.md) or a review document only at a section the index names. What is in neither is not built.
 
 - What follows `/* = */` is a default.
-- Units: a stage of 1920 x 1080, origin in the centre, y down; `[x, y]` (a `Vec2`) in the parent's space; seconds of 60 frames; degrees clockwise, 0 right.
+- Units: a 1920 x 1080 stage, origin in the centre, y down; `[x, y]` (a `Vec2`) in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
 
 ## A scene module
 
@@ -53,11 +53,11 @@ perspectiveTo('room', { at: 2, tilt: 50, /* = */ dur: 1.6, profile: 'ease', ramp
 
 ```ts
 circle({ id: 'c', fill: 'accent.aqua', r: 90, /* = */ at: [0, 0], rotation: 0, scale: 1, opacity: 1, lit: true, glow: 0, children: [] });
-capsule({ id: 'arm', fill: 'accent.amber', length: 46, r: 8, /* = */ origin: 'center' }); // a stick, tip to tip
+capsule({ id: 'arm', fill: 'accent.amber', length: 46, r: 8, /* = */ origin: 'center' }); // tip to tip
 polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /* = */ radius: 8 }); // 0.16 r; or points: [[x, y], ...], radius: 0
 rect({ id: 'tray', fill: 'dark.indigo', w: 240, h: 50, /* = */ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'accent.amber', r: 50, /* = */ points: 9, wobble: 0.14, seed: 1 });
-region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // free-form, concave allowed; no body
+region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
 group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: no turning with its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, at, rotation, scale

@@ -311,15 +311,23 @@ export function firstCrossing(ring: readonly Vec2[]): readonly [number, number] 
 
 /** The most points the outline of a region may have. */
 export const REGION_MAX_POINTS = 600;
+/**
+ * The most points of a region that is drawn flat, without the light. The
+ * light of a shape is cut out of its outline by operations on paths: their
+ * work grows faster than the points do, and on an outline of a few thousand
+ * points they fail. A flat fill is one path, so such a region takes the whole
+ * coast of a wide map.
+ */
+export const REGION_MAX_FLAT_POINTS = 4000;
 
 /**
  * A free-form closed outline through `points`, concave allowed. The outline
  * may not cross itself; the points are kept clockwise on screen whichever way
- * they are given.
+ * they are given. `most`: how many points it may have.
  */
-export function regionShape(points: readonly Vec2[], smooth = 1): RegionSpec {
+export function regionShape(points: readonly Vec2[], smooth = 1, most = REGION_MAX_POINTS): RegionSpec {
   need(points.length >= 3, 'region: at least 3 points are required');
-  need(points.length <= REGION_MAX_POINTS, `region: at most ${REGION_MAX_POINTS} points, got ${points.length}`);
+  need(points.length <= most, `region: at most ${most} points, got ${points.length}`);
   need(smooth >= 0 && smooth <= 1, `region: smooth must be in 0..1, got ${smooth}`);
   const cw = (signedArea(points) > 0 ? points.slice() : points.slice().reverse()).map((p) => [p[0], p[1]] as Vec2);
   const fault = regionFault(cw, smooth);

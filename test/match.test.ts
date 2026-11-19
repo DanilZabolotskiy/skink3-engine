@@ -88,8 +88,8 @@ test('matchPoints: what it refuses', () => {
   bad(() => matchPoints(YARD, GROUND, { count: 30 } as never), /matchPoints: unknown option "count" \(allowed: points, closed\)/);
   bad(() => matchPoints(YARD, [[0, 0], [1, 1]]), /matchPoints: the second outline must be a list of at least 3 points \[x, y\]/);
   bad(() => matchPoints([[0, 0], [1, Number.NaN], [2, 2]], GROUND), /matchPoints: the first outline\[1\] must be a point \[x, y\] of two finite numbers/);
-  bad(() => matchPoints(YARD, GROUND, { points: 601 }), /matchPoints: points must be a whole number in 3\.\.600, got 601/);
-  bad(() => matchPoints(YARD, GROUND, { points: 2.5 }), /matchPoints: points must be a whole number in 3\.\.600/);
+  bad(() => matchPoints(YARD, GROUND, { points: 4001 }), /matchPoints: points must be a whole number in 3\.\.4000, got 4001/);
+  bad(() => matchPoints(YARD, GROUND, { points: 2.5 }), /matchPoints: points must be a whole number in 3\.\.4000/);
   bad(() => matchPoints(YARD, [[0, 0], [50, 50], [100, 100]]), /matchPoints: a closed outline must enclose an area; for lines, give closed: false/);
   bad(() => matchPoints(YARD, GROUND, { closed: 1 } as never), /matchPoints: closed must be true or false/);
 });

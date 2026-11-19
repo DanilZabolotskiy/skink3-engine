@@ -1373,7 +1373,7 @@ export interface DriveSamples {
 const DRIVE_CHANNELS = ['at', 'rotation', 'scale', 'opacity', 'depth', 'points'] as const;
 /** The most numbers one drive key may hold. */
 export const DRIVE_MAX_NUMBERS = 6_000_000;
-/** The most points a driven outline may have: as many as a region may. */
+/** The most points a driven outline may have: as many as a lit region may. */
 const DRIVE_MAX_POINTS = 600;
 
 /**

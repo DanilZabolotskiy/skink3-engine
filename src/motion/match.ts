@@ -9,8 +9,8 @@
 import type { Vec2 } from '../core/math.ts';
 import { DEFAULT_RAMP, profileRamps, rampProgress, type MoveProfile } from './curves.ts';
 
-/** Most points an outline of the engine may have (see `region`). */
-const MAX_POINTS = 600;
+/** Most points an outline of the engine may have: as many as a region that is drawn flat (see `region`). */
+const MAX_POINTS = 4000;
 
 function outline(where: string, name: string, value: unknown, least: number): Vec2[] {
   if (!Array.isArray(value) || value.length < least) throw new Error(`${where}: ${name} must be a list of at least ${least} points [x, y]`);
@@ -67,8 +67,8 @@ function spread(points: readonly Vec2[], n: number, closed: boolean): Vec2[] {
  * round they are given matters. Lines that are not closed (`closed: false`)
  * are matched from their first points to their last.
  *
- * `points`: how many (the larger of the two counts and 24 unless given; 600
- * at most, as a region has).
+ * `points`: how many (the larger of the two counts and 24 unless given; 4000
+ * at most, as a region that is drawn flat has, and 600 for one that is lit).
  */
 export function matchPoints(from: readonly Vec2[], to: readonly Vec2[], opts: { points?: number; closed?: boolean } = {}): [Vec2[], Vec2[]] {
   const where = 'matchPoints';

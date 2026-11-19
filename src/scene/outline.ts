@@ -144,7 +144,8 @@ export function buildOutlineTrack(id: string, base: Form, keys: readonly Reshape
       if (!(pathLength(to) > 1e-6)) throw new OutlineError(`${w}: the new points give a line without length`);
     } else {
       try {
-        to = regionShape(k.points, smooth);
+        // As many points as the region has (held above): it was given no more than it may have.
+        to = regionShape(k.points, smooth, from.points.length);
       } catch (e) {
         throw new OutlineError(`${w}: the new outline is no region: ${(e as Error).message.replace(/^region: /, '')}`);
       }

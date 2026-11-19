@@ -14,6 +14,7 @@ import {
   pathTable,
   polygon,
   region,
+  reshape,
   reviewMotion,
   Rng,
   SceneError,
@@ -24,7 +25,7 @@ import {
   type ShotSpec,
   type Vec2,
 } from '../src/index.ts';
-import { firstCrossing, isRegion, outlineOf, REGION_MAX_POINTS, regionFault, regionShape, shapeExtent } from '../src/shape/geometry.ts';
+import { firstCrossing, isRegion, outlineOf, REGION_MAX_FLAT_POINTS, REGION_MAX_POINTS, regionFault, regionShape, shapeExtent } from '../src/shape/geometry.ts';
 
 // A region: a free-form closed outline through points, concave allowed, as one shape.
 
@@ -212,6 +213,38 @@ test('region: an outline may have 600 points; it is one shape as a small one is,
   [knot[100], knot[400]] = [knot[400]!, knot[100]!];
   assert.match(regionFault(knot, 0) ?? '', /^the outline crosses itself near point \d+ and point \d+$/);
   assert.throws(() => region({ id: 'r', fill: 'accent.pink', points: knot, smooth: 0 }), (e: unknown) => e instanceof SceneError && /region: the outline crosses itself near point 99 and point 400; move the points apart or lower smooth/.test(e.message));
+});
+
+test('region: drawn flat (lit: false), an outline may have 4000 points; a lit one keeps to 600, and says where more go', async () => {
+  assert.equal(REGION_MAX_FLAT_POINTS, 4000);
+  const big = coast(4000);
+  const flat = { id: 'r', fill: 'accent.pink', smooth: 0, lit: false } as const;
+  const wider = big.map(([x, y]) => [x * 1.2, y * 1.2] as Vec2);
+  // It is one shape as a small one is, it changes its outline, and what is clipped to it shows inside it only.
+  const spec = make([region({ ...flat, points: big })], [reshape('r', { at: 0.5, dur: 1, points: wider })]);
+  const before = await reader(spec, 0);
+  const after = await reader(spec, 120);
+  assert.ok(pink(before(0, 0)) && pink(before(270, 0)) && pink(before(0, -170)), 'filled inside');
+  assert.ok(!pink(before(330, 0)) && !pink(before(0, 300)) && !pink(before(-330, -230)), 'and nowhere else');
+  assert.ok(pink(after(330, 0)) && !pink(after(380, 0)), 'the outline has grown by a fifth: 360 wide to the right');
+  const clipped = await reader(make([region({ ...flat, fill: 'deep.ink', points: big }), circle({ id: 'dot', at: [300, 0], r: 60, fill: 'accent.pink', lit: false, clipTo: 'r' })]));
+  assert.ok(pink(clipped(270, 0)) && !pink(clipped(330, 0)), 'the dot is seen up to the edge, at 300');
+  // Its points are kept as they are given.
+  assert.deepEqual(region({ ...flat, points: big }).shape, { kind: 'polygon', points: big, radius: 0, smooth: 0 });
+  // More points are refused; and a lit region keeps to its own limit, since its light is cut out of the outline.
+  const bad = (run: () => unknown, message: RegExp): void => {
+    assert.throws(run, (e: unknown) => e instanceof SceneError && message.test(e.message), String(message));
+  };
+  bad(() => region({ ...flat, points: coast(4001) }), /region\("r"\): region: at most 4000 points, got 4001$/);
+  bad(() => region({ id: 'r', fill: 'accent.pink', smooth: 0, points: coast(601) }), /region\("r"\): region: at most 600 points, got 601; a region without the light \(lit: false\) takes up to 4000$/);
+  bad(() => region({ id: 'r', fill: 'accent.pink', smooth: 0, lit: true, points: big }), /region: at most 600 points, got 4000; a region without the light \(lit: false\) takes up to 4000$/);
+  // A crossing among that many points is found, and named by its two points.
+  const knot = big.slice();
+  [knot[100], knot[3000]] = [knot[3000]!, knot[100]!];
+  assert.equal(regionFault(big, 0), null);
+  bad(() => region({ ...flat, points: knot }), /region: the outline crosses itself near point \d+ and point \d+; move the points apart or lower smooth/);
+  // A change of its outline is held to the points it has, not to the limit of a lit region.
+  assert.throws(() => compileShot(make([region({ ...flat, points: big })], [reshape('r', { at: 0.5, dur: 1, points: wider.slice(1) })])), /reshape\("r"\) at 0\.5 s: the new outline has 3999 points, and "r" has 4000; give as many/);
 });
 
 test('region: the search for a crossing gives the answer that a search of every pair gives, and its work does not grow with the square of the points', () => {

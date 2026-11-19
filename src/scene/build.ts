@@ -15,6 +15,8 @@ import {
   circleShape,
   polygonShape,
   rectShape,
+  REGION_MAX_FLAT_POINTS,
+  REGION_MAX_POINTS,
   regionShape,
   regularPolygonShape,
   type ShapeSpec,
@@ -405,11 +407,14 @@ export function region(o: ShapeOptions & { points: readonly Vec2[] | readonly Ve
   checkKeys(where, o, [...SHAPE_KEYS, 'points', 'smooth', 'back']);
   if (o.body !== undefined) fail(where, 'a region cannot be a rigid body: a body is a convex shape (compose the ground of several)');
   if (!Array.isArray(o.points)) fail(where, 'points must be a list of points [x, y]');
+  // A region that is drawn flat takes more points than a lit one: the light is cut out of the outline, and that fails on thousands of points.
+  const most = o.lit === false ? REGION_MAX_FLAT_POINTS : REGION_MAX_POINTS;
+  if (o.points.length > most) fail(where, `region: at most ${most} points, got ${o.points.length}${o.lit === false ? '' : `; a region without the light (lit: false) takes up to ${REGION_MAX_FLAT_POINTS}`}`);
   // Points of three numbers: a region of the space of a perspective layer. Its shape is then the outline seen straight on.
   const solid = spacePoints(where, o.points);
   if (o.back !== undefined && !solid) fail(where, 'back is for a region of points of the space of a perspective layer, [x, y, z] each');
   if (solid && o.level !== undefined) fail(where, 'a region of points [x, y, z] cannot have a level');
-  const shape = wrapShape(where, () => regionShape(solid ? seenStraightOn(solid).flat : o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1)));
+  const shape = wrapShape(where, () => regionShape(solid ? seenStraightOn(solid).flat : o.points.map((p, i) => vec(where, `points[${i}]`, p)), o.smooth === undefined ? 1 : num(where, 'smooth', o.smooth, 0, 1), most));
   const node = shapeNode(where, o, shape, null);
   return solid ? { ...node, points3: solid, ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) } : node;
 }
