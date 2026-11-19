@@ -264,7 +264,17 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
         for (let k = 0; k < data.length && !bad; k++) bad = !Number.isFinite(data[k]!);
         if (!bad) continue;
         make('not-finite', id, null, f, F - 1, 1, 0, 'broken frames', `particles: a particle of this emitter has a position or a size that is not a number at frame ${f}`, f, [0, 0], [], 1e6);
-        break;
+        return;
+      }
+      // An emitter with streaks: the tail of every particle is baked with it.
+      for (let f = 0; f < F; f++) {
+        const tails = bake.tailsAt(e, f);
+        if (!tails) return;
+        let bad = false;
+        for (let k = 0; k < tails.length && !bad; k++) bad = !Number.isFinite(tails[k]!);
+        if (!bad) continue;
+        make('not-finite', id, null, f, F - 1, 1, 0, 'broken frames', `particles: the streak of a particle of this emitter is not a number at frame ${f}`, f, [0, 0], [], 1e6);
+        return;
       }
     });
   }

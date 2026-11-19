@@ -5,8 +5,8 @@
 // turns, grows, fades, blinks or changes its outline, a pulse runs along a link, a link or a stroke
 // is being drawn, the dashes of a stroke close, a light runs along a stroke, a
 // link sags or pulls taut, a link or a stroke grows thick or thins, a shape
-// changes its fill, a particle travels, or the background itself
-// changes (which is seen everywhere). The camera is left out on purpose: its
+// changes its fill, a particle travels, a heat haze moves the picture under
+// it, or the background itself changes (which is seen everywhere). The camera is left out on purpose: its
 // drift slides the whole picture, and a picture that only slides is still a
 // hold. The camera of a perspective layer is left out in the same way: a
 // node of such a layer is alive while it, or something it is in, moves in the
@@ -115,6 +115,9 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
   }
   for (const e of series.emitters) {
     for (let f = 1; f < F; f++) alive[f] = alive[f]! | e.regions[f]!;
+  }
+  for (const h of series.hazes ?? []) {
+    for (let f = 1; f < F; f++) alive[f] = alive[f]! | h.regions[f]!;
   }
   // A background that changes is seen in every part of the frame.
   if (series.background) {

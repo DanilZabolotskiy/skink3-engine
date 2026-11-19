@@ -432,6 +432,7 @@ All shape factories take these options:
 | `soft` | none | 0 to 200 units: the shape and what is in it are drawn as one picture and blurred this far, so its edge fades out (see A soft edge) |
 | `rise` | none | 0 to 2000 units: the shape is the top of a body that stands this high on the ground; `riseTo` changes it (see A height: bodies that stand on the ground) |
 | `side` | a shadow tone of the fill | palette colour of the side of a shape with a `rise` |
+| `haze` | none | `{ amount, scale?, speed?, direction? }`: the picture drawn before the shape wavers inside its outline like air over heat, and what is drawn after it stays steady; `hazeTo` changes the amount (see A heat haze) |
 | `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
 | `depth` | `0` | for a shape listed directly in a layer: its place in the draw order; the larger depth is drawn first (see `layer`) |
 
@@ -550,6 +551,26 @@ riseTo('block', { at: 5, to: 0, dur: 0.5 }),    // and sinks back into it
 - **`riseTo(id, { at, to, dur?, profile?, ramp? })`** changes the height at a moment: `to` is the new height (0 to 2000), `dur` is 0.8 s unless given, `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each starts from the height reached at its moment. The node has a `rise`: `rise: 0` for one that lies flat until it is raised. With `stagger` a row of blocks grows one after another; a key back to 0 takes a body down again.
 - **What it is not.** A body has no light of a space and casts no shadow: draw shadows as dark shapes on the ground, in a soft group (see A soft edge). The automatic light, a glow, a cover, a clip and the contrast review read the top alone, and a label points at the top. A rigid body, a content with a `level`, and a region or a stroke through points of the space (`[x, y, z]`) take no `rise`.
 - The motion review judges a height that changes as the move of the top that it is on screen (see Motion review). `riseTo` makes no sound event: place a sound with `sfx` where one belongs.
+
+#### A heat haze
+
+`haze` on a shape makes its outline an area of air that wavers: what its layer, and the layers behind it, have drawn before the shape is moved inside the outline by ripples that drift, as the air over a hot road or a fire moves what lies behind it. What is drawn after the shape, in its layer or in a nearer one, stays steady. The haze has no look of its own: the shape is drawn as any shape at its opacity, so give it `opacity: 0` for air alone, as a shape that clips.
+
+```ts
+rect({ id: 'plate', at: [0, 300], w: 760, h: 40, fill: 'accent.coral', glow: 0.5 }),                                      // it wavers
+rect({ id: 'air', at: [0, 20], w: 820, h: 520, fill: 'accent.amber', opacity: 0, soft: 70, haze: { amount: 2 } }),       // the air over the plate
+circle({ id: 'lamp', at: [0, -60], r: 34, fill: 'accent.amber', glow: 0.8 }),                                              // drawn after it: steady
+// timeline
+hazeTo('air', { at: 1, to: 6, dur: 2.5 }),   // the plate heats up
+```
+
+- `amount` (required, 0 to 60) is how far it moves the picture at most, in the units of the layer: that far sideways, half as far up and down. 1 to 3 is a shimmer, 6 a strong heat. 0 is still air: the picture is the one without the haze, pixel for pixel.
+- `scale` (40) is the size of the ripples in units: the larger ones are that long, and finer ones half as long ride on them. `speed` (30) is how many units a second they drift, `direction` (-90, up) where, in degrees (0 is right). The ripples belong to the shot: the same seed and the same shape id give the same air on every machine, frame for frame.
+- **The area is the outline,** with the edge that `soft` gives it: with `soft` the haze fades out across the outline, half there at it, whole that far inside, gone that far outside; without it the edge is a few pixels wide. The area moves, turns and grows with its shape: `moveTo`, `scaleTo` or a `reshape` of a region carry it or spread it. It appears and vanishes with the pops of its shape; its opacity does not change it. The ripples keep their place in the layer, so a camera that moves goes past them.
+- **`hazeTo(id, { at, to, dur?, profile?, ramp? })`** changes the amount: `to` is the new amount (0 to 60), `dur` 1.5 s unless given, `profile` `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain from the amount reached at their moment. The ripples drift on under a key; only their reach changes.
+- **The draw order says what it moves:** list the haze after what wavers and before what stays. It moves the glow of what is drawn before it, too. It lies directly in the nodes of a flat layer, not in a group; a nearer layer that holds a haze alone moves the layers behind it.
+- **What it is not.** It blurs nothing and has no colour: for a tint of hot air give the shape an opacity and a fill, for a light a glow. A rigid body, a content with a `level`, a body with a `rise` and a shape with a `clipTo` take no haze. It reads back and writes the pixels of its area every frame: a haze over a part of the frame is cheap, many large ones are not.
+- The motion review judges its ripples on the channel `haze`: ripples that drift half their own size per frame or more strobe (`too-fast`); a haze that moves the picture counts as life in the parts of the frame it covers (see Motion review). `hazeTo` makes no sound event.
 
 #### `region({ id, fill, points, smooth?, ... })`
 
@@ -838,7 +859,7 @@ A simple creature is a blob with two eyes as children, optionally with `capsule`
 
 ### `emitter({ id, colors, size, life, ... })`
 
-Particles are small circles. By default each swells quickly and then shrinks to nothing (`sizing: 'spark'`); with `sizing: 'steady'` it keeps its size for nearly all of its life. They live in the layer's space.
+Particles are small circles, or with `streak` short streaks along their way. By default each swells quickly and then shrinks to nothing (`sizing: 'spark'`); with `sizing: 'steady'` it keeps its size for nearly all of its life. They live in the layer's space.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -860,6 +881,7 @@ Particles are small circles. By default each swells quickly and then shrinks to 
 | `glow` | `0` | 0..1: the particles also feed the halo |
 | `core` | none | `{ color, size }`: an inner disc on every particle, in one palette colour; `size` is its radius as a fraction of the particle's (0.05..0.95). A particle with a core reads as a ring around a face: a cell, a bead, a wheel |
 | `sizing` | `'spark'` | how the radius runs over a particle's life. `'spark'`: it reaches its size after 12 % of its life, holds it until half-way, and shrinks smoothly to nothing over the second half. `'steady'`: full size from 8 % to 92 % of its life, with a short swell and a short shrink: for motes that drift and for particles that carry something across the frame |
+| `streak` | none | seconds, 0.001 to 1: every particle is drawn as a streak back along its way, as long as the way it travels in that time, and never longer than the way it has come since its birth: rain, sparks, a stream. The streak runs straight back along its velocity, as wide as the particle; a core is a streak too. A streak of 1/30 s or longer does not strobe however fast the particles go (see Motion review). The particles move as they do without it |
 | `clipTo` | none | id of a shape of the same layer: the particles are drawn only inside its outline (see Clipping) |
 | `sound` | none | key of the emitter's voice: what its bursts sound like (see Sound) |
 
@@ -876,6 +898,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `travel(id, { at, path, ... })` | placed | `speed`, `dur` or `speeds`, `profile` (`'steady'`), `ramp` (0.3), `smooth` (1), `closed`, `loops` (1), `roll`, `orient`, `only` | travels along a free-form path at a known speed. See Moves |
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
 | `riseTo(id, { at, to, ... })` | a shape or a stroke with a `rise` | `dur` (0.8), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the body to the height `to`, in units: it grows out of the ground or sinks back; keys chain. See A height: bodies that stand on the ground |
+| `hazeTo(id, { at, to, ... })` | a shape with a `haze` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | changes how far the haze moves the picture to `to`, in units; its ripples drift on; keys chain. See A heat haze |
 | `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
@@ -1470,6 +1493,7 @@ Things to know when you write a scene:
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
+- A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 
@@ -1488,7 +1512,7 @@ Whether the rigid bodies behave like solid things is checked from the bake, with
 | `unsettled` | a pile that still travels at the end of the shot, two seconds or more after the last body landed |
 | `energy-spike` | speed that neither gravity nor anything in touch can have given |
 | `unseen-hit` | a seen body whose path is bent by a body that is not drawn: it bounces off nothing |
-| `not-finite` | a baked position that is not a number |
+| `not-finite` | a baked position, or the streak of a particle, that is not a number |
 
 `skink3 physics --pictures` draws the worst findings: a close-up of the frames with the bodies ringed, a ghost trail, or a speed graph. A finding that is what you want is marked with `intended()`, as for the motion review:
 
@@ -1910,4 +1934,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur, no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer. See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer. See the roadmap in the README.

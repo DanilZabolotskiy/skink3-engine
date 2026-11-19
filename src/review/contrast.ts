@@ -24,7 +24,7 @@ import { atmosphereTone, hexToLab, mix } from '../look/color.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, itemFill, itemPath, itemShape, type FrameState, type Item, type LeafItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, itemFill, itemPath, itemShape, stretchPoint, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
 import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
 import { outlineOf } from '../shape/geometry.ts';
@@ -130,20 +130,6 @@ export function colourDistance(a: string, b: string): { lightness: number; colou
   return { lightness: Math.abs(p.l - q.l), colour: Math.hypot(p.a - q.a, p.b - q.b) };
 }
 
-/** Where a squash or a stretch draws a point of the layer: what the renderer does to the canvas, done to a point. */
-function stretched(s: StretchItem, p: Vec2): Vec2 {
-  const x = p[0] - s.at[0];
-  const y = p[1] - s.at[1];
-  if (!s.axes) return [s.at[0] + x / s.height, s.at[1] + y * s.height];
-  // Along the node's own axes: out of the layer into the node, the change, and back.
-  const a = s.axes;
-  const cos = Math.cos(a.rot);
-  const sin = Math.sin(a.rot);
-  const u = (x * cos + y * sin) * a.sx + a.cx * a.scale;
-  const v = (-x * sin + y * cos) * a.sy + a.cy * a.scale;
-  return [s.at[0] + u * cos - v * sin, s.at[1] + u * sin + v * cos];
-}
-
 /** What one frame holds, in draw order, with what the review needs of each thing. */
 function leavesOf(state: FrameState): Leaf[] {
   const out: Leaf[] = [];
@@ -155,7 +141,7 @@ function leavesOf(state: FrameState): Leaf[] {
     const walk = (items: readonly Item[], clips: readonly Vec2[][], place: (p: Vec2) => Vec2): void => {
       for (const item of items) {
         if (item.kind === 'group') walk(item.items, clips, place);
-        else if (item.kind === 'stretch') walk(item.items, clips, (p) => place(stretched(item, p)));
+        else if (item.kind === 'stretch') walk(item.items, clips, (p) => place(stretchPoint(item, p)));
         // What lies in a plane of a perspective layer: through the picture the camera has of that plane.
         else if (item.kind === 'plane') walk(item.items, clips, (p) => place(planePoint(item.map, p)));
         else if (item.kind === 'clip') {

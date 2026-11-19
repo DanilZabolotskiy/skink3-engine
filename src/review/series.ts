@@ -16,7 +16,7 @@ import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
 import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
-import { PARTICLE_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
+import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import { fillStep } from '../scene/fill.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
@@ -161,6 +161,25 @@ export interface EmitterSeries {
   readonly regions: Uint8Array;
 }
 
+/**
+ * A heat haze over the whole shot. Its ripples drift at one speed; the finer ones, half the size of the larger, are
+ * the ones that strobe first, so the haze is judged on them.
+ */
+export interface HazeSeries {
+  readonly node: CNode;
+  readonly id: string;
+  /** How far it moves the picture at most, in px, per frame; 0 while it moves nothing, or nothing in frame. */
+  readonly amount: Float32Array;
+  /** About how far the picture under it moves from one frame to the next, in px; 0 likewise. */
+  readonly shimmer: Float32Array;
+  /** How far its ripples drift in a frame, in px. */
+  readonly step: Float32Array;
+  /** How far its finer ripples drift in a frame, as a share of their size; the camera changes both alike. */
+  readonly ratio: number;
+  /** Bit r: it moves the picture in region r of the frame. */
+  readonly regions: Uint8Array;
+}
+
 /** A spring-driven point: where it would be without the spring, and where it is. */
 export interface SpringSeries {
   readonly node: CNode;
@@ -221,6 +240,8 @@ export interface MotionSeries {
   readonly background?: Float32Array;
   /** The cameras of the perspective layers whose view is keyed. Left out in a shot without one. */
   readonly perspectives?: readonly PerspectiveSeries[];
+  /** The heat hazes. Left out in a shot without one. */
+  readonly hazes?: readonly HazeSeries[];
 }
 
 export interface SampleOptions {
@@ -820,9 +841,12 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       };
       const ratios: number[] = [];
       const speeds: number[] = [];
+      // Streaks are as long, along their way, as their tails make them.
+      const streak = n.node.type === 'emitter' && n.node.streak !== undefined;
       for (let f = 0; f < frames; f++) {
         const data = bake.particlesAt(slot, f);
         const vel = bake.velocitiesAt(slot, f);
+        const tails = streak ? bake.tailsAt(slot, f) : null;
         const zoom = view.zoom[f]!;
         const tx = view.tx[f]!;
         const ty = view.ty[f]!;
@@ -836,7 +860,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
           const pr = data[i + 2]! * zoom;
           if (sx + pr < 0 || sy + pr < 0 || sx - pr > STAGE_W || sy - pr > STAGE_H) continue;
           const speed = (Math.hypot(vel[k]!, vel[k + 1]!) / FPS) * zoom;
-          const ratio = speed / (2 * pr);
+          const length = tails ? Math.hypot(tails[(k / PARTICLE_VELOCITY_STRIDE) * PARTICLE_TAIL_STRIDE]!, tails[(k / PARTICLE_VELOCITY_STRIDE) * PARTICLE_TAIL_STRIDE + 1]!) * zoom : 0;
+          const ratio = speed / (2 * pr + length);
           ratios.push(ratio);
           speeds.push(speed);
           if (pr < 0.5) continue;
@@ -856,12 +881,38 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     });
   }
 
+  // Heat hazes: their ripples drift through the outline of their shape, wherever that is.
+  const hazes: HazeSeries[] = [];
+  for (const n of c.nodes) {
+    const s = placed[n.index];
+    if (!n.haze || !s || n.node.type !== 'shape' || !n.node.haze) continue;
+    const { speed, scale } = n.node.haze;
+    const soft = n.node.soft ?? 0;
+    const view = views[n.layer]!;
+    // A point under a ripple of size d that drifts v a frame moves by up to 2 pi v / d times the amount.
+    const drift = Math.min(2, (4 * Math.PI * speed) / (FPS * scale));
+    const h: HazeSeries = { node: n, id: n.id, amount: f32(), shimmer: f32(), step: f32(), ratio: (2 * speed) / (FPS * scale), regions: new Uint8Array(frames) };
+    for (let f = 0; f < frames; f++) {
+      const zoom = view.zoom[f]!;
+      h.step[f] = (speed / FPS) * zoom;
+      const amount = sampleLevel(n.haze.amount, f / FPS);
+      if (amount <= 1e-4 || s.scale[f]! <= HIDDEN) continue;
+      const regions = regionsOf(s.x[f]! * zoom + view.tx[f]!, s.y[f]! * zoom + view.ty[f]!, (s.radius + soft) * s.scale[f]! * zoom);
+      if (regions === 0) continue;
+      h.amount[f] = amount * zoom;
+      h.shimmer[f] = amount * zoom * drift;
+      if (h.shimmer[f]! >= T.alivePx) h.regions[f] = regions;
+    }
+    hazes.push(h);
+  }
+  const more = { ...(perspectives.length > 0 ? { perspectives } : {}), ...(hazes.length > 0 ? { hazes } : {}) };
+
   if (c.backgroundTrack) {
     const background = f32();
     for (let f = 1; f < frames; f++) background[f] = backgroundStep(c.backgroundTrack, (f - 1) / FPS, f / FPS);
-    return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, background, ...(perspectives.length > 0 ? { perspectives } : {}) };
+    return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, background, ...more };
   }
-  return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, ...(perspectives.length > 0 ? { perspectives } : {}) };
+  return { shot: c, frames, lang, camera, views, placed, links, emitters, springs, ...more };
 }
 
 /** Place of a node on screen at a frame, in px of a 1080p frame. */

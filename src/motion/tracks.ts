@@ -762,8 +762,11 @@ export function sampleRise(track: RiseTrack, t: number): number {
   return Math.max(0, sampleLevel(track, t));
 }
 
-/** The track of the height of a body. Keys chain: each starts from the height reached at its moment. */
-export function buildRiseTrack(base: number, keys: readonly RiseToKey[]): RiseTrack {
+/**
+ * The track of the height of a body. Keys chain: each starts from the height reached at its moment. The amount of a
+ * heat haze runs on the same track (hazeTo).
+ */
+export function buildRiseTrack(base: number, keys: readonly Pick<RiseToKey, 'at' | 'dur' | 'to' | 'profile' | 'ramp'>[]): RiseTrack {
   const segs: LevelSeg[] = [];
   for (const k of keys.slice().sort((a, b) => a.at - b.at)) {
     segs.push({ at: k.at, dur: k.dur, from: sampleLevel({ base, segs }, k.at), to: k.to, profile: k.profile, ramp: k.ramp });

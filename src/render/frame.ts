@@ -10,7 +10,7 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -30,6 +30,7 @@ import {
   fillClipShape,
   type Paint,
 } from './draw.ts';
+import { applyHaze } from './haze.ts';
 import { applyPlane, planeContext, seesPlane } from './plane.ts';
 
 export interface RenderOptions {
@@ -339,6 +340,81 @@ function seenShares(items: readonly Item[]): Map<LeafItem, number> {
   return out;
 }
 
+/**
+ * Draws items of a layer onto the frame: the wide pass of their halo under them, the items through the blur of the
+ * layer, the tight pass of the halo on top.
+ */
+function drawLayerPart(
+  ctx: CanvasRenderingContext2D,
+  c: CompiledShot,
+  items: readonly Item[],
+  leaves: readonly LeafItem[],
+  paint: Paint,
+  seen: ReadonlyMap<LeafItem, number> | null,
+  target: LayerTarget,
+  blurPx: number,
+): void {
+  const { layer, k, pad } = target;
+  const { canvas: lc, ctx: lx } = layerCanvas(target);
+  drawItems(lx, items, paint, target);
+
+  let glowReachMax = 0;
+  let anyGlow = false;
+  for (const item of leaves) {
+    // What cannot be seen at all (wholly behind a cover, or outside its clip) has no halo.
+    if (glowStrength(item) > 0 && !(seen !== null && seen.get(item) === 0)) {
+      anyGlow = true;
+      glowReachMax = Math.max(glowReachMax, glowReach(item));
+    }
+  }
+
+  // Halo: the glowing parts again, blurred. The wide pass goes under the layer,
+  // so that it surrounds the glowing thing without washing it out; the tight
+  // pass goes on top and makes its edge bloom.
+  let halo: { canvas: Canvas; pad: number; tight: number; wide: number } | null = null;
+  if (anyGlow) {
+    const scale = k * layer.view.zoom;
+    const tight = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx);
+    const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
+    const gpad = Math.ceil(wide * 3);
+    const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
+    drawGlow(gx, items, paint, c.covers.length > 0, seen);
+    halo = { canvas: gc, pad: gpad, tight, wide };
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.filter = `blur(${wide.toFixed(3)}px)`;
+    ctx.globalAlpha = GLOW.haloWideAlpha;
+    ctx.drawCanvas(gc, -gpad, -gpad);
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.filter = blurPx > 0.05 ? `blur(${blurPx.toFixed(3)}px)` : 'none';
+  ctx.drawCanvas(lc, -pad, -pad);
+  ctx.restore();
+
+  if (halo) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.filter = `blur(${halo.tight.toFixed(3)}px)`;
+    ctx.globalAlpha = GLOW.haloTightAlpha;
+    ctx.drawCanvas(halo.canvas, -halo.pad, -halo.pad);
+    ctx.restore();
+  }
+}
+
+/** The items of a layer cut at its hazes: what is drawn before the first, between each two, and after the last. */
+function hazeParts(items: readonly Item[], hazes: readonly HazeItem[]): (readonly Item[])[] {
+  const parts: (readonly Item[])[] = [];
+  let from = 0;
+  for (const h of hazes) {
+    parts.push(items.slice(from, h.before));
+    from = h.before;
+  }
+  parts.push(items.slice(from));
+  return parts;
+}
+
 export interface DrawnFrame {
   readonly canvas: Canvas;
   /** Frees the native memory of the frame and of its scratch canvases. */
@@ -411,56 +487,23 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
 
   // 3. Layers.
   for (const { layer, leaves, paint, seen } of layers) {
-    if (leaves.length === 0) continue;
+    // A layer may hold nothing to draw and still a haze, which moves what the layers behind it have drawn.
+    if (leaves.length === 0 && !layer.hazes) continue;
     const blurPx = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
     const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu };
-    const { canvas: lc, ctx: lx } = layerCanvas(target);
-    drawItems(lx, layer.items, paint, target);
-
-    let glowReachMax = 0;
-    let anyGlow = false;
-    for (const item of leaves) {
-      // What cannot be seen at all (wholly behind a cover, or outside its clip) has no halo.
-      if (glowStrength(item) > 0 && !(seen !== null && seen.get(item) === 0)) {
-        anyGlow = true;
-        glowReachMax = Math.max(glowReachMax, glowReach(item));
-      }
+    if (!layer.hazes) {
+      drawLayerPart(ctx, c, layer.items, leaves, paint, seen, target, blurPx);
+      continue;
     }
-
-    // Halo: the glowing parts again, blurred. The wide pass goes under the layer,
-    // so that it surrounds the glowing thing without washing it out; the tight
-    // pass goes on top and makes its edge bloom.
-    let halo: { canvas: Canvas; pad: number; tight: number; wide: number } | null = null;
-    if (anyGlow) {
-      const scale = k * layer.view.zoom;
-      const tight = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx);
-      const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
-      const gpad = Math.ceil(wide * 3);
-      const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
-      drawGlow(gx, layer.items, paint, c.covers.length > 0, seen);
-      halo = { canvas: gc, pad: gpad, tight, wide };
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      ctx.filter = `blur(${wide.toFixed(3)}px)`;
-      ctx.globalAlpha = GLOW.haloWideAlpha;
-      ctx.drawCanvas(gc, -gpad, -gpad);
-      ctx.restore();
-    }
-
-    ctx.save();
-    ctx.filter = blurPx > 0.05 ? `blur(${blurPx.toFixed(3)}px)` : 'none';
-    ctx.drawCanvas(lc, -pad, -pad);
-    ctx.restore();
-
-    if (halo) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      ctx.filter = `blur(${halo.tight.toFixed(3)}px)`;
-      ctx.globalAlpha = GLOW.haloTightAlpha;
-      ctx.drawCanvas(halo.canvas, -halo.pad, -halo.pad);
-      ctx.restore();
+    // A layer with hazes is drawn in parts: what comes before a haze, its glow with it, is moved by it; what comes after is not.
+    const parts = hazeParts(layer.items, layer.hazes);
+    for (let h = 0; h < parts.length; h++) {
+      if (h > 0) applyHaze(ctx, layer.hazes[h - 1]!, layer.view, k, width, height, opts.gpu ? GPU_MSAA : false);
+      const part = parts[h]!;
+      const partLeaves = flatItems(part);
+      if (partLeaves.length > 0) drawLayerPart(ctx, c, part, partLeaves, paint, seen, target, blurPx);
     }
   }
 

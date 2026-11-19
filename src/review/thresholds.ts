@@ -143,6 +143,11 @@ export const THRESHOLDS = {
     unit: 'particles',
     why: 'Fewer particles than this are not a stream to judge.',
   },
+  hazeMinPx: {
+    value: 1,
+    unit: 'px',
+    why: 'A heat haze that moves the picture by less than a pixel is not seen to strobe, however fast its ripples drift.',
+  },
 
   // --- Springs ---------------------------------------------------------------------
   springMinResponsePx: {

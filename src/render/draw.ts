@@ -11,7 +11,7 @@ import { atmosphereTone, HIGHLIGHT_HUE, lightTone, SHADOW_HUE, shadowTone, withA
 import { litParts } from '../look/light.ts';
 import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
-import { PARTICLE_STRIDE } from '../physics/cache.ts';
+import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import { itemFill, itemPath, itemShape, itemWidth, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, ShapeNode, StrokeNode } from '../scene/types.ts';
@@ -578,14 +578,47 @@ export function drawStrokeGlow(ctx: CanvasRenderingContext2D, item: StrokeItem, 
   }
 }
 
-/** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. */
+/**
+ * A streak: a capsule of radius r from the particle at (x, y) back to the end of its tail, wound as a disc is, so that
+ * streaks that overlap in one path fill as one. A tail shorter than a hundredth of a unit is a disc.
+ */
+function addStreak(p: Path2D, x: number, y: number, dx: number, dy: number, r: number): void {
+  if (Math.abs(dx) + Math.abs(dy) < 0.01) {
+    p.moveTo(x + r, y);
+    p.arc(x, y, r, 0, TAU);
+    return;
+  }
+  // The angle from the tail to the head: the front half round the head, the back half round the end of the tail.
+  const a = Math.atan2(-dy, -dx);
+  const h = Math.PI / 2;
+  p.moveTo(x + r * Math.cos(a - h), y + r * Math.sin(a - h));
+  p.arc(x, y, r, a - h, a + h);
+  p.arc(x + dx, y + dy, r, a + h, a + 3 * h);
+  p.closePath();
+}
+
+/** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. Streaks when the item has tails. */
 export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem, paint: Paint, alpha = 1): void {
   const colors = item.node.particleColors;
   const paths: (Path2D | null)[] = colors.map(() => null);
   const core = (item.node.node as EmitterNode).core;
   const cores = core ? new Path2D() : null;
   const d = item.data;
-  for (let i = 0; i < d.length; i += PARTICLE_STRIDE) {
+  const tails = item.tails;
+  if (tails) {
+    for (let i = 0, j = 0; i < d.length; i += PARTICLE_STRIDE, j += PARTICLE_TAIL_STRIDE) {
+      const ci = d[i + 3]!;
+      let p = paths[ci];
+      if (!p) {
+        p = new Path2D();
+        paths[ci] = p;
+      }
+      const r = d[i + 2]!;
+      addStreak(p, d[i]!, d[i + 1]!, tails[j]!, tails[j + 1]!, r);
+      if (core && cores) addStreak(cores, d[i]!, d[i + 1]!, tails[j]!, tails[j + 1]!, r * core.size);
+    }
+  }
+  for (let i = 0; !tails && i < d.length; i += PARTICLE_STRIDE) {
     const ci = d[i + 3]!;
     let p = paths[ci];
     if (!p) {

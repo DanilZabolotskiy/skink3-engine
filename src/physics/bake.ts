@@ -21,6 +21,7 @@ import {
   BODY_STRIDE,
   matchesKey,
   PARTICLE_STRIDE,
+  PARTICLE_TAIL_STRIDE,
   PARTICLE_VELOCITY_STRIDE,
   readBake,
   SPRING_STRIDE,
@@ -153,6 +154,7 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
   }
 
   // 3. Particles.
+  const streaks = c.emitters.some((i) => { const node = c.nodes[i]!.node; return node.type === 'emitter' && node.streak !== undefined; });
   const header = (events: BakeHeader['events'], particleCount: number): BakeHeader => ({
     format: BAKE_FORMAT,
     engine: key.engine,
@@ -171,12 +173,15 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
       particleIndex: c.emitters.length * (frames + 1),
       particles: particleCount,
       particleVelocities: (particleCount / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE,
+      // Only a shot with an emitter of streaks names its tails.
+      ...(streaks ? { particleTails: (particleCount / PARTICLE_STRIDE) * PARTICLE_TAIL_STRIDE } : {}),
     },
   });
   const nEmitters = c.emitters.length;
   const particleIndex = new Uint32Array(nEmitters * (frames + 1));
   let particles = new Float32Array(0);
   let velocities = new Float32Array(0);
+  let tails = new Float32Array(0);
   if (nEmitters > 0) {
     // Where every emitter is at every frame, from the state baked so far.
     const partial = new Bake(header(rigid.events, 0), rigid.poses, springs, particleIndex, particles, velocities);
@@ -189,17 +194,20 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
     const total = results.reduce((a, r) => a + r.data.length, 0);
     particles = new Float32Array(total);
     velocities = new Float32Array((total / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE);
+    // Round particles have no tail: theirs stay 0, 0.
+    if (streaks) tails = new Float32Array((total / PARTICLE_STRIDE) * PARTICLE_TAIL_STRIDE);
     let offset = 0;
     results.forEach((r, slot) => {
       particles.set(r.data, offset);
       const base = offset / PARTICLE_STRIDE;
       velocities.set(r.velocity, base * PARTICLE_VELOCITY_STRIDE);
+      if (r.tails) tails.set(r.tails, base * PARTICLE_TAIL_STRIDE);
       for (let f = 0; f <= frames; f++) particleIndex[slot * (frames + 1) + f] = base + r.index[f]!;
       offset += r.data.length;
     });
   }
 
-  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles, velocities);
+  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles, velocities, tails);
 }
 
 export interface EnsureBakeResult {

@@ -6,7 +6,7 @@ import type { Vec2, Vec3 } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { DEFAULT_RAMP, MOVE_PROFILES, profileRamps, settleMoments, speedDistance, speedDuration, type MoveProfile, type SpeedKeys } from './curves.ts';
 import { pathLength, type PathSpec } from './paths.ts';
-import { RISE_MAX } from '../scene/types.ts';
+import { HAZE_MAX, RISE_MAX } from '../scene/types.ts';
 import { MAX_ANTICIPATION_UNITS, MAX_OVERSHOOT_UNITS } from './tracks.ts';
 
 /**
@@ -199,6 +199,18 @@ export interface RiseToKey extends Voiced {
   readonly target: string;
   readonly at: number;
   /** The new height, in the node's units. */
+  readonly to: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
+/** Change how far the heat haze of a shape moves the picture behind it, over time. */
+export interface HazeToKey extends Voiced {
+  readonly kind: 'hazeTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new amount, in units of the layer. */
   readonly to: number;
   readonly dur: number;
   readonly profile: Exclude<MoveProfile, 'settle'>;
@@ -463,6 +475,7 @@ export type Key =
   | BendToKey
   | WidthToKey
   | RiseToKey
+  | HazeToKey
   | FillToKey
   | PulseKey
   | OpenToKey
@@ -1139,6 +1152,31 @@ export function riseTo(
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, RISE_MAX),
     dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 3600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Change how far the heat haze of a shape moves the picture behind it: `to`
+ * is the new amount, in units of the layer (0 is still air). The amount
+ * arrives exactly at `at + dur`; several keys chain from the amount reached
+ * at that moment. The ripples drift on as they did: only their reach changes.
+ */
+export function hazeTo(
+  id: string,
+  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): HazeToKey {
+  const w = `hazeTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'hazeTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, 0, HAZE_MAX),
+    dur: num(w, 'dur', opts.dur ?? 1.5, 0.05, 3600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

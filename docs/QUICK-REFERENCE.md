@@ -1,9 +1,9 @@
 # Quick reference for scene authors
 
-What a scene can use. Open [SCENES.md](SCENES.md) or a review document only at a section the index names. What is in neither is not built.
+What a scene can use; open [SCENES.md](SCENES.md) or a review document only at an indexed section. What neither has is not built.
 
 - What follows `/* = */` is a default.
-- Units: a 1920 x 1080 stage, origin in the centre, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
+- Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
 
 ## A scene module
 
@@ -11,9 +11,8 @@ What a scene can use. Open [SCENES.md](SCENES.md) or a review document only at a
 import { circle, definePalette, hsv, layer, moveTo, popIn, Rng, shot } from 'skink3-engine';
 
 const palette = definePalette({
-  deep: { night: hsv(250, 0.88, 0.2), abyss: hsv(240, 0.9, 0.11) }, dark: { indigo: hsv(258, 0.8, 0.5) },
-  mid: { mist: hsv(250, 0.46, 0.74) }, accent: { amber: hsv(40, 0.86, 0.99), aqua: hsv(176, 0.72, 0.93) },
-  light: { cream: hsv(52, 0.34, 0.99) },
+  deep: { night: hsv(250, 0.9, 0.2), abyss: hsv(240, 0.9, 0.1) }, dark: { indigo: hsv(258, 0.8, 0.5) }, mid: { mist: hsv(250, 0.5, 0.7) },
+  accent: { amber: hsv(40, 0.9, 1), aqua: hsv(176, 0.7, 0.9) }, light: { cream: hsv(52, 0.3, 1) },
 });
 new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuffle, next, sign, gauss, stream
 const scene = shot({
@@ -27,8 +26,8 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette references only. On-screen text: keys of `strings`, each in every language. Random numbers: `Rng` only. A mistake or unknown option is refused, with the fix.
-- The engine has no colour rule: a palette brings its `rules` (held by `check`), `tones`, variants.
+- Colours: palette references; on-screen text: keys of `strings`, in every language; random numbers: `Rng`. A mistake or unknown option is refused, with the fix.
+- A palette brings its `rules` (held by `check`; the engine has none), `tones`, variants.
 
 ## Shot, camera, layers
 
@@ -43,11 +42,11 @@ layer({ id: 'room', depth: 0, nodes: [], perspective: { aim: [0, 0, 0], distance
 perspectiveTo('room', { at: 2, tilt: 50, /* = */ dur: 1.6, profile: 'ease', ramp: 0.3 }); // + aim, distance (a dolly), turn, lens (a zoom)
 ```
 
-- `drift.speed`: units/frame along `heading` (norm: 0.3 to 0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
-- A `path` replaces `at`, `drift.speed`, `drift.heading`. With `speed` (units/frame) it rounds a closed path all shot long (`loopPoints(center, r | [rx, ry])`); without, it covers it once.
-- Keys chain. `cameraTo`: `zoom`: times the authored view; `to`: where it looks at the end; path and drift wait. Under `zoomTo` they run on.
-- `depth` 0 is the focus plane; above 0 farther (less parallax, blurred, tinted to `atmosphere`), below 0, to -0.9, nearer. Drawn farthest first, nodes as listed, children after the parent.
-- A listed node's `depth` (larger: behind) orders any layer. Perspective layer: listed nodes take `at: [x, y, z]` and face the camera, `region` and `stroke` `points` of three, a `group` with `plane` lies in the space; near over far; behind the camera: cut.
+- `drift.speed`: units/frame along `heading` (norm 0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
+- A `path` replaces `at`, `drift.speed`, `drift.heading`: with `speed` (units/frame) it loops a closed one (`loopPoints(center, r | [rx, ry])`), else covers it once.
+- Keys chain. `cameraTo`: `zoom` times the authored view, `to` its final aim; path and drift wait. Under `zoomTo` they run on.
+- `depth` 0: the focus plane; above 0 farther (less parallax, blurred, tinted to `atmosphere`), below (to -0.9) nearer. Drawn farthest first, nodes as listed, children after parents.
+- A listed node's `depth` (larger: behind) orders any layer. In a perspective layer listed nodes take `at: [x, y, z]`, face the camera; `region`, `stroke`: `points` of three; a `group` with `plane` lies in it; near over far; behind the camera: cut.
 
 ## Nodes
 
@@ -58,7 +57,7 @@ polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /* = */ radius: 8 }); //
 rect({ id: 'tray', fill: 'dark.indigo', w: 240, h: 50, /* = */ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'accent.amber', r: 50, /* = */ points: 9, wobble: 0.14, seed: 1 });
 region({ id: 'isle', fill: 'dark.indigo', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /* = */ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
-group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: no turning with its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back
+group({ id: 'face', /* = */ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /* = */ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'accent.amber', /* = */ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on-screen minimum), at, rotation, scale
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /* = */ side: 'top', size: 38, maxWidth: 420, maxLines: 3 });
@@ -66,21 +65,21 @@ text({ id: 'title', text: 'label.dot', ink: 'light.cream', /* = */ size: 38, max
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.abyss', lookAt: 'hex', /* = */ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
-- Shapes take the options of `circle` and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's lift), `soft` (a blurred edge; groups too), `rise` (a body that high, keyed by `riseTo`; + `side`; strokes too). All but `region` are convex; a `group` composes them.
+- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's lift), `soft` (a blurred edge; groups too), `rise` (a body that high; + `side`; strokes too). All but `region` are convex; a `group` composes them.
 - `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
-- `label`: its tail points at `target`'s edge on `side`; the text wraps, then shrinks, never cut. `text`: free-standing; a child of a shape lies on it; in a `layer` with `parallax: 0` it belongs to the frame.
+- `label`: its tail points at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; a shape's child lies on it; in a `parallax: 0` layer it is the frame's.
 
 ## Springs and rigid bodies
 
 ```ts
-capsule({ id: 'tail', fill: 'accent.amber', length: 46, r: 8, origin: 'start', sway: 'springy' }); // it swings round its first end; or 'heavy', 'light', 'viscous'
+capsule({ id: 'tail', fill: 'accent.amber', length: 46, r: 8, origin: 'start', sway: 'springy' }); // swings about its first end; or 'heavy', 'light', 'viscous'
 circle({ id: 'moon', fill: 'light.cream', r: 9, follow: { f: 2.4, z: 0.26, r: 0 } }); // Hz, damping, response: its position lags; also groups, labels
 rect({ id: 'floor', fill: 'dark.indigo', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } });
 circle({ id: 'ball', fill: 'accent.amber', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: the defaults
 shot({ ...scene, /* = */ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
-A dynamic body waits, touching nothing, until `release` (s; from minus `prewarm`, simulated before frame 0); then only the simulation moves it. `velocity`: units/s; `spin`: deg/s; `appear: 'release'`: undrawn until then.
+A dynamic body waits, touching nothing, until `release` (s, from -`prewarm`: before frame 0), then only physics moves it. `velocity`: units/s; `spin`: deg/s; `appear: 'release'`: undrawn until then.
 
 ## Motion and timing
 
@@ -99,6 +98,7 @@ squash('buddy', { at: 5, /* = */ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // l
 countTo('total', { at: 2, to: 1500, /* = */ dur: 1, profile: 'ease' }); // a text with count: 0 and "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 }); // 0 empty, 1 full
 riseTo('hex', { at: 6, to: 40, /* = */ dur: 0.8, profile: 'ease' });
+hazeTo('air', { at: 2, to: 6, /* = */ dur: 1.5, profile: 'ease', ramp: 0.3 });
 drawOn('wire', { at: 1, /* = */ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /* = */ to: 1, dur: 0.6 }); // closes the gaps of its dashes
 bendTo('wire', { at: 3, to: 0, /* = */ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
@@ -113,17 +113,18 @@ stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + o
 
 - A negative `at` (to -600): under way at frame 0.
 - No key is anchored to a word: take `at` from word times; `arrive`, `land`, `at + dur` are exact.
-- `profile`: `'settle'` (`moveTo` only) backs away, shoots past, settles. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`). All arrive at `at + dur`.
+- `profile`: `'settle'` (`moveTo` only): back away, shoot past, settle. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`).
 
 ## Effects
 
 ```ts
 emitter({ id: 'fizz', colors: ['accent.aqua'], size: [4, 8], life: 4, rate: 9, sizing: 'steady', clipTo: 'drink', /* = */ area: [0, 0], prewarm: 0, direction: -90, spread: 360, speed: [20, 60], gravity: [0, 0], drag: 0.8 });
 rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { amp: 5, length: 160, speed: 40 } } });
+rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 3 } }); // what is drawn before it wavers; + scale 40, speed 30, direction -90
 ```
 
-- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`.
-- `cover`: glow drawn before it does not shine through. `backdrop`: labels may lie over it. `clipTo`: drawn only inside that shape, fading at a `soft` edge. `level` (or a number, 0 to 1): it fills from the bottom, `wave` ripples it, children ride the surface.
+- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (s of way drawn as a tail).
+- `cover`: hides the glow drawn before it. `backdrop`: labels may lie on it. `clipTo`: only inside that shape, fading at a `soft` edge. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
 
 ## Sound
 
@@ -139,7 +140,7 @@ Only what is seen sounds.
 
 ```
 npx skink3 <command> <scene.ts> [options]
-check   palette, strings, glyphs, text fit per language; reviews in short  [--bank bank.json]
+check   palette, strings, glyphs, text fit; reviews in short  [--bank bank.json]
 bake    [--force]
 still   frames as PNG  --frame n[,n] | --time s[,s]  [--hash]
 strip   frames side by side  --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
@@ -149,33 +150,33 @@ motion  [--pictures [--top 3]]
 physics [--pictures [--top 3]]
 trail   a ghost trail  --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph   a speed graph  --node id | --camera  [--from f] [--to f] | [--time s,s]
-events  the shot's intents, contacts and bursts, as JSON
+events  intents, contacts, bursts as JSON
 sfx     the sound track, a WAV  --bank bank.json  [--sheet [--cols 4] [--tile 480]]
 common  --lang tag (the first table)  --width px (1920)  --cpu  --out file  --cache dir
 ```
 
-Output: `./out/<shot id>/`; cache: `./cache/`; commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, a text that overflows, leaves the frame or overlaps; else it warns. `--crop`: stage units from the top-left.
+Output `./out/<shot id>/`, cache `./cache/`; commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps, else warns. `--crop`: stage units from top-left.
 
 ## Reading the reviews
 
-- `jump`: a teleport or pop: check the keys there; change place while hidden.
-- `abrupt-start`, `abrupt-stop`: no ease at that end: `'ease'`, `'in'` or `'out'`, or keep `anticipation`, `overshoot`.
+- `jump`: a teleport or pop: check its keys; change place while hidden.
+- `abrupt-start`, `abrupt-stop`: no ease at that end: `'ease'`, `'in'`, `'out'`, or keep `anticipation`, `overshoot`.
 - `mechanical`: one speed between two rests in view: `'ease'`, or enter and leave the frame.
-- `too-fast`: over half its size per frame, it strobes: slower, or larger.
-- `spring-ringing`: swinging 2.5 s after its target stopped: raise `z` or `f`.
+- `too-fast`: over half its size per frame, it strobes: slower, larger, a `streak` (1/30 s); a haze: slower, larger `scale`.
+- `spring-ringing`: swinging 2.5 s after its target stops: raise `z` or `f`.
 - `spring-no-overshoot`: a bouncy spring only lags: lower `f` or `z`, or drop it.
-- `dead-area`: nothing but the camera moves for 4 s: add an `idle`, a pulse, particles.
+- `dead-area`: only the camera moves for 4 s: add an `idle`, a pulse, particles, a haze.
 - `overlap`: bodies in each other: released inside one, or poured too fast.
 - `tunnelling`: through a wall or gap: thicker, overlapping walls, less load.
 - `escape`: below every fixed body: widen the ground, or mark it.
 - `jitter`: trembling at rest: more `friction` or `angularDamping`, larger bodies.
-- `unsettled`: a pile still travels at the end: pour earlier, damp more.
+- `unsettled`: a pile still moves at the end: pour earlier, damp more.
 - `energy-spike`: speed from nowhere: bodies released in each other or a wall.
-- `unseen-hit`: a bounce off an undrawn body: bodies collide from release on.
+- `unseen-hit`: a bounce off an undrawn body: they collide from release on.
 - `not-finite`: the simulation broke: an extreme velocity, size or spring `f`.
-- `low-contrast` (with `contrast`): a node blends into what is behind: change a colour.
+- `low-contrast` (with `contrast`): a node blends into its background: change a colour.
 
-Not reported: what is hidden, off the frame, behind a `cover` or outside its clip. Mark what is meant, with a reason:
+Not reported: what is hidden, off the frame, behind a `cover`, outside its clip. Mark what is meant, with a reason:
 
 ```ts
 shot({ ...scene, contrast: { nodes: ['dot'], lightness: 18, colour: 24 } }); // off unless given; it blends below both: L*, a*b* (colourDistance(a, b)); + edge, seconds
@@ -184,7 +185,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked', { fr
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette** (rules, tones, variants); **Text: string tables**; **`shot`** (camera, zoom and background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, soft edges, heights, line width); **Timeline: intents** (profiles, travel, reshape, colour key, drive, stagger); **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (camera, zoom, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, soft edges, heights, heat haze, line width); **Timeline: intents** (profiles, travel, reshape, colour key, drive, stagger); **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 

@@ -61,7 +61,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'fill' | 'particles' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -845,6 +845,26 @@ export function detectMotion(series: MotionSeries): Finding[] {
         finding('too-fast', e.id, 'particles', a, b, mid, T.fastRatio, 'own size per frame',
           `${Math.round((100 * share) / counted)} % of its particles in frame (about ${Math.round(particles / counted)}) travel at least half of their own size per frame: median ${mid.toFixed(2)} of the size, ${speeds[Math.floor(speeds.length / 2)]!.toFixed(1)} px per frame`),
       );
+    }
+  }
+
+  // Heat hazes: ripples that drift half their size or more in a frame strobe, as a pattern on a wheel does.
+  for (const h of series.hazes ?? []) {
+    if (h.ratio < T.fastRatio) continue;
+    let start = -1;
+    for (let f = 0; f <= F; f++) {
+      const hot = f < F && h.amount[f]! >= T.hazeMinPx && h.step[f]! >= T.fastMinPx;
+      if (hot && start < 0) start = f;
+      if (!hot && start >= 0) {
+        if (f - start >= T.fastFrames) {
+          const step = h.step[Math.floor((start + f - 1) / 2)]!;
+          out.push(
+            finding('too-fast', h.id, 'haze', start, f - 1, h.ratio, T.fastRatio, 'own size per frame',
+              `its finer ripples drift ${h.ratio.toFixed(2)} of their own size per frame (${step.toFixed(1)} px): the haze strobes; give it a lower speed or a larger scale`),
+          );
+        }
+        start = -1;
+      }
     }
   }
 

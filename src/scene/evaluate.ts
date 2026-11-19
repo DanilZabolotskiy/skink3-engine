@@ -3,7 +3,7 @@
 // draws without further decisions.
 
 import { cameraAt, layerView, type CameraState, type LayerView } from '../camera/camera.ts';
-import { DEG, quadSub, vrot, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Vec3, type Xf } from '../core/math.ts';
+import { DEG, quadSub, vrot, xfApply, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { sampleDriven } from '../motion/drive.ts';
@@ -489,6 +489,33 @@ export interface ParticlesItem {
   readonly node: CNode;
   /** x, y, radius, colour index per particle. */
   readonly data: Float32Array;
+  /** An emitter of streaks: dx, dy per particle, in the order of `data`, from the particle to the end of its streak. Left out: round particles. */
+  readonly tails?: Float32Array;
+}
+
+/**
+ * A heat haze at its frame: the picture drawn before it, inside `outline`,
+ * is moved by a field of ripples, as far as `amount` at most. It is not one of
+ * the items of its layer; the layer lists it in `hazes`, with the place in the
+ * draw order it takes.
+ */
+export interface HazeItem {
+  readonly kind: 'haze';
+  readonly node: CNode;
+  /** The outline of its shape at this frame, in the layer's space. */
+  readonly outline: readonly Vec2[];
+  /** How far its edge fades to each side of the outline, in the units of the layer; 0: over a few pixels. */
+  readonly soft: number;
+  /** How far it moves the picture at most at this frame, in the units of the layer (up and down half as far). */
+  readonly amount: number;
+  /** The size of its ripples, their speed (units per second) and where they drift (degrees). */
+  readonly scale: number;
+  readonly speed: number;
+  readonly direction: number;
+  /** Seconds from the start of the shot: where the ripples have drifted to. */
+  readonly time: number;
+  /** How many of the items of the layer are drawn before it: it moves those, and what the layers behind have drawn. */
+  readonly before: number;
 }
 
 /**
@@ -615,6 +642,8 @@ export interface LayerState {
   readonly layer: CLayer;
   readonly view: LayerView;
   readonly items: readonly Item[];
+  /** The heat hazes of the layer at this frame, in draw order. Left out in a layer without one. */
+  readonly hazes?: readonly HazeItem[];
 }
 
 export interface FrameState {
@@ -706,6 +735,58 @@ function prune(items: readonly Item[]): Item[] {
     }
   }
   return out;
+}
+
+/**
+ * The items of a layer without what holds nothing, and its hazes, each with the number of those items drawn before
+ * it. `marks` are the hazes in draw order, each with the number of the unpruned items before it.
+ */
+function pruneWithHazes(root: readonly Item[], marks: readonly { readonly at: number; readonly haze: Omit<HazeItem, 'before'> }[]): { items: Item[]; hazes: HazeItem[] } {
+  const items: Item[] = [];
+  const hazes: HazeItem[] = [];
+  let m = 0;
+  root.forEach((item, i) => {
+    for (; m < marks.length && marks[m]!.at <= i; m++) hazes.push({ ...marks[m]!.haze, before: items.length });
+    items.push(...prune([item]));
+  });
+  for (; m < marks.length; m++) hazes.push({ ...marks[m]!.haze, before: items.length });
+  return { items, hazes };
+}
+
+/** Where a point of the layer is drawn through a squash or a stretch, or through a change of size along a node's own axes. */
+export function stretchPoint(s: Pick<StretchItem, 'at' | 'height' | 'axes'>, p: Vec2): Vec2 {
+  const x = p[0] - s.at[0];
+  const y = p[1] - s.at[1];
+  if (!s.axes) return [s.at[0] + x / s.height, s.at[1] + y * s.height];
+  // Along the node's own axes: out of the layer into the node, the change, and back.
+  const a = s.axes;
+  const cos = Math.cos(a.rot);
+  const sin = Math.sin(a.rot);
+  const u = (x * cos + y * sin) * a.sx + a.cx * a.scale;
+  const v = (-x * sin + y * cos) * a.sy + a.cy * a.scale;
+  return [s.at[0] + u * cos - v * sin, s.at[1] + u * sin + v * cos];
+}
+
+/** The heat haze of a shape at time t, or null while it moves nothing: it is too small, or its amount is 0. */
+function hazeAt(n: CNode, xf: Xf, t: number): Omit<HazeItem, 'before'> | null {
+  const node = n.node;
+  if (node.type !== 'shape' || !node.haze || !n.haze || xf.scale <= HIDDEN) return null;
+  const amount = Math.max(0, sampleLevel(n.haze.amount, t));
+  if (amount <= 1e-4) return null;
+  // Its outline as the shape is drawn: through its place, then through a squash, then through a change along its axes.
+  let outline = outlineOf(shapeOf(n, t)).map((p) => xfApply(xf, p));
+  const squash = n.stretch ? sampleStretch(n.stretch, t) : null;
+  if (squash) {
+    const s = { at: [xf.x + squash.pivot[0] * xf.scale, xf.y + squash.pivot[1] * xf.scale] as Vec2, height: squash.height };
+    outline = outline.map((p) => stretchPoint(s, p));
+  }
+  const axis = n.axis ? sampleAxis(n.axis, t) : null;
+  if (axis) {
+    const s = { at: [xf.x, xf.y] as Vec2, height: 1, axes: { rot: xf.rot, scale: xf.scale, ...axis } };
+    outline = outline.map((p) => stretchPoint(s, p));
+  }
+  const h = node.haze;
+  return { kind: 'haze', node: n, outline, soft: (node.soft ?? 0) * xf.scale, amount, scale: h.scale, speed: h.speed, direction: h.direction, time: t };
 }
 
 /** True while a rigid body that appears at its release still waits for it. */
@@ -820,6 +901,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const layers = c.layers.map((layer): LayerState => {
     const view = layerView(camera, layer.parallax);
     const root: Item[] = [];
+    // The hazes of the layer, each with the number of items of the root drawn before it.
+    const marks: { at: number; haze: Omit<HazeItem, 'before'> }[] = [];
     // Open groups: the items of a faded node and of its subtree go into its group.
     const open: { end: number; items: Item[] }[] = [];
     let skipUntil = -1;
@@ -836,6 +919,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
       const node = n.node;
       const xf = placeOf(index);
       const a = alpha[index]!;
+      if (n.haze) {
+        // A haze moves the picture whatever the opacity of its shape: it takes its place in the draw order before the shape.
+        const haze = hazeAt(n, xf, t);
+        if (haze) marks.push({ at: root.length, haze });
+      }
       if (own[index]! <= FAINT) {
         // Invisible, and so is everything inside it.
         skipUntil = n.subtreeEnd;
@@ -1013,12 +1101,15 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
         case 'emitter': {
           const data = bake.particlesAt(n.emitterSlot, frame);
-          if (data.length > 0) items.push({ kind: 'particles', node: n, data });
+          // An emitter of streaks carries their tails; an emitter of round particles is the item it always was.
+          if (data.length > 0) items.push({ kind: 'particles', node: n, data, ...(node.streak === undefined ? {} : { tails: bake.tailsAt(n.emitterSlot, frame)! }) });
           break;
         }
       }
     }
-    return { layer, view, items: prune(root) };
+    if (marks.length === 0) return { layer, view, items: prune(root) };
+    const { items, hazes } = pruneWithHazes(root, marks);
+    return { layer, view, items, hazes };
   });
 
   // A shot whose background is not keyed is the state it always was.

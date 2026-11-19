@@ -25,7 +25,7 @@ import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
-import { FINDING_KINDS_ALL, LINK_MAX_WIDTH, RISE_MAX } from './types.ts';
+import { FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, RISE_MAX, STREAK_MAX } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -35,6 +35,7 @@ import type {
   EmitterNode,
   EyeNode,
   GroupNode,
+  HazeSpec,
   IdleSpec,
   IntendedSpec,
   LabelNode,
@@ -273,14 +274,44 @@ export interface ShapeOptions {
   rise?: number;
   /** With rise: the colour of the side of the body; default a shadow tone of the fill. */
   side?: ColorRef;
+  /**
+   * A heat haze: the picture drawn before the shape, inside its outline (fading out across it with soft), wavers like
+   * air over heat, and what is drawn after it stays steady. amount: units of the layer, up to 60, how far it moves
+   * the picture at most; scale: the size of its ripples (40); speed: units per second they drift (30); direction:
+   * degrees where they drift (-90, up). For a shape listed directly in a flat layer. Animate it with hazeTo().
+   */
+  haze?: { amount: number; scale?: number; speed?: number; direction?: number };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze',
 ];
+
+/** What a heat haze is when only its amount is given. */
+export const HAZE_DEFAULTS = { scale: 40, speed: 30, direction: -90 } as const;
+
+/** A heat haze: written only when it is given, so that a shape without it is the data it always was. */
+function hazy(where: string, o: ShapeOptions): { haze?: HazeSpec } {
+  const h = o.haze;
+  if (h === undefined) return {};
+  if (h === null || typeof h !== 'object') fail(where, `haze must be { amount, scale?, speed?, direction? }, got ${JSON.stringify(h)}`);
+  checkKeys(`${where} haze`, h, ['amount', 'scale', 'speed', 'direction']);
+  const busy = (['body', 'level', 'rise', 'clipTo'] as const).filter((name) => o[name] !== undefined);
+  if (busy.length > 0) {
+    fail(where, `a shape with a haze cannot have ${busy.join(', ')}: the haze moves the picture behind a plain outline; give the ${busy.join(', ')} to another shape`);
+  }
+  return {
+    haze: {
+      amount: num(where, 'haze.amount', h.amount, 0, HAZE_MAX),
+      scale: h.scale === undefined ? HAZE_DEFAULTS.scale : num(where, 'haze.scale', h.scale, 4, 4000),
+      speed: h.speed === undefined ? HAZE_DEFAULTS.speed : num(where, 'haze.speed', h.speed, 0, 10000),
+      direction: h.direction === undefined ? HAZE_DEFAULTS.direction : num(where, 'haze.direction', h.direction, -3600, 3600),
+    },
+  };
+}
 
 /** The widest blur of a soft node, in its units. */
 const SOFT_MAX = 200;
@@ -358,6 +389,7 @@ function shapeNode(where: string, o: ShapeOptions, shape: ShapeSpec, sway: Sprin
     ...lightExtras(where, o),
     ...softness(where, o.soft),
     ...risen(where, o, 'shape'),
+    ...hazy(where, o),
     ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'shape',
@@ -897,13 +929,15 @@ export function emitter(o: {
   sizing?: 'spark' | 'steady';
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   clipTo?: string;
+  /** Seconds, up to 1: each particle is drawn as a streak as long as the way it travels in that time: rain, sparks. */
+  streak?: number;
   /** Key of the emitter's voice in the bank of sounds: what its bursts sound like. */
   sound?: string;
 }): EmitterNode {
   const where = `emitter("${o?.id}")`;
   checkKeys(where, o, [
     'id', 'colors', 'size', 'life', 'at', 'attach', 'area', 'rate', 'from', 'until', 'bursts', 'onContact', 'prewarm',
-    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo', 'sound',
+    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo', 'streak', 'sound',
   ]);
   if (o.sizing !== undefined && o.sizing !== 'spark' && o.sizing !== 'steady') fail(where, `sizing must be "spark" or "steady", got ${JSON.stringify(o.sizing)}`);
   if (!Array.isArray(o.colors) || o.colors.length === 0) fail(where, 'colors must be a non-empty array of palette references');
@@ -938,6 +972,7 @@ export function emitter(o: {
   return {
     ...(o.sizing === undefined ? {} : { sizing: o.sizing }),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...(o.streak === undefined ? {} : { streak: num(where, 'streak', o.streak, 0.001, STREAK_MAX) }),
     ...voice(where, o.sound),
     type: 'emitter',
     id: idOf(where, o.id),

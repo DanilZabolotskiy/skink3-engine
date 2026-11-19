@@ -25,6 +25,7 @@ import type {
   DriveKey,
   FadeToKey,
   FillToKey,
+  HazeToKey,
   HopKey,
   Key,
   LevelToKey,
@@ -121,6 +122,8 @@ export interface CNode {
   readonly rise: RiseTrack | null;
   /** Shapes with a fillTo: their fill over time; null for a shape that keeps the fill it was given. */
   readonly fill: FillTrack | null;
+  /** Shapes with a haze: its amount over time (hazeTo), and the noise of its ripples; null for every other node. */
+  readonly haze: { readonly amount: RiseTrack; readonly noise: Noise } | null;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -315,6 +318,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const bends = new Map<number, BendToKey[]>();
   const widths = new Map<number, WidthToKey[]>();
   const rises = new Map<number, RiseToKey[]>();
+  const hazes = new Map<number, HazeToKey[]>();
   const fills = new Map<number, FillToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
@@ -508,6 +512,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         }
         push(rises, index, key);
         break;
+      case 'hazeTo':
+        if (node.type !== 'shape' || node.haze === undefined) {
+          fail(`${where}: hazeTo cannot target ${node.type} "${node.id}"; it applies to a shape with a haze (give the shape the option haze; amount 0 is still air until a hazeTo stirs it)`);
+        }
+        push(hazes, index, key);
+        break;
       case 'fillTo':
         need(node.type === 'shape', 'shapes');
         push(fills, index, key);
@@ -614,6 +624,11 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         colors['fill'] = col(node, 'fill', node.fill);
         if (node.rimLight) colors['rimLight'] = col(node, 'rimLight', node.rimLight);
         if (node.side) colors['side'] = col(node, 'side', node.side);
+        if (node.haze) {
+          // The haze moves the frame as it is drawn so far: it belongs to the draw order of its layer, not to a parent.
+          if (d.parent >= 0) fail(`${where}: shape "${node.id}" has a haze: that is for a shape listed directly in a layer's nodes; put the haze beside the group, not in it`);
+          if (view) fail(`${where}: shape "${node.id}" has a haze, and the layer "${spec.layers[d.layer]!.id}" is a perspective layer; a haze lies in a flat layer`);
+        }
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
           if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
@@ -871,6 +886,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
               fills.get(d.index)!.map((k) => ({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, to: col(node, `fillTo at ${k.at} s: to`, k.to) })),
             )
           : null,
+      // A shape without a haze has none: it moves nothing.
+      haze: node.type === 'shape' && node.haze ? { amount: buildRiseTrack(node.haze.amount, hazes.get(d.index) ?? []), noise: new Noise(spec.seed, `haze/${node.id}`) } : null,
       clipIndex,
       bodySlot,
       springSlot,

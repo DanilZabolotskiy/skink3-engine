@@ -8,10 +8,13 @@
 //   4 bytes   header length in bytes (u32)
 //   header    UTF-8 JSON, padded with spaces to a multiple of 8 bytes
 //   sections  bodies (f32), springs (f32), particleIndex (u32), particles (f32),
-//             particle velocities (f32)
+//             particle velocities (f32), and in a shot with an emitter of
+//             streaks the particle tails (f32)
 //
-// The evaluator draws from the first four. The particle velocities are kept
-// for the motion review, which has to know how fast a particle travels.
+// The evaluator draws from the first four and from the tails. The particle
+// velocities are kept for the motion review, which has to know how fast a
+// particle travels. A shot without streaks has no tails, and its header does
+// not name them: its bake is what it always was.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -58,6 +61,8 @@ export interface BakeHeader {
     readonly particleIndex: number;
     readonly particles: number;
     readonly particleVelocities: number;
+    /** Only in a shot with an emitter of streaks. */
+    readonly particleTails?: number;
   };
 }
 
@@ -69,6 +74,8 @@ export const SPRING_STRIDE = 2;
 export const PARTICLE_STRIDE = 4;
 /** Floats per particle velocity: vx, vy in units per second. */
 export const PARTICLE_VELOCITY_STRIDE = 2;
+/** Floats per particle tail: dx, dy in units, from the particle to the end of its streak. */
+export const PARTICLE_TAIL_STRIDE = 2;
 
 export class Bake {
   readonly header: BakeHeader;
@@ -79,6 +86,8 @@ export class Bake {
   readonly particles: Float32Array;
   /** vx, vy of every stored particle, in the order of `particles`. */
   readonly particleVelocities: Float32Array;
+  /** In a shot with an emitter of streaks: dx, dy of the tail of every stored particle (0, 0 for a round one); else empty. */
+  readonly particleTails: Float32Array;
 
   constructor(
     header: BakeHeader,
@@ -87,6 +96,7 @@ export class Bake {
     particleIndex: Uint32Array,
     particles: Float32Array,
     particleVelocities: Float32Array,
+    particleTails: Float32Array = new Float32Array(0),
   ) {
     this.header = header;
     this.bodies = bodies;
@@ -94,6 +104,7 @@ export class Bake {
     this.particleIndex = particleIndex;
     this.particles = particles;
     this.particleVelocities = particleVelocities;
+    this.particleTails = particleTails;
   }
 
   private frameOf(frame: number): number {
@@ -137,6 +148,15 @@ export class Bake {
     const end = this.particleIndex[base + 1]!;
     return this.particleVelocities.subarray(start * PARTICLE_VELOCITY_STRIDE, end * PARTICLE_VELOCITY_STRIDE);
   }
+
+  /** The tails of those particles, in the same order: dx, dy in units to the end of each streak; null in a shot without streaks. */
+  tailsAt(slot: number, frame: number): Float32Array | null {
+    if (this.particleTails.length === 0) return null;
+    const base = slot * (this.header.frames + 1) + this.frameOf(frame);
+    const start = this.particleIndex[base]!;
+    const end = this.particleIndex[base + 1]!;
+    return this.particleTails.subarray(start * PARTICLE_TAIL_STRIDE, end * PARTICLE_TAIL_STRIDE);
+  }
 }
 
 const MAGIC = 'SK3BAKE1';
@@ -149,7 +169,7 @@ export function serializeBake(bake: Bake): Uint8Array {
     json += ' '.repeat(pad);
     headerBytes = Buffer.from(json, 'utf8');
   }
-  const sections = [bake.bodies, bake.springs, bake.particleIndex, bake.particles, bake.particleVelocities];
+  const sections = [bake.bodies, bake.springs, bake.particleIndex, bake.particles, bake.particleVelocities, bake.particleTails];
   const total = 8 + 4 + 4 + headerBytes.length + sections.reduce((a, s) => a + s.byteLength, 0);
   const out = Buffer.alloc(total);
   out.write(MAGIC, 0, 'ascii');
@@ -185,7 +205,8 @@ export function parseBake(bytes: Uint8Array): Bake {
   const particleIndex = new Uint32Array(take(header.sizes.particleIndex, 4));
   const particles = new Float32Array(take(header.sizes.particles, 4));
   const particleVelocities = new Float32Array(take(header.sizes.particleVelocities, 4));
-  return new Bake(header, bodies, springs, particleIndex, particles, particleVelocities);
+  const particleTails = new Float32Array(take(header.sizes.particleTails ?? 0, 4));
+  return new Bake(header, bodies, springs, particleIndex, particles, particleVelocities, particleTails);
 }
 
 /** Hash of a bake exactly as it is stored. */

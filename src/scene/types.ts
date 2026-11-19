@@ -148,6 +148,24 @@ export interface ShapeNode extends NodeBase {
   readonly rise?: number;
   /** The colour of that side. Left out: a shadow tone of the fill. */
   readonly side?: ColorRef;
+  /**
+   * A heat haze: the picture drawn before the shape, inside its outline, wavers like air over heat; what is drawn
+   * after it stays steady. The shape itself is drawn as any shape, at its opacity (often 0). hazeTo animates the
+   * amount. Left out: the shape moves nothing.
+   */
+  readonly haze?: HazeSpec;
+}
+
+/** How a heat haze moves the picture behind it. All lengths are in the units of the layer. */
+export interface HazeSpec {
+  /** How far it moves the picture at most, sideways; up and down half as far. */
+  readonly amount: number;
+  /** The size of its ripples: the larger ones are this long, the finer ones half as long. */
+  readonly scale: number;
+  /** How fast the ripples drift, units per second. */
+  readonly speed: number;
+  /** Degrees, 0 right, -90 up: where they drift. */
+  readonly direction: number;
 }
 
 export interface GroupNode extends NodeBase {
@@ -180,6 +198,12 @@ export const LINK_MAX_WIDTH = 80;
 
 /** The highest a body may rise, in its units: the limit of its `rise`, and of a `riseTo` on it. */
 export const RISE_MAX = 2000;
+
+/** The farthest a heat haze may move the picture, in units of the layer: the limit of its `amount`, and of a `hazeTo` on it. */
+export const HAZE_MAX = 60;
+
+/** The longest streak of a particle, in seconds of its way. */
+export const STREAK_MAX = 1;
 
 /** A curved line between two nodes of the same layer; it follows them as they move. */
 export interface LinkNode {
@@ -396,6 +420,11 @@ export interface EmitterNode {
   readonly sizing?: 'spark' | 'steady';
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /**
+   * Seconds: every particle is drawn as a streak along its way, as long as the way it travels in that time (and no
+   * longer than the way it has come since it was born): rain, sparks, a stream. Left out: round particles.
+   */
+  readonly streak?: number;
   /**
    * Key of the node's voice in the bank of sounds: what its intents and its
    * contacts sound like. It never changes the picture or the bake.
