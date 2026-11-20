@@ -41,7 +41,7 @@ Each picture of an example is one frame with neutral content, at 1920×1080, as 
 - **Text and languages.** String tables per language, bundled fonts for Latin, Cyrillic and Greek with a check of every glyph, text that fits itself, runs of a label or a text in a second ink that each language marks in its own string, and subtitles from word timings (.srt, .vtt, .ytt).
 - **Sound.** The sound effects of a shot, built from its events and a bank of sounds that a production brings.
 - **Reviews without watching.** The motion review, the physics review and the contrast review report their findings as text, with trails, graphs and close-ups.
-- **Render.** Deterministic frames on the GPU, in parallel chunks, at any 16:9 width; a re-render matches pixel for pixel.
+- **Render.** Deterministic frames on the GPU, in parallel chunks, at any 16:9 width; a re-render matches pixel for pixel. A render queue for the whole machine keeps the processes that draw on the GPU at once to a few (three unless `SKINK3_RENDER_SLOTS` says otherwise), whatever checkout they run from: quick work first, a long master in the end ([docs/SCENES.md](docs/SCENES.md#the-render-queue)).
 
 Not built yet: transitions between shots, soft bodies, ropes, flocks and fluids, motion blur, narration, music and the mix of a film's sound. The full list of what a scene cannot do yet closes [docs/SCENES.md](docs/SCENES.md); what each module does is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the roadmap is at the end of this file.
 
@@ -135,6 +135,15 @@ Scene modules import from the package name (`import { shot, circle } from 'skink
 
 The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit.
 
+The renders in the table ran before the render queue; with it, a render draws with at most three workers at once unless `SKINK3_RENDER_SLOTS` says otherwise. Measured with the queue on November 21, 2026, on the same machine while other renders kept its GPU busy:
+
+| What | Result |
+|---|---|
+| Render, 1920×1080, 900 frames, 8 workers asked, 3 at once | 7.2 s (125 frames/s); 6.9 s (130 frames/s) with the queue off at the same moment |
+| Two such renders at once, 3 workers asked by each | never more than 3 workers drawing; the first done in 8.1 s, the second, which waited, in 15.5 s |
+| Render, 3840×2160, 240 frames, 3 at once, priority low | 8.0 s (30 frames/s) |
+| Queue on vs off; 3 vs 8 workers over 900 frames; 1 chunk vs 6 vs 35 over 240 frames | identical hashes for every frame |
+
 Neither the motion review (`skink3 motion`) nor the physics review (`skink3 physics`) has a finding on the demo. The motion review once had five, all on the creature's antennae, which swing on springs: they snapped out of its body while it popped in and whipped round at the end of its fast move. That was a defect of the spring, found without anyone watching the video, and it is fixed: a swaying stick is now a spring on its angle, which cannot jump and cannot turn more than 57° from its rest direction. To see what the two reviews report, run them on `test/fixtures/defects/scene.ts`, a small shot with planted defects.
 
 The look of the rendered mp4, measured with `tools/metrics` (tone numbers from 30 frames, one every 0.5 s, see [docs/METRICS.md](docs/METRICS.md#short-clips)):
@@ -180,7 +189,7 @@ node bench/phys.mjs                 # rigid bodies, XPBD and particle timings
 | `src/physics` | Rapier wrapper, particles, the bake and its on-disk cache |
 | `src/camera` | drift on a heading or along a free-form path, push-in, keys that move and zoom it at a moment, zoom keys under which the drift goes on, parallax view of a depth layer |
 | `src/text` | string tables, the bundled fonts and what characters they have, auto-fit layout, runs in a second ink, label geometry, the block of a free-standing text, counters, subtitles from word timings (.srt, .vtt, .ytt) |
-| `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers |
+| `src/render` | frame compositing on Skia, review sheets, ffmpeg encoding, parallel chunk workers, the render queue of the machine |
 | `src/checks` | the rules a palette declares, string tables, the glyphs of every string, text fit per language (errors), labels covering other nodes (warnings), the motion review, the physics review and the contrast review in short form (warnings) |
 | `src/review` | the motion review: the series of every node at every frame, the findings and their thresholds, the report, ghost trails and speed graphs. The physics review: the geometry of the colliders, the findings from the bake and their thresholds, the report, close-ups. The contrast review: named nodes against what is seen behind them, with the production's thresholds |
 | `src/audio` | the events of a shot, the bank of sounds and its rules, the sound track of a shot (48 kHz stereo), the sound sheet, PCM WAV read and written |

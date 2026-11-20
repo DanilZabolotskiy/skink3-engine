@@ -33,6 +33,7 @@ import {
 } from './draw.ts';
 import { applyHaze } from './haze.ts';
 import { applyPlane, planeContext, seesPlane } from './plane.ts';
+import { waitForGpu } from './queue.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -564,9 +565,10 @@ export function readRaw(drawn: DrawnFrame, gpu: boolean): Promise<Buffer> {
   return drawn.canvas.toBuffer('raw', { colorType: 'rgba', msaa: gpu ? GPU_MSAA : false });
 }
 
-/** One frame as raw RGBA bytes (width * height * 4). */
+/** One frame as raw RGBA bytes (width * height * 4). On the GPU it waits for the render slot of the process, if any. */
 export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
+    if (opts.gpu) await waitForGpu();
     const drawn = drawFrame(c, bake, frame, opts);
     try {
       return await readRaw(drawn, opts.gpu);
@@ -576,9 +578,10 @@ export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: Rende
   });
 }
 
-/** One frame as PNG bytes. */
+/** One frame as PNG bytes. On the GPU it waits for the render slot of the process, if any. */
 export function framePng(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
+    if (opts.gpu) await waitForGpu();
     const drawn = drawFrame(c, bake, frame, opts);
     try {
       return await drawn.canvas.toBuffer('png', { msaa: opts.gpu ? GPU_MSAA : false });

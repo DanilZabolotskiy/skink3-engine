@@ -84,7 +84,8 @@ export { physicsPictures, renderCloseUp, type PhysicsPicture, type CloseUpOption
 export { reviewContrast, formatContrastShort, colourDistance, type ContrastReport, type ContrastFinding } from './review/contrast.ts';
 export { drawFrame, frameRaw, framePng, heightFor, rendererInfo, type RenderOptions } from './render/frame.ts';
 export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './render/sheet.ts';
-export { renderParallel, type RenderJob, type RenderResult } from './render/parallel.ts';
+export { renderParallel, renderPlan, chunkFrames, type RenderJob, type RenderPlan, type RenderResult } from './render/parallel.ts';
+export { acquireSlot, queueConfig, queueState, DEFAULT_SLOTS, type Priority, type QueueConfig, type QueueEntry, type Slot, type SlotRequest, type Waiting } from './render/queue.ts';
 export { cameraAt, layerView, type CameraState, type LayerView } from './camera/camera.ts';
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';
 export { FONT_FAMILY, BUNDLED_FONTS, type BundledFont } from './text/fonts.ts';

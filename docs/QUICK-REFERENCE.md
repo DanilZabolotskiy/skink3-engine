@@ -140,19 +140,20 @@ npx skink3 <command> <scene.ts> [options]
 check   palette, strings, glyphs, text fit; reviews in short [--bank bank.json]
 bake    [--force]
 still   frames as PNG --frame n[,n] | --time s[,s] [--hash]
-strip   frames side by side --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
+strip   side by side --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
-render  [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
+render  [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion  [--pictures [--top 3]]
 physics as motion
 trail   ghosts --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph   speed --node id | --camera [--from f] [--to f] | [--time s,s]
 events  intents, contacts, bursts as JSON
 sfx     the sound track, a WAV --bank bank.json [--sheet [--cols 4] [--tile 480]]
-common  --lang tag (the first table) --width px (1920) --cpu --out file --cache dir
+queue   render slots: SKINK3_RENDER_SLOTS (3; 0: off)
+common  --lang tag (first table) --width px (1920) --cpu --out file (./out/<shot>/) --cache dir (./cache) --priority high|low
 ```
 
-Output `./out/<shot id>/`, cache `./cache/`; commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps, else warns. `--crop`: stage units from top-left.
+Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps, else warns. `--crop`: stage units from top-left.
 
 ## Reading the reviews
 
@@ -182,7 +183,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] });
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (camera, zoom, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, soft edges, heights, roofs, shadows, heat haze, line width, second ink); **Timeline: intents** (profiles, travel, reshape, colour key, drive, stagger); **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (camera, zoom, background keys, physics); **`layer`**; **Nodes** (glow, covers, clipping, levels, soft edges, heights, roofs, shadows, heat haze, line width, second ink); **Timeline: intents**; **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 

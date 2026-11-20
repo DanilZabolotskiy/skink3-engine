@@ -1956,15 +1956,16 @@ bake    simulate physics, springs and particles; write the cache        [--force
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
-render  an mp4                 [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
+render  an mp4                 [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion  the motion review      [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/motion.json
 physics the physics review     [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/physics.json
 trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
 graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
 events  the events of the shot                                           as JSON in out/<shot>/events.json
 sfx     the sound track        --bank <bank.json> [--sheet [--cols 4] [--tile 480]]   a WAV, and its report as JSON in out/<shot>/sfx.json
+queue   the render slots of the machine: who draws on the GPU, who waits   (takes no scene module)
 
-common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>
+common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>  --priority high|low
 ```
 
 - Inside the engine repository the command is `node bin/skink3.mjs`; from a repository that depends on the engine it is `npx skink3`.
@@ -1975,7 +1976,22 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
-- If one render worker fails, the others are stopped at once, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
+- If one render worker fails, the others are stopped at once, no further chunk is started, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
+- Every command that draws on the GPU waits for a render slot of the machine first: see "The render queue" below.
+
+### The render queue
+
+Every process that draws frames on the GPU, wherever it was started from (any checkout, any repository, any terminal), first takes one of the machine's **render slots** and holds it until it has drawn its last frame. When every slot is taken it waits, says once `waiting for a render slot: 3 of 3 busy` (and how many wait ahead of it), and then goes on as usual. A GPU has room for a few renders at once; more only make every one of them slower and can run it out of memory.
+
+- `SKINK3_RENDER_SLOTS`: how many processes may draw on the GPU at once; 3 unless set. `0` turns the queue off: no limit, as before it existed.
+- `SKINK3_SLOT_DIR`: the directory of the slots, shared by every process of the user; by default `%LOCALAPPDATA%\skink3\render-slots` on Windows and `~/.cache/skink3/render-slots` elsewhere (`$XDG_CACHE_HOME` if set). Every process that should share the limit must see the same directory and the same number.
+- **Who goes first.** Two kinds of work wait in two lines, each in its order of arrival: quick work (`still`, `strip`, `sheet`, the pictures of the reviews, a `render` up to 1920 wide) before long work (a `render` wider than 1920, or anything given `--priority low` or `SKINK3_RENDER_PRIORITY=low`). `--priority high` puts long work in the quick line. Long work that has waited five minutes counts as quick work from the moment it arrived, so it is served in the end however much quick work keeps coming.
+- **A render takes slots as they come free.** `render --workers n` keeps at most n workers, and never more than there are slots, alive at once, and splits its frames into chunks of at most `--chunk` frames: 900 at 1920 wide, as many pixels at any other width (225 at 3840), and always a multiple of the workers that run at once, so a render alone keeps them busy to its end. Each worker draws one chunk, gives its slot back, and the next chunk waits for a slot like any other process; a worker that waits holds no GPU memory. `--chunk 0`: one chunk per worker, the split of earlier versions. The header line of `render` says how many workers run at once, over how many chunks, and the priority.
+- **Pixels do not change.** A frame is the same whichever process draws it, in any chunk or alone, with the queue on or off: `--hashes` writes the same file for any `--workers`, `--chunk` and `SKINK3_RENDER_SLOTS`. What the split moves is where the encoded file has a key frame: each chunk starts with one.
+- **Crashes leave nothing behind.** A slot names its process and is refreshed every few seconds while the process runs. A slot whose process has ended, by Ctrl+C, a kill or a crash, or that nobody has refreshed for two minutes, is free at once. On Ctrl+C a process gives its slot back before it exits.
+- `--cpu` takes no slot, and a command that never draws a frame (`check`, `bake`, `events`, a command that stops on an error first) never waits.
+- `skink3 queue` (no scene module) prints the slots, who holds each (process, priority, how long, what it draws) and who waits, in the order they will be served.
+- A tool that measures render speed with several processes at once should run with `SKINK3_RENDER_SLOTS=0`, or it measures the queue.
 
 Review the picture with stills, strips and sheets, the motion with `motion`, `trail` and `graph`, the simulation with `physics`, and the sound with the report and the sheet of `sfx`; render the video when those look right.
 
@@ -1991,7 +2007,7 @@ Run `npm ci` in the engine checkout too. The dependency must stay a link (npm's 
 
 ## Programmatic use
 
-Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel`, `loadShot`, for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`, and for the physics review `reviewPhysics`, `formatPhysicsReport`, `physicsPictures`, `renderCloseUp`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
+Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel` (with `renderPlan` and `chunkFrames`, how it splits a render), `loadShot`, for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`, and for the physics review `reviewPhysics`, `formatPhysicsReport`, `physicsPictures`, `renderCloseUp`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
 
 What a test or a tool of a production usually reads:
 
@@ -2018,6 +2034,8 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 `evaluate` wraps what it draws in four kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape), `'stretch'` (a node that is being squashed) and `'plane'` (what lies in a plane of a perspective layer, with the `map` of that plane at the frame). `flatItems` opens all four; what it takes out of a plane it gives as the layer sees it (`seenThrough(item, map)`).
 
 For a perspective layer, `c.spatial` says that the shot has one and `c.layers[i].persp` is the track of its camera. `eyeOf(perspAt(track, seconds))` is the camera at a moment; `project(eye, [x, y, z])` gives where a point of the space is drawn on the layer (`x`, `y`), how large one unit is there (`k`; 0: not drawn) and how far it is (`far`). `planeMap(eye, origin, axes)` and `planePoint(map, [u, v])` do the same for a point of a plane. `computeWorld(c, frame, poses, places)` with `places = newPlaces(c)` also fills in where the nodes lie in the space (`places.point`, three numbers per node index) and in their planes (`places.flat`, `places.planes`), and `drawOrder(c, layer, seconds, places)` gives the node indices of a layer that orders what it draws, in draw order.
+
+For the render queue, `queueConfig()` reads `SKINK3_RENDER_SLOTS` and `SKINK3_SLOT_DIR`, `acquireSlot(config, { priority, what })` waits for a slot and returns it (`slot.release()` gives it back; null when the queue is off), and `queueState(config)` lists who holds and who waits. `renderParallel` on the GPU waits in the queue by itself; `frameRaw`, `framePng` and `renderSheet` called from a program do not: a program that draws many frames on the GPU takes a slot around them.
 
 For colour, `checkPalette(palette)` returns the rules of a palette that are broken, `colourDistance(a, b)` the difference of two colours in lightness and in colour, and `reviewContrast(c, bake)` the contrast review of a shot that asks for one (null otherwise); `runChecks(c, bake, langs, { contrast: true })` adds it to the checks.
 

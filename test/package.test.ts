@@ -33,13 +33,19 @@ test('sources: nothing that draws may read a clock or an unseeded random number'
   const banned = [/Math\.random/, /Date\.now/, /new Date\(/, /process\.hrtime/];
   // performance.now() is allowed only where a duration is reported to the user.
   const timers = new Set(['physics/bake.ts', 'render/parallel.ts']);
+  // The render queue orders the processes of a machine by the wall clock and by the times of its files. It draws
+  // nothing and decides only when a process starts to draw.
+  const wallClock = new Set(['render/queue.ts']);
   for (const file of walk(join(ROOT, 'src')).filter((f) => f.endsWith('.ts'))) {
     const rel = file.slice(join(ROOT, 'src').length + 1).replaceAll('\\', '/');
     const code = readFileSync(file, 'utf8')
       .split('\n')
       .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
       .join('\n');
-    for (const re of banned) assert.ok(!re.test(code), `${rel} uses ${re.source}`);
+    for (const re of banned) {
+      if (wallClock.has(rel) && re.source === /Date\.now/.source) continue;
+      assert.ok(!re.test(code), `${rel} uses ${re.source}`);
+    }
     if (!timers.has(rel)) assert.ok(!/performance\.now/.test(code), `${rel} reads the clock`);
   }
 });
