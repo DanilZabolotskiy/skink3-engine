@@ -26,7 +26,7 @@ import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
-import { CAST_MAX_LENGTH, DETAIL_MAX, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
+import { CAST_MAX_LENGTH, DETAIL_MAX, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_CONTRAST_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -292,8 +292,11 @@ export interface ShapeOptions {
    * 'gable' (two slopes and a ridge), 'hip' (four slopes), 'cone' (slopes to one point) or 'dome' (a round cap);
    * height: units over the top of the body, 0.01 to 2000; ridge: where the ridge of a gable or a hip runs, in degrees
    * (default: along the longer side). The slopes are the fill in the tones of the light, the upright ends the side.
+   * On a region, a 'hip' alone: a slope on every stretch of the outline, all as steep, meeting in ridges and valleys;
+   * height is its highest point, and run (units) how far in the slopes run before the roof is flat at that height
+   * (default: to the middle). contrast: how far the tones of the slopes lie from the fill (default 1; 0 to 2).
    */
-  roof?: { kind: RoofKind; height: number; ridge?: number };
+  roof?: { kind: RoofKind; height: number; ridge?: number; run?: number; contrast?: number };
   /**
    * With rise: rows of openings painted on the side of the body, on every face the viewer sees. width and height of
    * one opening, in units; shape 'rect' (default) or 'arch'; step: from one middle to the next (default twice the
@@ -356,18 +359,30 @@ function roofOf(where: string, o: ShapeOptions, shape: ShapeSpec): { roof?: Roof
   const r = o.roof;
   if (r === undefined) return {};
   if (o.rise === undefined) fail(where, 'roof is the roof of a shape with a height: give rise (0 lies flat until a riseTo), or leave roof out');
-  checkKeys(`${where}: roof`, r, ['kind', 'height', 'ridge']);
+  checkKeys(`${where}: roof`, r, ['kind', 'height', 'ridge', 'run', 'contrast']);
   if (!ROOF_KINDS.includes(r.kind)) fail(where, `roof.kind must be one of ${ROOF_KINDS.join(', ')}; got ${JSON.stringify(r.kind)}`);
-  if (shape.kind === 'blob' || isRegion(shape)) fail(where, 'a roof stands on a circle, a capsule, a rect or a polygon; a blob or a region has a free outline and keeps its flat top: leave roof out');
+  if (shape.kind === 'blob') fail(where, 'a roof stands on a circle, a capsule, a rect, a polygon or a region; a blob has a free outline and keeps its flat top: leave roof out');
+  const region = isRegion(shape);
+  if (region && r.kind !== 'hip') fail(where, `a region takes a hip roof alone: a slope on every stretch of its outline; a ${r.kind} stands on a circle, a capsule, a rect or a polygon`);
   if (r.ridge !== undefined && r.kind !== 'gable' && r.kind !== 'hip') fail(where, `roof.ridge is where the ridge of a gable or a hip runs; a ${r.kind} has no ridge: leave ridge out`);
-  return { roof: { kind: r.kind, height: num(where, 'roof.height', r.height, 0.01, RISE_MAX), ...(r.ridge === undefined ? {} : { ridge: num(where, 'roof.ridge', r.ridge, -1e5, 1e5) }) } };
+  if (r.ridge !== undefined && region) fail(where, 'the ridges of a hip on a region follow its outline: leave ridge out');
+  if (r.run !== undefined && !region) fail(where, 'roof.run is how far in the slopes of a hip on a region run; on this shape the slopes meet in the ridge: leave run out');
+  return {
+    roof: {
+      kind: r.kind,
+      height: num(where, 'roof.height', r.height, 0.01, RISE_MAX),
+      ...(r.ridge === undefined ? {} : { ridge: num(where, 'roof.ridge', r.ridge, -1e5, 1e5) }),
+      ...(r.run === undefined ? {} : { run: num(where, 'roof.run', r.run, 0.01, 1e5) }),
+      ...(r.contrast === undefined ? {} : { contrast: num(where, 'roof.contrast', r.contrast, 0, ROOF_CONTRAST_MAX) }),
+    },
+  };
 }
 
 /** The openings of the side of a body: written only when they are given, so that a node without them is the data it always was. */
-function openingsOf(where: string, o: ShapeOptions): { openings?: OpeningsSpec } {
+function openingsOf(where: string, o: { rise?: number; openings?: ShapeOptions['openings'] }, what = 'shape'): { openings?: OpeningsSpec } {
   const g = o.openings;
   if (g === undefined) return {};
-  if (o.rise === undefined) fail(where, 'openings are painted on the side of a shape with a height: give rise (0 lies flat until a riseTo), or leave openings out');
+  if (o.rise === undefined) fail(where, `openings are painted on the side of a ${what} with a height: give rise (0 lies flat until a riseTo), or leave openings out`);
   checkKeys(`${where}: openings`, g, ['shape', 'width', 'height', 'step', 'rows', 'sill', 'inset', 'color']);
   const shape = g.shape ?? 'rect';
   if (!OPENING_SHAPES.includes(shape)) fail(where, `openings.shape must be one of ${OPENING_SHAPES.join(', ')}; got ${JSON.stringify(shape)}`);
@@ -394,9 +409,10 @@ function openingsOf(where: string, o: ShapeOptions): { openings?: OpeningsSpec }
 /** The shadows the bodies of a group cast: written only when they are given, so that a group without them is the data it always was. */
 function castOf(where: string, value: unknown): { cast?: CastSpec } {
   if (value === undefined) return {};
-  const c = value as { color?: unknown; opacity?: unknown; dir?: unknown; length?: unknown; soft?: unknown };
-  checkKeys(`${where}: cast`, c, ['color', 'opacity', 'dir', 'length', 'soft']);
+  const c = value as { color?: unknown; opacity?: unknown; dir?: unknown; length?: unknown; soft?: unknown; over?: unknown };
+  checkKeys(`${where}: cast`, c, ['color', 'opacity', 'dir', 'length', 'soft', 'over']);
   if (c.color === undefined) fail(where, 'cast needs a color: the colour of the shadows, a palette reference; the engine has none of its own');
+  if (c.over !== undefined && c.over !== 'flat') fail(where, `cast.over must be "flat" (the shadows lie over the flat members of the group and under its raised ones), got ${JSON.stringify(c.over)}; leave it out to draw them under all the members`);
   return {
     cast: {
       color: color(where, 'cast.color', c.color),
@@ -404,6 +420,8 @@ function castOf(where: string, value: unknown): { cast?: CastSpec } {
       ...(c.dir === undefined ? {} : { dir: num(where, 'cast.dir', c.dir, -1e5, 1e5) }),
       length: c.length === undefined ? CAST_DEFAULTS.length : num(where, 'cast.length', c.length, 0, CAST_MAX_LENGTH),
       soft: c.soft === undefined ? CAST_DEFAULTS.soft : num(where, 'cast.soft', c.soft, 0, SOFT_MAX),
+      // Written only when it is given: a cast without it is the data it always was.
+      ...(c.over === undefined ? {} : { over: 'flat' as const }),
     },
   };
 }
@@ -633,9 +651,10 @@ export function group(o: {
    * The bodies in the group (shapes and strokes with a rise) cast shadows on the ground under it, drawn as one picture
    * before the group's children. color: a palette reference; opacity (default 0.35); length: units of shadow to each
    * unit of height (default 0.7, up to 8); dir: where they fall, in degrees (default: away from the light of the
-   * shot); soft: units of blur (default 0).
+   * shot); soft: units of blur (default 0); over: 'flat' draws the children with no rise in them first, as listed,
+   * then the shadows over them, then the raised children (default: the shadows under every child).
    */
-  cast?: { color: ColorRef; opacity?: number; dir?: number; length?: number; soft?: number };
+  cast?: { color: ColorRef; opacity?: number; dir?: number; length?: number; soft?: number; over?: 'flat' };
   /**
    * For a group of many bodies (shapes and strokes with a rise): how much detail they are worth. A body smaller on
    * screen than min (units of the stage: the pixels of a frame 1920 wide), across and in height, is drawn plain: its
@@ -769,11 +788,16 @@ export function stroke(o: {
   rise?: number;
   /** With rise: the colour of the side of the wall; default a shadow tone of the line's colour. */
   side?: ColorRef;
+  /**
+   * With rise: rows of openings painted on both faces of the wall, wherever the viewer sees one, as on the side of a
+   * shape (the same options); a face runs from one sharp corner of the line to the next, a smooth curve is one face.
+   */
+  openings?: ShapeOptions['openings'];
   /** Key of the node's voice in the bank of sounds. */
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side', 'openings']);
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
   // Points of three numbers: a line of the space of a perspective layer. Its path is then the line seen straight on.
   const solid = spacePoints(where, o.points);
@@ -793,6 +817,7 @@ export function stroke(o: {
     // Written only when they are given: a stroke without them is the data it always was.
     ...(o.least === undefined ? {} : { least: num(where, 'least', o.least, 0.5, 200) }),
     ...risen(where, o, 'stroke'),
+    ...openingsOf(where, o, 'stroke'),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
     // Written only when it is given: a stroke without it is the data it always was.

@@ -54,11 +54,11 @@ blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed:
 region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
 group({ id: 'face', /**/ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
-stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on-screen minimum), at, rotation, scale
+stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen), at, rotation, scale
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + runInk: '2.0 · [Aug 2026]': runs in that ink
 text({ id: 'title', text: 'label.dot', ink: 'light.cream', /**/ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // + box: a colour, count, runInk, at, rotation, scale
-circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge), 'dome'; + step, rows, shape: 'arch', sill, inset, color
-group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; bodies' shadows (+ opacity, length, dir, soft), plain under min px
+circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast; + step, rows, shape: 'arch', sill, inset, color (walls too)
+group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; shadows (+ opacity, length, dir, soft, over: 'flat'), plain under min px
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
@@ -72,7 +72,7 @@ eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'he
 capsule({ id: 'tail', fill: 'mid.mist', length: 46, r: 8, origin: 'start', sway: 'springy' }); // swings about its first end; or 'heavy', 'light', 'viscous'
 circle({ id: 'moon', fill: 'light.cream', r: 9, follow: { f: 2.4, z: 0.26, r: 0 } }); // Hz, damping, response: its position lags; also groups, labels
 rect({ id: 'floor', fill: 'mid.mist', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } });
-circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: the defaults
+circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: defaults
 shot({ ...scene, /**/ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
@@ -84,7 +84,7 @@ A dynamic body waits, touching nothing, till `release` (s, from -`prewarm`), the
 moveTo('dot', { at: 1.2, to: [260, -40], /**/ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance. Or arrive: when it first reaches `to`
 hop('buddy', { at: 4, to: [610, 130], /**/ dur: 0.6, height: 80 }); // a parabola; or land:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // speed: units/s, or dur, or speeds: [[s, speed], ...]; + roll: a wheel's radius
-turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); for to: speed (deg/s) or speeds: [[s, speed], ...]; about: 'x' | 'y': a plane group's hinge
+turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); for to: speed (deg/s) or speeds; about: 'x' | 'y': a plane group's hinge
 scaleTo('hex', { at: 3, to: 1.5, /**/ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes. + profile: no overshoot
 fadeTo('hex', { at: 4, to: 0.3, /**/ dur: 0.5 });
 fillTo('hex', { at: 5, to: 'accent.amber', /**/ dur: 0.6, profile: 'ease' });
@@ -144,7 +144,7 @@ strip   frames side by side --from f [--count 12] [--step 2] [--cols 6] [--tile 
 sheet   [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render  [--workers n] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion  [--pictures [--top 3]]
-physics [--pictures [--top 3]]
+physics as motion
 trail   ghosts --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
 graph   speed --node id | --camera [--from f] [--to f] | [--time s,s]
 events  intents, contacts, bursts as JSON

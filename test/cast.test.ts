@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { bakeShot, compileShot, group, rect, reviewMotion, riseTo, stroke, type LayerSpec, type ShotSpec } from '../src/index.ts';
-import { aqua, at, dark, draw, items, make, pale, refused } from './fixtures/bodies.ts';
+import { aqua, at, dark, draw, items, make, pale, red, refused } from './fixtures/bodies.ts';
 
 // Shadows: the bodies of a group that says `cast` throw shadows on the ground the group lies on, each as long as
 // its body is high.
@@ -136,6 +136,23 @@ test('cast: the motion review judges the end of a shadow, which travels farther 
   assert.deepEqual(await review(make(casting(plain, small()), [riseTo('b', { at: 1, to: 20, dur: 1, profile: 'steady' })])), []);
 });
 
+test('cast: with over: "flat" the shadows lie over the flat members of the group and under its raised ones', async () => {
+  // A yard the body stands on, listed with it in the group, and a second body over the shadow of the first.
+  const yard = rect({ id: 'yard', w: 600, h: 300, radius: 0, fill: 'light.snow', lit: false });
+  const beside = rect({ id: 'c', at: [150, 20], w: 40, h: 40, radius: 0, fill: 'accent.coral', lit: false, rise: 20 });
+  const nodes = (cast: Cast): LayerSpec['nodes'] => casting(cast, [yard, ...body({ fill: 'accent.coral' }), beside]);
+  // As it was: the shadows go first, and the yard covers them.
+  const under = await draw(make(nodes(plain)));
+  assert.ok(pale(at(under, 120, 20)), 'no shadow on the yard');
+  assert.deepEqual((await items(make(nodes(plain)))).map((i) => i.kind), ['cast', 'shape', 'shape', 'shape']);
+  // over: 'flat': on the yard, and under the bodies that stand on it.
+  const over = await draw(make(nodes({ ...plain, over: 'flat' })));
+  assert.ok(aqua(at(over, 120, 20)) && aqua(at(over, 145, -40)), 'the shadow on the yard');
+  assert.ok(pale(at(over, 200, 20)), 'and the yard beyond it');
+  assert.ok(red(at(over, 0, -60)) && red(at(over, 150, 10)), 'the bodies over it, the second one too');
+  assert.deepEqual((await items(make(nodes({ ...plain, over: 'flat' })))).map((i) => i.node.id), ['yard', 'g', 'b', 'c']);
+});
+
 test('cast: what cannot be a cast is refused', () => {
   const g = (cast: object): unknown => group({ id: 'g', cast: cast as never, children: [] });
   assert.ok(refused(() => g({}), /cast needs a color: the colour of the shadows, a palette reference/), 'the engine has no colour of its own');
@@ -143,6 +160,7 @@ test('cast: what cannot be a cast is refused', () => {
   assert.ok(refused(() => g({ color: 'deep.abyss', opacity: 2 }), /cast\.opacity must be a number in 0\.\.1/));
   assert.ok(refused(() => g({ color: 'deep.abyss', soft: -1 }), /cast\.soft must be a number in 0\.\./));
   assert.ok(refused(() => g({ color: 'deep.abyss', blur: 4 }), /unknown option "blur"/));
+  assert.ok(refused(() => g({ color: 'deep.abyss', over: 'all' }), /cast\.over must be "flat" \(the shadows lie over the flat members of the group and under its raised ones\)/));
   assert.ok(refused(() => compileShot(make([group({ id: 'g', cast: { color: 'no.such' as never }, children: [] })])), /no\.such/), 'a colour the palette does not have');
 });
 
@@ -151,4 +169,6 @@ test('cast: it is opt-in: a group without it is the data it was, and draws no it
   assert.ok(!('cast' in bare));
   assert.deepEqual((await items(make([bare]))).map((i) => i.kind), ['shape']);
   assert.deepEqual({ ...group({ id: 'g', cast: plain, children: body() }), cast: undefined }, { ...bare, cast: undefined });
+  // over is written only when it is given.
+  assert.ok(!('over' in group({ id: 'g', cast: plain, children: body() }).cast!));
 });

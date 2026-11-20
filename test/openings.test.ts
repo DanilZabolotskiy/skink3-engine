@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { circle, group, rect, riseTo, type LayerSpec } from '../src/index.ts';
-import { aqua, at, draw, make, pale, red, refused, type Rgb } from './fixtures/bodies.ts';
+import { circle, group, rect, riseTo, stroke, type LayerSpec, type StrokeItem } from '../src/index.ts';
+import { aqua, at, dark, differing, draw, items, make, pale, red, refused, type Rgb } from './fixtures/bodies.ts';
 
 // Openings: rows of windows, arches or the gaps of a colonnade, painted on the side of a body with a height.
 
@@ -62,6 +62,42 @@ test('openings: a round body carries them all the way round, and in a plane they
   assert.ok(red(at(seen, 0, 2)) && red(at(seen, 0, 33)), 'the wall over and under the row');
 });
 
+/** A wall 60 high and 10 wide along y 0, from x -100 to 100: its near face runs from y 5 up to y -55. */
+const wall = (extra: object = {}): LayerSpec['nodes'] => [stroke({ id: 'w', points: [[-100, 0], [100, 0]], smooth: 0, width: 10, color: 'light.snow', side: 'accent.coral', rise: 60, ...extra })];
+/** A closed wall round a square of 200: its near stretch at y 100, its far one at y -100. */
+const pen = (extra: object = {}): LayerSpec['nodes'] => [stroke({ id: 'w', points: [[-100, -100], [100, -100], [100, 100], [-100, 100]], closed: true, smooth: 0, width: 10, color: 'light.snow', side: 'accent.coral', rise: 60, ...extra })];
+const windows = { width: 20, height: 30, step: 40, color: 'accent.aqua' } as const;
+
+test('openings: a wall carries them along its line, on whichever of its faces the viewer sees, as far as it is drawn', async () => {
+  const raw = await draw(make(wall({ openings: windows })));
+  for (const x of [-80, -40, 0, 40, 80]) assert.ok(aqua(at(raw, x, -25)), `an opening at ${x}: ${at(raw, x, -25)}`);
+  for (const x of [-60, -20, 20, 60]) assert.ok(red(at(raw, x, -25)), `plain wall at ${x}`);
+  assert.ok(red(at(raw, 0, -45)) && aqua(at(raw, 0, -38)) && aqua(at(raw, 0, -12)) && red(at(raw, 0, -5)), '30 of the 60 units, in the middle of them');
+  // Drawn half-way, the wall shows the openings of its half.
+  const half = await draw(make(wall({ openings: windows, drawn: 0.5 })));
+  assert.ok(aqua(at(half, -80, -25)) && aqua(at(half, -40, -25)) && dark(at(half, 40, -25)) && dark(at(half, 80, -25)));
+  // Round a square: the outer face of the near stretch and the inner face of the far one.
+  const round = await draw(make(pen({ openings: windows })));
+  assert.ok(aqua(at(round, 0, 75)) && red(at(round, 20, 75)), 'the near stretch, outside');
+  assert.ok(aqua(at(round, 0, -125)) && red(at(round, 20, -125)), 'the far stretch, inside');
+});
+
+test('openings: among children drawn far to near a wall is cut between its openings, never through one', async () => {
+  const sorted = (nodes: LayerSpec['nodes']): LayerSpec['nodes'] => [group({ id: 'g', sort: 'depth', children: nodes })];
+  const line = await draw(make(wall({ openings: windows })));
+  const cut = await draw(make(sorted(wall({ openings: windows }))));
+  assert.ok(differing(line, cut, 24) < 150, `${differing(line, cut, 24)} pixels differ`);
+  for (const x of [-80, -40, 0, 40, 80]) assert.ok(aqua(at(cut, x, -25)), `an opening at ${x}`);
+  // The openings of the square lie 20 + 40 k along its line, and each with the wall round it is 30 wide: no cut
+  // between two stretches lies within 15 of the middle of one.
+  const parts = (await items(make(sorted(pen({ openings: windows }))))).filter((i): i is StrokeItem => i.kind === 'stroke').map((i) => i.part!);
+  assert.ok(parts.length > 4);
+  for (const end of parts.flat()) {
+    const off = Math.abs((((end - 20) % 40) + 40) % 40);
+    assert.ok(Math.min(off, 40 - off) >= 15 - 1e-6, `a cut at ${end}`);
+  }
+});
+
 test('openings: what cannot be painted is refused', () => {
   const where = { id: 'b', w: 200, h: 100, fill: 'light.snow' } as const;
   const o = { width: 20, height: 30 } as const;
@@ -71,6 +107,9 @@ test('openings: what cannot be painted is refused', () => {
   assert.ok(refused(() => rect({ ...where, rise: 60, openings: { ...o, rows: 1.5 } }), /openings\.rows must be a whole number/));
   assert.ok(refused(() => rect({ ...where, rise: 60, openings: { ...o, width: 0 } }), /openings\.width must be a number in 0\.01\.\./));
   assert.ok(refused(() => rect({ ...where, rise: 60, openings: { ...o, gap: 4 } as never }), /unknown option "gap"/));
+  // A wall: a stroke with a rise.
+  assert.ok(refused(() => stroke({ id: 'w', points: [[0, 0], [100, 0]], color: 'light.snow', openings: o }), /openings are painted on the side of a stroke with a height: give rise/));
+  assert.ok(refused(() => stroke({ id: 'w', points: [[0, 0], [100, 0]], color: 'light.snow', rise: 40, openings: { ...o, step: 10 } }), /they would lie over each other/));
 });
 
 test('openings: they are opt-in: a body without them is the data it was', () => {
@@ -80,4 +119,8 @@ test('openings: they are opt-in: a body without them is the data it was', () => 
   // What is left out is written as what it stands for: openings two widths apart, one row, half a gap at a corner.
   assert.deepEqual(windowed.openings, { shape: 'rect', width: 20, height: 30, step: 40, rows: 1, inset: 10 });
   assert.deepEqual({ ...windowed, openings: undefined }, { ...plain, openings: undefined });
+  // A wall as well.
+  const bare = stroke({ id: 'w', points: [[0, 0], [100, 0]], color: 'light.snow', rise: 40 });
+  assert.ok(!('openings' in bare));
+  assert.deepEqual({ ...stroke({ id: 'w', points: [[0, 0], [100, 0]], color: 'light.snow', rise: 40, openings: { width: 20, height: 30 } }), openings: undefined }, { ...bare, openings: undefined });
 });

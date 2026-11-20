@@ -187,6 +187,16 @@ export interface RoofSpec {
   readonly height: number;
   /** 'gable' and 'hip': where the ridge runs, in degrees in the shape's own space (0 along its x). Left out: along the longer side of the shape. */
   readonly ridge?: number;
+  /**
+   * A 'hip' on a region: units, how far in from the edge the slopes run; past that the roof is flat at `height`.
+   * Left out: as far as the middle, so that the slopes meet in ridges and the roof is `height` at its highest point.
+   */
+  readonly run?: number;
+  /**
+   * How far the tones of the slopes lie from the fill: 1 as the light gives them, 0 every slope in the fill itself,
+   * up to 2 twice as far (within the darkest and the lightest tone). Left out: 1.
+   */
+  readonly contrast?: number;
 }
 
 /** The outlines an opening may have. */
@@ -217,7 +227,8 @@ export interface OpeningsSpec {
 
 /**
  * The shadows of the bodies of a group on the ground the group lies on: every shape and stroke with a rise inside
- * it casts one, as long as the body is high. They are one picture, drawn before everything else of the group.
+ * it casts one, as long as the body is high. They are one picture, drawn before everything else of the group, or,
+ * with over: 'flat', over its flat members and under its raised ones.
  */
 export interface CastSpec {
   readonly color: ColorRef;
@@ -229,6 +240,11 @@ export interface CastSpec {
   readonly length: number;
   /** Units: how far the picture of the shadows is blurred. 0 is sharp. */
   readonly soft: number;
+  /**
+   * 'flat': the shadows lie over the flat members of the group (the children with no rise in them: a ground, a floor,
+   * a yard), which are drawn first, as listed, and under its raised members. Left out: under all of them.
+   */
+  readonly over?: 'flat';
 }
 
 /** The longest shadow a body may cast, in units to each unit of its height. */
@@ -287,6 +303,9 @@ export const DETAIL_MAX = 200;
 
 /** The widest a link can be, in units: the limit of its `width`, and of a `widthTo` on it. */
 export const LINK_MAX_WIDTH = 80;
+
+/** The most a roof may stretch the tones of its slopes away from its fill (`roof.contrast`). */
+export const ROOF_CONTRAST_MAX = 2;
 
 /** The highest a body may rise, in its units: the limit of its `rise`, and of a `riseTo` on it. */
 export const RISE_MAX = 2000;
@@ -369,6 +388,8 @@ export interface StrokeNode extends NodeBase {
   readonly rise?: number;
   /** The colour of the side of that wall. Left out: a shadow tone of the line's colour. */
   readonly side?: ColorRef;
+  /** A wall: rows of openings painted on both its faces, wherever the viewer sees one. Left out: plain faces. */
+  readonly openings?: OpeningsSpec;
 }
 
 /**

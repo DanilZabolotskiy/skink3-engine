@@ -4,7 +4,9 @@
 // Plain geometry: no drawing library here.
 
 import { DEG, type Vec2, type Vec3 } from '../core/math.ts';
-import { cornerOutline, type ShapeSpec } from './geometry.ts';
+import { pathAt, type PathTable } from '../motion/paths.ts';
+import { cornerOutline, isRegion, type ShapeSpec } from './geometry.ts';
+import { straightSkeleton } from './skeleton.ts';
 
 /**
  * How a body stands at a frame, in the units of its top: its height `h`, and
@@ -332,6 +334,10 @@ export interface Roof {
   readonly kind: 'gable' | 'hip' | 'cone' | 'dome';
   readonly height: number;
   readonly ridge?: number;
+  /** A hip on a region: how far in the slopes run before the roof is flat. */
+  readonly run?: number;
+  /** How far the tones of the slopes lie from the fill: 1 as the light gives them. */
+  readonly contrast?: number;
 }
 
 /** One flat face of a roof. */
@@ -358,9 +364,33 @@ const roofCache = new WeakMap<Roof, { spec: ShapeSpec; faces: readonly RoofFace[
 export function roofFaces(spec: ShapeSpec, roof: Roof): readonly RoofFace[] {
   const hit = roofCache.get(roof);
   if (hit && hit.spec === spec) return hit.faces;
-  const faces = buildRoof(ringOf(spec).points, roof);
+  const ring = ringOf(spec).points;
+  const faces = isRegion(spec) ? regionRoof(ring, roof) : buildRoof(ring, roof);
   roofCache.set(roof, { spec, faces });
   return faces;
+}
+
+/**
+ * A hip on a free outline: a slope on every stretch of it, all as steep, that meet in ridges over the middle of a
+ * wing and in valleys where two wings meet (the straight skeleton of the outline). The slopes rise `height` over
+ * `run`, and the roof is flat at `height` past it; without a run they rise to `height` at the deepest point. An
+ * outline too broken for it keeps a flat top.
+ */
+function regionRoof(ring: readonly Vec2[], roof: Roof): RoofFace[] {
+  const out: RoofFace[] = [];
+  const skeleton = ring.length >= 3 ? straightSkeleton(ring, roof.run) : null;
+  const reach = roof.run ?? skeleton?.depth ?? 0;
+  if (!skeleton || !(reach > 0)) {
+    const top = face(ring.flatMap((p) => [p[0], p[1], 0]), false);
+    return top ? [top] : out;
+  }
+  for (const f of skeleton.faces) {
+    const points = f.points.slice();
+    for (let j = 2; j < points.length; j += 3) points[j] = (roof.height * Math.min(points[j]!, reach)) / reach;
+    const slope = face(points, false);
+    if (slope) out.push(slope);
+  }
+  return out;
 }
 
 function face(points: number[], wall: boolean, normals?: number[]): RoofFace | null {
@@ -743,6 +773,77 @@ function buildColumns(ring: Ring, o: Openings): OpeningColumn[] {
     }
   }
   return out;
+}
+
+const wallCache = new WeakMap<Openings, { table: PathTable; middles: readonly number[] }>();
+
+/**
+ * Where the openings of a wall are along its line: the middle of each, as a length from the start of the line. The
+ * faces of the wall run from one sharp corner of the line to the next (an end of an open line is one), and each takes
+ * its openings as a face of a body does; a closed line without a corner is one face all the way round. Computed once
+ * per openings object, and again when its line is another.
+ */
+export function wallOpenings(table: PathTable, o: Openings): readonly number[] {
+  const hit = wallCache.get(o);
+  if (hit && hit.table === table) return hit.middles;
+  const middles = layWall(table, o);
+  wallCache.set(o, { table, middles });
+  return middles;
+}
+
+function layWall(table: PathTable, o: Openings): number[] {
+  const { xs, ys, cum, length, closed } = table;
+  const out: number[] = [];
+  if (!(length > 1e-9)) return out;
+  // The samples with a length between them, and the way the line runs on from each.
+  const at: number[] = [];
+  for (let i = 0; i < cum.length; i++) if (at.length === 0 || cum[i]! - cum[at[at.length - 1]!]! > 1e-9) at.push(i);
+  if (closed && at.length > 1 && length - cum[at[at.length - 1]!]! <= 1e-9) at.pop();
+  const m = at.length;
+  if (m < 2) return out;
+  const way = (k: number): number => {
+    const i = at[k]!;
+    const j = k + 1 < m ? at[k + 1]! : closed ? at[0]! : -1;
+    if (j < 0) return Math.atan2(ys[i]! - ys[at[k - 1]!]!, xs[i]! - xs[at[k - 1]!]!);
+    return Math.atan2(ys[j]! - ys[i]!, xs[j]! - xs[i]!);
+  };
+  const turn = (a: number, b: number): number => Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a)));
+  // The corners, as lengths along the line.
+  const corners: number[] = [];
+  for (let k = closed ? 0 : 1; k < (closed ? m : m - 1); k++) if (turn(way((k - 1 + m) % m), way(k)) >= CORNER) corners.push(cum[at[k]!]!);
+  // The faces: from a start, so long.
+  const faces: { start: number; long: number; round: boolean }[] = [];
+  if (closed && corners.length === 0) faces.push({ start: 0, long: length, round: true });
+  else if (closed) {
+    for (let c = 0; c < corners.length; c++) {
+      const next = c + 1 < corners.length ? corners[c + 1]! : corners[0]! + length;
+      faces.push({ start: corners[c]!, long: next - corners[c]!, round: false });
+    }
+  } else {
+    const ends = [0, ...corners, length];
+    for (let c = 0; c + 1 < ends.length; c++) faces.push({ start: ends[c]!, long: ends[c + 1]! - ends[c]!, round: false });
+  }
+  for (const f of faces) {
+    const middles: number[] = [];
+    if (f.round) {
+      const count = f.long >= o.width ? Math.max(1, Math.round(f.long / o.step)) : 0;
+      for (let j = 0; j < count; j++) middles.push(((j + 0.5) * f.long) / count);
+    } else {
+      const free = f.long - 2 * o.inset;
+      if (free >= o.width - 1e-9) {
+        const count = Math.floor((free - o.width) / o.step + 1e-9) + 1;
+        for (let j = 0; j < count; j++) middles.push(f.start + f.long / 2 + (j - (count - 1) / 2) * o.step);
+      }
+    }
+    for (const s of middles) {
+      // An opening is left out where the wall turns too far under it.
+      const a = pathAt(table, s - o.width / 2).angle;
+      const b = pathAt(table, s + o.width / 2).angle;
+      if (turn(a, b) > OPENING_MAX_TURN) continue;
+      out.push(closed ? s - Math.floor(s / length) * length : s);
+    }
+  }
+  return out.sort((p, q) => p - q);
 }
 
 /**

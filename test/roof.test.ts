@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { blob, circle, group, rect, region, riseTo, type LayerSpec } from '../src/index.ts';
-import { at, dark, draw, make, pale, red, refused, shade } from './fixtures/bodies.ts';
+import { blob, circle, group, rect, region, riseTo, type LayerSpec, type ShapeNode } from '../src/index.ts';
+import type { ShapeSpec } from '../src/shape/geometry.ts';
+import { roofFaces } from '../src/shape/solid.ts';
+import { at, dark, differing, draw, make, pale, red, refused, shade } from './fixtures/bodies.ts';
 
 // A roof: a body with a height may carry a gable, a hip, a cone or a dome in place of its flat top. Its slopes are
 // the fill in the tones of the light, each by the way it faces; its upright ends are the side of the body.
@@ -80,10 +82,17 @@ test('roof: what cannot be a roof is refused', () => {
   assert.ok(refused(() => rect({ ...where, rise: 60, roof: { kind: 'gable', height: 0 } }), /roof\.height must be a number in 0\.01\.\./));
   assert.ok(refused(() => circle({ id: 'c', r: 50, fill: 'light.snow', rise: 60, roof: { kind: 'cone', height: 40, ridge: 30 } }), /a cone has no ridge: leave ridge out/));
   assert.ok(refused(() => rect({ ...where, rise: 60, roof: { kind: 'gable', height: 40, pitch: 3 } as never }), /unknown option "pitch"/));
-  // A free outline keeps its flat top.
+  // A region takes a hip alone, and its ridges follow its outline; a blob keeps its flat top.
   const points = [[0, 0], [100, 0], [100, 100], [50, 40], [0, 100]] as [number, number][];
-  assert.ok(refused(() => region({ id: 'r', points, fill: 'light.snow', rise: 60, roof: { kind: 'hip', height: 40 } }), /a roof stands on a circle, a capsule, a rect or a polygon/));
-  assert.ok(refused(() => blob({ id: 'r', r: 60, fill: 'light.snow', rise: 60, roof: { kind: 'dome', height: 40 } }), /a roof stands on a circle, a capsule, a rect or a polygon/));
+  const free = (roof: object): unknown => region({ id: 'r', points, fill: 'light.snow', rise: 60, roof: roof as never });
+  assert.ok(refused(() => free({ kind: 'gable', height: 40 }), /a region takes a hip roof alone: a slope on every stretch of its outline; a gable stands on/));
+  assert.ok(refused(() => free({ kind: 'hip', height: 40, ridge: 30 }), /the ridges of a hip on a region follow its outline: leave ridge out/));
+  assert.ok(refused(() => free({ kind: 'hip', height: 40, run: 0 }), /roof\.run must be a number in 0\.01\.\./));
+  assert.ok(refused(() => rect({ ...where, rise: 60, roof: { kind: 'hip', height: 40, run: 20 } }), /roof\.run is how far in the slopes of a hip on a region run; on this shape the slopes meet in the ridge/));
+  assert.ok(refused(() => blob({ id: 'r', r: 60, fill: 'light.snow', rise: 60, roof: { kind: 'dome', height: 40 } }), /a roof stands on a circle, a capsule, a rect, a polygon or a region; a blob has a free outline/));
+  // contrast: from 0 (every slope in the fill) to 2.
+  assert.ok(refused(() => rect({ ...where, rise: 60, roof: { kind: 'gable', height: 40, contrast: 2.5 } }), /roof\.contrast must be a number in 0\.\.2/));
+  assert.ok(refused(() => rect({ ...where, rise: 60, roof: { kind: 'gable', height: 40, contrast: -1 } }), /roof\.contrast must be a number in 0\.\.2/));
 });
 
 test('roof: it is opt-in: a body without one is the data it was', () => {
@@ -92,4 +101,74 @@ test('roof: it is opt-in: a body without one is the data it was', () => {
   const roofed = rect({ id: 'b', w: 200, h: 100, fill: 'light.snow', rise: 60, roof: { kind: 'hip', height: 40 } });
   assert.deepEqual(roofed.roof, { kind: 'hip', height: 40 });
   assert.deepEqual({ ...roofed, roof: undefined }, { ...plain, roof: undefined });
+  // run and contrast are written only when they are given.
+  assert.ok(!('contrast' in roofed.roof!) && !('run' in roofed.roof!));
+});
+
+/** An L of two wings 80 wide, 60 high, its corner at the middle of the stage: one wing runs right, the other down. */
+const ell = (roof?: NonNullable<Parameters<typeof region>[0]['roof']>): LayerSpec['nodes'] => [
+  region({
+    id: 'b',
+    points: [[-40, -40], [160, -40], [160, 40], [40, 40], [40, 160], [-40, 160]],
+    smooth: 0,
+    fill: 'light.snow',
+    lit: false,
+    side: 'accent.coral',
+    rise: 60,
+    ...(roof ? { roof } : {}),
+  }),
+];
+
+/** The outline of a node of the stage. */
+const shapeOf = (nodes: LayerSpec['nodes']): ShapeSpec => (nodes[0] as ShapeNode).shape;
+
+test('roof: a hip on a region has a slope on every stretch of its outline, and the slopes meet in ridges and valleys', () => {
+  const faces = roofFaces(shapeOf(ell()), { kind: 'hip', height: 40 });
+  assert.equal(faces.length, 6, 'a slope to each of the six stretches');
+  assert.ok(faces.every((f) => !f.wall && f.normal[2] > 0), 'all of them slopes, none upright');
+  // The ridges are 40 over the top, half a wing (40 units) in from the edge: every slope is as steep.
+  const z = faces.flatMap((f) => [...f.points].filter((_, i) => i % 3 === 2));
+  assert.ok(Math.abs(Math.max(...z) - 40) < 1e-9);
+  for (const f of faces) assert.ok(Math.abs(f.normal[2] - faces[0]!.normal[2]) < 1e-9);
+  // run: the slopes stop 10 units in, at the height, and the rest is flat.
+  const flat = roofFaces(shapeOf(ell()), { kind: 'hip', height: 40, run: 10 });
+  assert.equal(flat.length, 7, 'six slopes and a flat top');
+  assert.ok(flat.some((f) => f.normal[2] === 1 && [...f.points].every((v, i) => i % 3 !== 2 || Math.abs(v - 40) < 1e-9)));
+  assert.ok(flat.filter((f) => f.normal[2] < 1).every((f) => Math.abs(f.normal[2] - Math.cos(Math.atan(4))) < 1e-9), 'each slope rises 40 over 10');
+});
+
+test('roof: a hip on a region whose outline is a rectangle is the hip of the rect', async () => {
+  const roof = { kind: 'hip', height: 40 } as const;
+  const box = await draw(make(body({ roof })));
+  const free = await draw(make([region({ id: 'b', points: [[-100, -50], [100, -50], [100, 50], [-100, 50]], smooth: 0, fill: 'light.snow', lit: false, side: 'accent.coral', rise: 60, roof })]));
+  assert.ok(differing(box, free, 24) < 40, `${differing(box, free, 24)} pixels differ`);
+});
+
+test('roof: a hip on an L stands on its top, each slope in the tone its turn to the light gives', async () => {
+  const raw = await draw(make(ell({ kind: 'hip', height: 20 })));
+  const top = await draw(make(ell()));
+  // The flat top is the fill all over; the roof's slopes that look away from the viewer face the light.
+  assert.ok(pale(at(top, 100, -50)) && shade(at(raw, 100, -50)), 'the near slope of the right wing is turned from the light');
+  assert.ok(pale(at(raw, 100, -90)), 'its far slope faces it');
+  assert.ok(pale(at(raw, -20, 60)) && shade(at(raw, 20, 60)), 'the two long slopes of the down wing');
+  assert.ok(red(at(raw, 100, 10)), 'the side under the roof');
+  assert.ok(dark(at(raw, 100, -104)), 'a low roof stays within the top it stands on');
+});
+
+test('roof: contrast spreads the tones of the slopes from the fill, or draws them in', async () => {
+  const roof = { kind: 'gable', height: 40 } as const;
+  const plain = await draw(make(body({ roof })));
+  assert.deepEqual(await draw(make(body({ roof: { ...roof, contrast: 1 } }))), plain, 'a contrast of 1 is the light as it is');
+  // 0: both slopes in the fill.
+  const none = await draw(make(body({ roof: { ...roof, contrast: 0 } })));
+  assert.ok(pale(at(none, 0, -105)) && pale(at(none, 0, -60)), 'the near slope in the fill too');
+  // 2: the slope turned from the light is darker than it is with the light as it is, and the lit one stays.
+  const strong = await draw(make(body({ roof: { ...roof, contrast: 2 } })));
+  const [a, b] = [at(plain, 0, -60), at(strong, 0, -60)];
+  assert.ok(shade(a) && b[0] < a[0] - 20, `darker: ${b} under ${a}`);
+  assert.ok(pale(at(strong, 0, -105)));
+  // A round roof as well, corner by corner.
+  const dome = await draw(make(disc({ roof: { kind: 'dome', height: 80 } })));
+  const flatDome = await draw(make(disc({ roof: { kind: 'dome', height: 80, contrast: 0 } })));
+  assert.ok(shade(at(dome, 70, -70)) && pale(at(flatDome, 70, -70)));
 });

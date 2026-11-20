@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { circle, compileShot, group, perspectiveTo, pulse, rect, stroke, type LayerSpec, type ShotSpec, type StrokeItem } from '../src/index.ts';
-import { amber, aqua, at, draw, items, make, pale, red, refused } from './fixtures/bodies.ts';
+import { amber, aqua, at, differing, draw, items, make, pale, red, refused } from './fixtures/bodies.ts';
 
 // Depth order: a group that says sort: 'depth' draws its children far to near for the camera of each frame, and a
 // wall among them stretch by stretch, so that it goes round what stands inside it.
@@ -88,6 +88,18 @@ test('sort: a closed wall goes round what stands inside it: its far stretches be
   // Drawn as listed, a wall is one item with no part.
   const whole = (await items(town('wall first', {}))).filter((i): i is StrokeItem => i.kind === 'stroke');
   assert.ok(whole.length === 1 && whole[0]!.part === undefined);
+});
+
+test('sort: a wall drawn stretch by stretch looks as it does drawn whole, where its side turns over as well', async () => {
+  // Each stretch draws the edges of its own piece of the side, so that a wall of many stretches costs as many
+  // pieces, not as many whole walls; the stretches meet with no more than the smoothing of an edge between them.
+  const wavy = stroke({ id: 'w', points: [[-300, 0], [-150, -80], [0, 0], [150, 80], [300, 0]], width: 12, color: 'light.snow', side: 'accent.coral', rise: 50 });
+  const oval = stroke({ id: 'w', points: Array.from({ length: 48 }, (_, i) => [300 * Math.cos((Math.PI * i) / 24), 150 * Math.sin((Math.PI * i) / 24)] as [number, number]), closed: true, width: 12, color: 'light.snow', side: 'accent.coral', rise: 50 });
+  for (const wall of [wavy, oval]) {
+    const whole = await draw(make([wall]));
+    const cut = await draw(make([group({ id: 'g', sort: 'depth', children: [wall] })]));
+    assert.ok(differing(whole, cut, 60) < 60, `${differing(whole, cut, 60)} pixels differ`);
+  }
 });
 
 test('sort: what it cannot do is refused', () => {

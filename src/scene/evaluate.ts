@@ -31,7 +31,7 @@ import {
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { isRegion, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
-import { hull, ringOf, roofFaces, sideRing, spanOf, type Upright } from '../shape/solid.ts';
+import { hull, ringOf, roofFaces, sideRing, spanOf, wallOpenings, type Upright } from '../shape/solid.ts';
 import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -939,6 +939,34 @@ export function drawOrder(c: CompiledShot, layer: CLayer, t: number, places: Pla
 /** A wall among children that are drawn far to near is taken in no more stretches than this. */
 const WALL_STRETCHES = 200;
 
+/**
+ * Moves the cuts between the stretches of a wall with openings (lengths along its line, the first and the last its
+ * ends) that lie nearer an opening than `clear` from its middle (half the opening and half the wall: the end of a
+ * stretch is drawn that far round) to the middle of the plain wall between two openings, so that each opening is
+ * drawn whole by one stretch and no other covers it; two cuts that come together are one.
+ */
+function clearOpenings(cuts: number[], middles: readonly number[], clear: number): void {
+  const end = cuts[cuts.length - 1]!;
+  for (let j = 1; j + 1 < cuts.length; j++) {
+    const cut = cuts[j]!;
+    // The first opening whose clear room ends past the cut.
+    let k = 0;
+    while (k < middles.length && middles[k]! + clear <= cut) k++;
+    if (k === middles.length || middles[k]! - clear >= cut) continue;
+    const before = k > 0 ? (middles[k - 1]! + middles[k]!) / 2 : middles[k]! - clear;
+    const after = k + 1 < middles.length ? (middles[k]! + middles[k + 1]!) / 2 : middles[k]! + clear;
+    cuts[j] = cut - before <= after - cut ? before : after;
+  }
+  // In order, inside the line, and none twice.
+  let w = 1;
+  for (let j = 1; j < cuts.length; j++) {
+    const cut = j + 1 === cuts.length ? end : Math.min(end, cuts[j]!);
+    if (cut > cuts[w - 1]! + 1e-9) cuts[w++] = cut;
+    else if (j + 1 === cuts.length) cuts[w - 1] = end;
+  }
+  cuts.length = w;
+}
+
 /** The width a stroke is drawn with at a frame, in its own units: the one it was given, what a widthTo has made of it, or what holds it on screen (least). */
 function strokeWidthAt(n: CNode, t: number, seen: number): number {
   const node = n.node as StrokeNode;
@@ -958,6 +986,11 @@ function strokeWidthAt(n: CNode, t: number, seen: number): number {
  * from the point the camera stands over, in a flat layer by how high up the
  * screen it is. What is equally far keeps the order it was listed in; a link,
  * a label and an emitter have no place and are drawn last.
+ *
+ * A group whose shadows lie over its flat members (cast over: 'flat') draws
+ * the children with no rise in them first, as listed, and then the others, far
+ * to near when it sorts them; `casts` gives, by step, the group whose shadows
+ * are drawn before that step: the first of its raised children.
  */
 function sortedSteps(
   c: CompiledShot,
@@ -967,15 +1000,30 @@ function sortedSteps(
   world: readonly Xf[],
   places: Places | undefined,
   feet: Map<number, Foot> | undefined,
-): { order: number[]; parts: (readonly [number, number] | null)[] } {
+): { order: number[]; parts: (readonly [number, number] | null)[]; casts: Map<number, number> } {
   const order: number[] = [];
   const parts: (readonly [number, number] | null)[] = [];
+  const casts = new Map<number, number>();
+  // A child with a rise in it: a body, or something that holds one.
+  const raised = (index: number): boolean => {
+    for (let i = index; i <= c.nodes[index]!.subtreeEnd; i++) if (c.nodes[i]!.rise) return true;
+    return false;
+  };
   const emit = (index: number): void => {
     const n = c.nodes[index]!;
     order.push(index);
     parts.push(null);
+    const flatFirst = n.node.type === 'group' && n.node.cast?.over === 'flat';
+    // The children of a group whose shadows lie over its flat members: those first, as listed; the raised ones after the shadows.
+    const children: number[] = [];
+    for (let i = index + 1; i <= n.subtreeEnd; i = c.nodes[i]!.subtreeEnd + 1) {
+      if (flatFirst && raised(i)) children.push(i);
+      else if (flatFirst) emit(i);
+      else children.push(i);
+    }
+    if (flatFirst && children.length > 0) casts.set(order.length, index);
     if (!(n.node.type === 'group' && n.node.sort === 'depth')) {
-      for (let i = index + 1; i <= n.subtreeEnd; i = c.nodes[i]!.subtreeEnd + 1) emit(i);
+      for (const i of children) emit(i);
       return;
     }
     const stand = n.plane >= 0 ? places?.stands.get(n.plane) : undefined;
@@ -985,7 +1033,7 @@ function sortedSteps(
       return stand ? (p[0] - stand[0]) ** 2 + (p[1] - stand[1]) ** 2 : -p[1];
     };
     const units: { index: number; key: number; at: number; part: readonly [number, number] | null }[] = [];
-    for (let i = index + 1; i <= n.subtreeEnd; i = c.nodes[i]!.subtreeEnd + 1) {
+    for (const i of children) {
       const child = c.nodes[i]!;
       const type = child.node.type;
       if (type === 'link' || type === 'label' || type === 'emitter') {
@@ -1001,9 +1049,12 @@ function sortedSteps(
         if (upTo > 1e-9) {
           const width = strokeWidthAt(child, t, world[i]!.scale * zoom);
           const count = Math.max(1, Math.ceil(upTo / Math.max(2 * width, upTo / WALL_STRETCHES)));
-          for (let j = 0; j < count; j++) {
-            const from = (upTo * j) / count;
-            const to = (upTo * (j + 1)) / count;
+          const cuts = Array.from({ length: count + 1 }, (_, j) => (upTo * j) / count);
+          const openings = (child.node as StrokeNode).openings;
+          if (openings) clearOpenings(cuts, wallOpenings(table, openings), openings.width / 2 + width / 2);
+          for (let j = 0; j + 1 < cuts.length; j++) {
+            const from = cuts[j]!;
+            const to = cuts[j + 1]!;
             const mid = pathAt(table, (from + to) / 2);
             units.push({ index: i, key: foot ? far(xf, foot.k * mid.x + foot.x, foot.k * mid.y + foot.y) : far(xf, mid.x, mid.y), at: units.length, part: [from, to] });
           }
@@ -1022,7 +1073,7 @@ function sortedSteps(
   };
   // `base` lists every node with everything inside it straight after it.
   for (let i = 0; i < base.length; i += c.nodes[base[i]!]!.subtreeEnd - base[i]! + 1) emit(base[i]!);
-  return { order, parts };
+  return { order, parts, casts };
 }
 
 /** What a body of a group that says what detail its bodies are worth (detail) is drawn with at a frame. */
@@ -1175,11 +1226,35 @@ function castShadows(
             ring[2 * e + 1] = y;
           }
         }
+        // A hip on the outline: the shadow of each of its slopes, wound as the rest.
+        const slopes: number[][] = [];
+        if (roof) {
+          for (const face of roofFaces(shape, roof)) {
+            const q: number[] = [];
+            let turn = 0;
+            for (let s = 0; s < face.points.length; s += 3) {
+              const far = high + face.points[s + 2]! * unit;
+              onGround(face.points[s]!, face.points[s + 1]!);
+              q.push(gx + fall[0] * far, gy + fall[1] * far);
+            }
+            for (let s = 0; s < q.length; s += 2) {
+              const e = (s + 2) % q.length;
+              turn += q[s]! * q[e + 1]! - q[e]! * q[s + 1]!;
+            }
+            if (turn < 0) {
+              const back: number[] = [];
+              for (let s = q.length - 2; s >= 0; s -= 2) back.push(q[s]!, q[s + 1]!);
+              slopes.push(back);
+            } else slopes.push(q);
+          }
+        }
         if (convex) {
           const points: number[] = [];
           for (let s = 0; s < 2 * m; s += 2) points.push(ring[s]! + fall[0] * low, ring[s + 1]! + fall[1] * low, ring[s]! + fall[0] * high, ring[s + 1]! + fall[1] * high);
+          for (const q of slopes) points.push(...q);
           outlines.push(hull(points));
         } else {
+          outlines.push(...slopes);
           for (const far of [low, high]) {
             const end = new Float64Array(2 * m);
             for (let s = 0; s < 2 * m; s += 2) {
@@ -1295,9 +1370,19 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     // A layer with children drawn far to near takes them in that order, and a wall among them stretch by stretch.
     const steps = layer.sorted ? sortedSteps(c, listed, t, view.zoom, world, places, feet) : null;
     const order = steps ? steps.order : listed;
+    // The shadows of a group that lie over its flat members, held from the group until its first raised child: each with the list it goes into.
+    const shadowsHeld = new Map<number, { items: Item[]; item: Item }>();
+    const placeShadows = (group: number): void => {
+      const h = shadowsHeld.get(group);
+      if (!h) return;
+      h.items.push(h.item);
+      shadowsHeld.delete(group);
+    };
     for (let step = 0; step < order.length; step++) {
       const index = order[step]!;
       const part = steps ? steps.parts[step]! : null;
+      const landing = steps?.casts.get(step);
+      if (landing !== undefined) placeShadows(landing);
       const n = c.nodes[index]!;
       if (layer.ordered && n.parent < 0) {
         // The next node of the order: nothing of the one before it is open.
@@ -1410,7 +1495,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
               const blur = node.cast.soft * world[index]!.scale;
               let most = 0;
               for (const s of shadows) if (s.alpha > most) most = s.alpha;
-              items.push({ kind: 'group', node: n, opacity: node.cast.opacity, items: [{ kind: 'cast', node: n, alpha: most, shadows }], ...(blur > 0 ? { soft: blur } : {}) });
+              const item: Item = { kind: 'group', node: n, opacity: node.cast.opacity, items: [{ kind: 'cast', node: n, alpha: most, shadows }], ...(blur > 0 ? { soft: blur } : {}) };
+              // Over the flat members: drawn when the first raised one is.
+              if (node.cast.over === 'flat') shadowsHeld.set(index, { items, item });
+              else items.push(item);
             }
           }
           break;
@@ -1517,6 +1605,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
       }
     }
+    // Shadows whose raised bodies were not drawn at all go after the flat members still.
+    for (const group of [...shadowsHeld.keys()]) placeShadows(group);
     if (marks.length === 0) return { layer, view, items: prune(root) };
     const { items, hazes } = pruneWithHazes(root, marks);
     return { layer, view, items, hazes };

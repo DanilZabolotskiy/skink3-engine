@@ -178,7 +178,7 @@ export interface CLayer {
   readonly persp: PerspTrack | null;
   /** True when the layer orders what it draws: it is a perspective layer, or a node listed in it has a depth. */
   readonly ordered: boolean;
-  /** True when a group of the layer draws its children far to near (sort: 'depth'). */
+  /** True when a group of the layer draws its children in an order of its own: far to near (sort: 'depth'), or its flat ones first (cast over: 'flat'). */
   readonly sorted: boolean;
 }
 
@@ -229,6 +229,11 @@ type Placed = Extract<SceneNode, { type: 'shape' | 'group' | 'eye' | 'stroke' | 
 /** True for a group that draws its children far to near. */
 function sortsChildren(node: SceneNode): boolean {
   return node.type === 'group' && node.sort === 'depth';
+}
+
+/** True for a group that draws its children in an order of its own: far to near, or its flat ones first (cast over: 'flat'). */
+function ordersChildren(node: SceneNode): boolean {
+  return sortsChildren(node) || (node.type === 'group' && node.cast?.over === 'flat');
 }
 
 /** True for the nodes that have a place of their own: a position, a rotation and a size in their parent's space. */
@@ -700,6 +705,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         colors['color'] = col(node, 'color', node.color);
         if (node.pulseColor) colors['pulseColor'] = col(node, 'pulseColor', node.pulseColor);
         if (node.side) colors['side'] = col(node, 'side', node.side);
+        if (node.openings?.color) colors['openings'] = col(node, 'openings.color', node.openings.color);
         if (node.rise !== undefined && node.dash) fail(`${where}: stroke "${node.id}" has a rise and dashes; a wall is a solid line: leave dash out`);
         if (node.rise !== undefined && d.parent >= 0 && sortsChildren(drafts[d.parent]!.node) && strokePulses.has(d.index)) {
           fail(`${where}: pulse cannot target "${node.id}": it is a wall among children drawn far to near (sort: 'depth'), which is drawn stretch by stretch; run the light along a flat stroke drawn over the group`);
@@ -953,7 +959,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       tint: layer.tint ?? defaultTint(depth),
       persp: perspTracks[li]!,
       ordered: layer.perspective !== undefined || layerNodes[li]!.some((i) => nodes[i]!.depth !== null || (nodes[i]!.node as { depth?: number }).depth !== undefined),
-      sorted: layerNodes[li]!.some((i) => sortsChildren(nodes[i]!.node)),
+      sorted: layerNodes[li]!.some((i) => ordersChildren(nodes[i]!.node)),
     };
   });
 

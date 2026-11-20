@@ -16,8 +16,8 @@ import { pathAt, pathTable, type PathTable } from '../motion/paths.ts';
 import type { CNode } from '../scene/compile.ts';
 import { itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode, StrokeNode } from '../scene/types.ts';
-import { cornerOutline, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
-import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf } from '../shape/solid.ts';
+import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
+import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
 import { shapePath } from '../shape/path.ts';
 import { PLANE_NEAR_W0, planeCanvas } from './plane.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
@@ -374,8 +374,13 @@ function fullRise(n: CNode): number {
  * each row as far as the body is high at this frame.
  */
 function traceOpenings(to: Tracer, shape: ShapeSpec, o: OpeningsSpec, foot: Foot, full: number, turned: boolean): void {
+  traceColumns(to, openingColumns(shape, o), o, foot, full, turned);
+}
+
+/** Traces openings by their columns, in the units of the top they stand under: those of the faces turned to the viewer. */
+function traceColumns(to: Tracer, columns: Iterable<OpeningColumn>, o: OpeningsSpec, foot: Foot, full: number, turned: boolean): void {
   const rows = openingRows(o, full);
-  for (const col of openingColumns(shape, o)) {
+  for (const col of columns) {
     // A face is seen when its foot is drawn on the outward side of its top.
     const f = upright(foot, col.mx, col.my, 0);
     const seen = (f[0] - col.mx) * col.nx + (f[1] - col.my) * col.ny;
@@ -439,6 +444,17 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
   const light = vrot(paint.light, -item.xf.rot);
   const view = viewOf(foot);
   const top = highest(foot);
+  // A contrast stretches the scale of the light about the fill; without one, a slope is lit as it always was.
+  const c = roof.contrast;
+  const lit = (nx: number, ny: number, nz: number): number => {
+    const shade = shadeOf(nx, ny, nz, light, view);
+    return c === undefined ? shade : Math.min(SHADES.length - 1, Math.max(0, 2 + c * (shade - 2)));
+  };
+  // The slopes of a roof on a free outline may hide one another: they are drawn far to near, each in its tone.
+  if (isRegion(shape)) {
+    fillRegionRoof(easel, item, shape, roof, foot, paint, turned, lit);
+    return;
+  }
   // The slopes that are seen, by tone: the outlines of each tone are one path. All of them are also one path in the
   // first of the tones, filled first, so that nothing shows between two tones.
   const tones = new Map<number, number[][]>();
@@ -494,7 +510,7 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
     slopes.push(whole);
     const ways = face.normals;
     if (!ways) {
-      toned(Math.round(shadeOf(face.normal[0], face.normal[1], face.normal[2], light, view) * SHADE_STEPS), whole);
+      toned(Math.round(lit(face.normal[0], face.normal[1], face.normal[2]) * SHADE_STEPS), whole);
       continue;
     }
     // A face of a round roof: its corners are lit each by itself, and it is cut where one tone ends and the next starts.
@@ -502,7 +518,7 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
     let least = Infinity;
     let most = -Infinity;
     for (let j = 0; j < m; j++) {
-      const shade = shadeOf(ways[3 * j]!, ways[3 * j + 1]!, ways[3 * j + 2]!, light, view);
+      const shade = lit(ways[3 * j]!, ways[3 * j + 1]!, ways[3 * j + 2]!);
       corners.push(q[2 * j]!, q[2 * j + 1]!, shade);
       least = Math.min(least, shade);
       most = Math.max(most, shade);
@@ -525,6 +541,89 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
   for (const [step, list] of tones) {
     raw.fillStyle = shadeTone(paint, fill, step);
     fillTraced(easel, (to) => traceOutlines(to, list));
+  }
+}
+
+/**
+ * A hip roof on a free outline, in the units of its top: every slope turned to the viewer, far to near, so that a
+ * near wing hides the slopes behind it. All of them are first one path in the tone of the farthest, so that nothing
+ * shows between two slopes; then each run of slopes of one tone is one path.
+ */
+function fillRegionRoof(
+  easel: Easel,
+  item: ShapeItem,
+  shape: ShapeSpec,
+  roof: RoofSpec,
+  foot: Foot,
+  paint: Paint,
+  turned: boolean,
+  lit: (nx: number, ny: number, nz: number) => number,
+): void {
+  const top = highest(foot);
+  const grid = ROOF_GRID * Math.max(item.xf.scale, 1e-9);
+  const seen: { near: number; step: number; outline: number[] }[] = [];
+  for (const face of roofFaces(shape, roof)) {
+    const m = face.points.length / 3;
+    const q: number[] = [];
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let j = 0; j < m; j++) {
+      const p = upright(foot, face.points[3 * j]!, face.points[3 * j + 1]!, Math.min(top, foot.h + face.points[3 * j + 2]!));
+      q.push(Math.round(p[0] * grid) / grid, Math.round(p[1] * grid) / grid);
+    }
+    for (let j = 0; j < m; j++) {
+      const k = (j + 1) % m;
+      const cross = q[2 * j]! * q[2 * k + 1]! - q[2 * k]! * q[2 * j + 1]!;
+      area += cross;
+      // The middle of the face in its own plane, for the order.
+      const w = face.points[3 * j]! * face.points[3 * k + 1]! - face.points[3 * k]! * face.points[3 * j + 1]!;
+      cx += (face.points[3 * j]! + face.points[3 * k]!) * w;
+      cy += (face.points[3 * j + 1]! + face.points[3 * k + 1]!) * w;
+    }
+    if (turned ? area >= 0 : area <= 0) continue;
+    let plan = 0;
+    for (let j = 0; j < m; j++) {
+      const k = (j + 1) % m;
+      plan += face.points[3 * j]! * face.points[3 * k + 1]! - face.points[3 * k]! * face.points[3 * j + 1]!;
+    }
+    let mx: number;
+    let my: number;
+    if (Math.abs(plan) > 1e-12) {
+      mx = cx / (3 * plan);
+      my = cy / (3 * plan);
+    } else {
+      mx = 0;
+      my = 0;
+      for (let j = 0; j < m; j++) {
+        mx += face.points[3 * j]! / m;
+        my += face.points[3 * j + 1]! / m;
+      }
+    }
+    const [nx, ny, nz] = face.normal;
+    const mz = foot.h + face.points[2]! - (nx * (mx - face.points[0]!) + ny * (my - face.points[1]!)) / (nz || 1);
+    // How near the viewer the middle is: in a flat layer along the way the viewer looks, in a plane by its distance from the camera.
+    const near = foot.uh === 0 ? mx * foot.ux + my * foot.uy + mz : -Math.hypot(mx - foot.ux, my - foot.uy, mz - foot.uh);
+    seen.push({ near, step: Math.round(lit(nx, ny, nz) * SHADE_STEPS), outline: q });
+  }
+  if (seen.length === 0) return;
+  seen.sort((a, b) => a.near - b.near);
+  const fill = itemFill(item);
+  const { raw } = easel;
+  const base = seen[0]!.step;
+  raw.fillStyle = shadeTone(paint, fill, base);
+  fillTraced(easel, (to) => traceOutlines(to, seen.map((s) => s.outline)));
+  let from = 0;
+  // The farthest run of slopes in the tone of the path under them is already there.
+  while (from < seen.length && seen[from]!.step === base) from++;
+  while (from < seen.length) {
+    const step = seen[from]!.step;
+    let to = from;
+    while (to < seen.length && seen[to]!.step === step) to++;
+    const run = seen.slice(from, to).map((s) => s.outline);
+    raw.fillStyle = shadeTone(paint, fill, step);
+    fillTraced(easel, (tr) => traceOutlines(tr, run));
+    from = to;
   }
 }
 
@@ -1007,7 +1106,8 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   }
   if (points.length < 2) return;
   const { xf } = item;
-  const path = sidePath(points, !item.part && item.drawn >= 1 - 1e-9 && node.path.closed, foot, false);
+  const closed = !item.part && item.drawn >= 1 - 1e-9 && node.path.closed;
+  const path = sidePath(points, closed, foot, false);
   const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
   ctx.save();
   ctx.translate(xf.x, xf.y);
@@ -1019,8 +1119,106 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.fill(path);
-  ctx.stroke(path);
+  // A stretch of a wall among sorted children takes the short route; a whole wall is stroked as it always was.
+  ctx.stroke(item.part ? sideEdges(points, closed, foot) : path);
   ctx.restore();
+  if (node.openings) {
+    // A whole closed wall goes on past its seam; a part of one is cut at its ends.
+    const whole = !item.part && item.drawn >= 1 - 1e-9;
+    fillWallOpenings(ctx, item, foot, paint, node.openings, table, whole ? null : [item.part ? item.part[0] : 0, item.part ? Math.min(item.part[1], upTo) : upTo]);
+  }
+}
+
+/** An opening of a wall has a point across it to each this share of its width. */
+const WALL_ACROSS = 1 / 8;
+
+/**
+ * The openings of a wall, on the face of it turned to the viewer: each face stands half the width of the line out from
+ * its middle. With `span` only what lies between those two lengths along the line, so that an opening that two
+ * stretches of a wall share is drawn half with each.
+ */
+function fillWallOpenings(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot, paint: Paint, o: OpeningsSpec, table: PathTable, span: readonly [number, number] | null): void {
+  const half = itemWidth(item) / 2;
+  const L = table.length;
+  const columns: OpeningColumn[] = [];
+  const add = (a: number, s0: number, s1: number): void => {
+    const steps = Math.max(1, Math.ceil((s1 - s0) / (o.width * WALL_ACROSS) - 1e-9));
+    const mid = pathAt(table, (s0 + s1) / 2);
+    const mnx = Math.sin(mid.angle);
+    const mny = -Math.cos(mid.angle);
+    for (const side of [1, -1]) {
+      const across = new Float64Array(3 * (steps + 1));
+      for (let j = 0; j <= steps; j++) {
+        const s = s0 + ((s1 - s0) * j) / steps;
+        const p = pathAt(table, s);
+        across[3 * j] = p.x + side * half * Math.sin(p.angle);
+        across[3 * j + 1] = p.y - side * half * Math.cos(p.angle);
+        across[3 * j + 2] = (s - a) / o.width;
+      }
+      columns.push({ across, mx: mid.x + side * half * mnx, my: mid.y + side * half * mny, nx: side * mnx, ny: side * mny });
+    }
+  };
+  for (const middle of wallOpenings(table, o)) {
+    if (!span) {
+      add(middle - o.width / 2, middle - o.width / 2, middle + o.width / 2);
+      continue;
+    }
+    for (const lap of table.closed ? [-L, 0, L] : [0]) {
+      const a = middle + lap - o.width / 2;
+      const s0 = Math.max(a, span[0]);
+      const s1 = Math.min(a + o.width, span[1]);
+      if (s1 - s0 > 1e-6) add(a, s0, s1);
+    }
+  }
+  if (columns.length === 0) return;
+  const { xf } = item;
+  const easel = easelAt(easelOf(ctx), xf);
+  const { raw } = easel;
+  const colors = item.node.colors;
+  raw.save();
+  raw.translate(xf.x, xf.y);
+  raw.rotate(xf.rot);
+  raw.scale(xf.scale, xf.scale);
+  raw.fillStyle = colors['openings'] ? paint.tone('base', colors['openings']) : colors['side'] ? paint.tone('shadow2', colors['side']) : paint.tone('shadow3', colors['color']!);
+  fillTraced(easel, (to) => traceColumns(to, columns, o, foot, fullRise(item.node), foot.uh < 0));
+  raw.restore();
+}
+
+/**
+ * The edges of the side of a wall that can lie on its outline: the line at its top, the line at its foot, and the
+ * upright from top to foot at each end and wherever the pieces of the side turn over, that is where the side is seen
+ * edge on. The upright between two pieces that wind one way lies inside them both and is left out. Stroked as wide as
+ * the line, over the pieces filled, they cover what a stroke round every piece covers, but for the smoothing of an
+ * edge here and there; a stroke round every piece lays as many bands over each other as the line has samples across
+ * its width, and on the GPU that cost each stretch of a wall among sorted children some milliseconds.
+ */
+function sideEdges(points: readonly Vec2[], closed: boolean, foot: Foot): Path2D {
+  const path = new Path2D();
+  const n = points.length;
+  const low = (p: Vec2): Vec2 => [foot.k * p[0] + foot.x, foot.k * p[1] + foot.y];
+  for (const line of [points, points.map(low)]) {
+    line.forEach((p, i) => (i === 0 ? path.moveTo(p[0], p[1]) : path.lineTo(p[0], p[1])));
+    if (closed) path.closePath();
+  }
+  // Twice the area of the piece from the point i to the next, as sidePath works it out: its sign says which way it winds.
+  const area = (i: number): number => {
+    const a = points[i]!;
+    const b = points[(i + 1) % n]!;
+    const [ax, ay] = low(a);
+    const [bx, by] = low(b);
+    return a[0] * b[1] - b[0] * a[1] + (b[0] * by - bx * b[1]) + (bx * ay - ax * by) + (ax * a[1] - a[0] * ay);
+  };
+  const pieces = closed ? n : n - 1;
+  for (let j = 0; j < n; j++) {
+    const before = j > 0 ? area(j - 1) : closed ? area(n - 1) : Number.NaN;
+    const after = j < pieces ? area(j) : Number.NaN;
+    if ((before > 0 && after > 0) || (before < 0 && after < 0)) continue;
+    const p = points[j]!;
+    const q = low(p);
+    path.moveTo(p[0], p[1]);
+    path.lineTo(q[0], q[1]);
+  }
+  return path;
 }
 
 /** A stroke: a line along a path, solid or dashed, as far as it is drawn, and the lights that run along it. A wall that stands up is drawn over its side. */
