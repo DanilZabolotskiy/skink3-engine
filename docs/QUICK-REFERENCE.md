@@ -52,7 +52,7 @@ capsule({ id: 'arm', fill: 'mid.mist', length: 46, r: 8, /**/ origin: 'center' }
 polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /**/ radius: 8 }); // 0.16 r; or points: [[x, y], ...], radius: 0
 rect({ id: 'tray', fill: 'mid.mist', w: 240, h: 50, /**/ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed: 1 });
-region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
+region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000: a country (skink3-geo worldOnStage)
 group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen)
@@ -65,8 +65,8 @@ globe({ id: 'earth', r: 300, fill: 'dark.indigo', layers: [{ rings: [globeBlob({
 globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed: 1 }); // a cloud
 ```
 
-- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`). All but `region` are convex.
-- `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
+- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`). All but `region` are convex.
+- `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `globe`: layer `drift` (deg/s), `soft`; `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride the turn, hide behind it, head along `rotation`; a `[lon, lat]` `stroke` lies on it.
 - `label`: tail at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; a shape's child lies on it; in a `parallax: 0` layer, the frame's.
 
@@ -112,8 +112,8 @@ blink('pupil', { at: 3 });
 stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
 ```
 
-- A negative `at` (to -600): under way at frame 0.
-- No key is anchored to a word: take `at` from word times; `arrive`, `land`, `at + dur` are exact.
+- Negative `at` (to -600): under way at frame 0.
+- No key is tied to a word: take `at` from word times; `arrive`, `land`, `at + dur` are exact.
 - `profile`: `'settle'` (`moveTo`): back away, shoot past, settle. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: share of `dur`, 0.3).
 
 ## Effects
@@ -180,7 +180,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] });
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`**; **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **A globe**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`**; **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **A globe**; **A world map**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 

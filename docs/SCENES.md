@@ -1570,6 +1570,38 @@ travel('craft', { at: 0.5, path: ROUND, orient: true, speeds: [[0, 1], [1.5, 40]
 - **Its cost.** The outlines are clipped to the near side at every frame. The example `examples/globe` (the Earth at 1:110m and the Moon, about 23 000 points of outline and 1500 lights) draws a 1080p frame in about 50 ms on the CPU, less than the example `examples/space`.
 - Left out, nothing is drawn differently: a scene without a globe is the data it was.
 
+## A world map
+
+A flat map of the whole world seen at once, with the outline of every country, or of one country among its neighbours, is drawn with nodes the engine already has: each country a flat `region`, its borders strokes, a shading a clip. The outlines come from real data: skink3-geo's `world.mjs` builds a map from Natural Earth's admin-0 countries (the whole world on the Equal Earth projection, or the countries of a box round a place, on the plane of its region), with every country by its code, each land border once and the large lakes, all thinned together so that two neighbours share their border point for point. Its `worldOnStage(view, world)` puts the map on the stage of a view (`fitView`): every outline in stage units, cut to the view and a margin, a border still the same points in both its countries, no outline crossing itself. A scene, or a script beside it, writes those outlines to a file the scene reads. The engine holds no outlines and no colours of its own.
+
+```ts
+const MAP = JSON.parse(readFileSync(new URL('./world.json', import.meta.url), 'utf8'));   // worldOnStage's output
+const flat = (id, rings, fill) => rings.map((points, i) => region({ id: `${id}-${i}`, points, smooth: 0, fill, lit: false }));
+const PICKED = ['bra', 'cod', 'idn'];                                                       // countries by their codes
+layer({ id: 'map', depth: 0, nodes: [
+  region({ id: 'sea', points: MAP.sea, smooth: 0, fill: 'dark.sea', lit: false }),          // the edge of the world
+  ...flat('land', MAP.land, 'mid.sand'),                                                     // under the countries: no seams
+  ...MAP.countries.flatMap((c) => flat(c.id, c.rings, 'mid.sand')),
+  circle({ id: 'spread', at: [12, -14], r: 13, soft: 1.6, fill: 'accent.coral', lit: false, opacity: 0 }),
+  group({ id: 'wash', clipTo: 'spread', opacity: 0.5, children: flat('wash', MAP.land, 'accent.coral') }),
+  ...PICKED.map((id) => group({ id: `deep-${id}`, opacity: 0, children: flat(`deep-${id}`, MAP.countries.find((c) => c.id === id).rings, 'accent.ember') })),
+  ...flat('lake', MAP.lakes, 'mid.lake'),                                                    // water over the land and its wash
+  group({ id: 'borders', opacity: 0.5, children: MAP.borders.flatMap((b) => b.lines.map((points, i) => stroke({ id: `border-${b.id}-${i}`, points, smooth: 0, color: 'dark.border', width: 1.1 }))) }),
+] }),
+// in the timeline:
+scaleTo('spread', { at: 0.3, to: 90, dur: 5.6, profile: 'ease' }),                         // the shading spreads over the land
+stagger(PICKED.map((id) => `deep-${id}`), { at: 4.4, each: 0.22 }, (id, at) => fadeTo(id, { at, to: 0.95, dur: 0.9 })),
+```
+
+- **Countries.** Each ring of a country is a flat `region` with `smooth: 0` and `lit: false`, which takes up to 4000 points (the largest land of the whole world on a stage 1800 wide has about 3200). A region has no holes: an enclave is a country of its own, drawn after the one round it, and the inland seas (`gaps`) and the lakes are drawn over the land. Pick countries by their codes (`fra`, `bra`: Natural Earth's, in lower case).
+- **No seams.** Two regions that meet along one edge leave a faint line of the background where their antialiased edges overlap. Draw the land as one under the countries, in a colour near theirs, and the line blends into it; the borders drawn over them close it.
+- **A shading that spreads.** The land again, in the shading's colour, in a group clipped to an invisible soft circle (`clipTo` a shape with `soft`), which `scaleTo` grows: the shading fades out across the circle's edge and spreads with it. A group per country picked, faded in on a `stagger`, deepens them to their real borders; `fillTo` turns one country's own region to another colour.
+- **Borders.** The map's `borders`, each land border once, as `stroke`s with `smooth: 0`, faint over the countries. Fade them as one group, not each stroke: a stroke with an `opacity` of its own is drawn as a layer of its own, and the 330 borders of the world, each faded, drew a frame more than ten times slower on the CPU. A country's own outline is a closed stroke along its ring: `drawOn` draws it round.
+- **One country among its neighbours.** A map of a box (`world.mjs --bbox`) fitted to cover the stage (a little closer, `zoom: 1.04`, so the land still fills the frame when the camera aims at the country) holds every country of the box, cut to its edge: the country in the middle whole, its neighbours as far as the frame reaches. It has no edge of the world: a rectangle of sea behind the land. Tints picked so that no two neighbours share one come from the map's `borders`.
+- **Its cost.** The example `examples/world` (the whole world: about 18 000 points of countries, 11 000 of land drawn twice, 3800 of borders, about 1300 nodes) draws a 1080p frame in about a tenth of a second on the CPU, less on the GPU. A clip to a shape with more than a few hundred points needs `clipMask` (see Clipping); a soft circle does not.
+- The example `examples/world` holds both: `scene.ts` (the whole world, a shading spreading from the Gulf of Guinea, the equator and the countries it crosses) and `country.ts` (Slovenia among its neighbours, its border drawn round it and its name inside it); `prepare.mjs` writes their outlines from the library's examples.
+- Nothing in the engine changed for it: a scene without a world map is the data it was.
+
 ## Springs: secondary motion
 
 `follow` (any shape, group or label) and `sway` (a capsule with `origin: 'start'`) take a preset name or `{ f, z, r }`:
