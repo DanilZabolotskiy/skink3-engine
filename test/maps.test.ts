@@ -37,9 +37,9 @@ function coast(n: number): Vec2[] {
   return [...line, [6000, 6000], [6000, -6000]];
 }
 
-test('maps: what is clipped to a long outline stays inside it, in a plane and on a flat layer', async () => {
+test('maps: what is clipped to a long outline with clipMask stays inside it, in a plane and on a flat layer', async () => {
   const band = (points: Vec2[]): LayerSpec['nodes'] => [
-    region({ id: 'land', points, fill: 'mid.ocean', lit: false }),
+    region({ id: 'land', points, fill: 'mid.ocean', lit: false, clipMask: true }),
     rect({ id: 'band', w: 30000, h: 80, radius: 0, fill: 'light.snow', lit: false, clipTo: 'land' }),
   ];
   for (const n of [400, 2000]) {
@@ -56,11 +56,11 @@ test('maps: what is clipped to a long outline stays inside it, in a plane and on
   assert.ok(white(at(flat, 400, 0)) && dark(at(flat, -400, 0)), 'on a flat layer');
 });
 
-test('maps: the blur of a soft group clipped to a long outline stays inside it', async () => {
+test('maps: the blur of a soft group clipped to a long outline with clipMask stays inside it', async () => {
   const spec = make(
     [
       floor([
-        region({ id: 'land', points: coast(2000), fill: 'mid.ocean', lit: false }),
+        region({ id: 'land', points: coast(2000), fill: 'mid.ocean', lit: false, clipMask: true }),
         group({ id: 'woods', soft: 40, clipTo: 'land', children: [rect({ id: 'wood', w: 1800, h: 160, radius: 0, fill: 'accent.coral', lit: false })] }),
       ]),
     ],
@@ -154,7 +154,7 @@ test('maps: relief shades the slopes turned to the light and from it, smoothly a
 test('maps: relief lies on a plane and is clipped like any shape', async () => {
   const values = Array.from({ length: 16 * 16 }, (_, i) => 60 * Math.sin((i % 16) / 2.5) * Math.cos(Math.floor(i / 16) / 3));
   const hills = (extra: object = {}): ReturnType<typeof relief> => relief({ id: 'h', w: 1200, h: 1200, heights: { cols: 16, rows: 16, values }, dark: 'deep.abyss', bright: 'light.snow', tints: [[-60, 'mid.jade'], [60, 'light.cream']], ...extra });
-  const land = region({ id: 'land', points: island(2000, 0.5), fill: 'mid.ocean', lit: false });
+  const land = region({ id: 'land', points: island(2000, 0.5), fill: 'mid.ocean', lit: false, clipMask: true });
   const raw = await draw(make([floor([land, hills({ clipTo: 'land' })])], [], seen(90)));
   assert.ok(!dark(at(raw, 0, 0)) && dark(at(raw, 500, 0)), 'drawn inside the land and not past it');
   // Tilted, its far half is drawn smaller than its near half.

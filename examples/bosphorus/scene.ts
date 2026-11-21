@@ -407,7 +407,7 @@ export default shot({
             }),
             // The trodden ground of the villages, under the sea where it reaches the shore.
             ...VILLAGES.map((v, i) => circle({ id: `hamlet-${i}`, at: v.at, r: v.reach * 0.85, fill: 'mid.town', lit: false, soft: 26, opacity: 0.55 })),
-            region({ id: 'sea', points: SEA, smooth: 0, fill: 'deep.sea', lit: false }),
+            region({ id: 'sea', points: SEA, smooth: 0, fill: 'deep.sea', lit: false, clipMask: true }),
             group({ id: 'shallows', clipTo: 'sea', soft: 14, children: [stroke({ id: 'shallow', points: SEA, closed: true, smooth: 0, color: 'mid.shallow', width: 34 })] }),
             stroke({ id: 'coast', points: SEA, closed: true, smooth: 0, color: 'light.foam', width: 2.4 }),
             ...ripples,

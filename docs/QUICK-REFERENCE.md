@@ -62,7 +62,7 @@ group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min:
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
-- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's), `soft` (a blurred edge; groups too), `rise` (a body that high; + `side`; strokes too), `stands` (a sail on a plane). `relief`: hill shading. All but `region` are convex; a `group` composes them.
+- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's), `soft` (a blurred edge; groups too), `rise` (a body that high; + `side`; strokes too), `stands` (a sail). `relief`: hills. All but `region` are convex; a `group` composes them.
 - `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `label`: its tail points at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; a shape's child lies on it; in a `parallax: 0` layer, the frame's.
 
@@ -83,7 +83,7 @@ A dynamic body waits, touching nothing, till `release` (s, from -`prewarm`), the
 ```ts
 moveTo('dot', { at: 1.2, to: [260, -40], /**/ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance. Or arrive: when it first reaches `to`
 hop('buddy', { at: 4, to: [610, 130], /**/ dur: 0.6, height: 80 }); // a parabola; or land:
-travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // speed: units/s, or dur, or speeds: [[s, speed], ...]; + roll: a wheel's radius; [x, y, h]: a height
+travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // speed: units/s, or dur, or speeds: [[s, speed], ...]; + roll: wheel radius; [x, y, h]: heights
 turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); for to: speed (deg/s) or speeds; about: 'x' | 'y': a plane group's hinge
 scaleTo('hex', { at: 3, to: 1.5, /**/ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes. + profile: no overshoot
 fadeTo('hex', { at: 4, to: 0.3, /**/ dur: 0.5 });
@@ -121,7 +121,7 @@ rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 
 ```
 
 - An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (s of way as a tail).
-- `cover`: hides the glow drawn before it. `backdrop`: labels may lie on it. `clipTo`: only inside that shape, fading at a `soft` edge. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
+- `cover`: hides the glow drawn before it. `backdrop`: labels may lie on it. `clipTo`: only inside that shape, fading at a `soft` edge; a coast: `clipMask` on it. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
 
 ## Sound
 

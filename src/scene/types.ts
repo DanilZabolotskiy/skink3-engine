@@ -135,6 +135,8 @@ export interface ShapeNode extends NodeBase {
   readonly stands?: boolean;
   /** Id of a shape of the same layer: this node and what is in it are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** What is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip (which may drop a long one). */
+  readonly clipMask?: boolean;
   /** The shape is a content: it fills its own outline from the bottom up to a level. */
   readonly level?: LevelSpec | null;
   /**

@@ -12,7 +12,7 @@ import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
-import { outlineOf, REGION_MAX_POINTS, shapeExtent } from '../shape/geometry.ts';
+import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
   drawCast,
   drawEye,
@@ -105,17 +105,14 @@ interface LayerTarget {
 
 /** A canvas larger than the frame by `pad` pixels on every side, set up to draw in layer space. */
 /**
- * The most points of an outline that things are clipped to the way skia clips. Skia cuts every clip out of the canvas
- * by an operation on paths, and on a long outline that is not straight (a coast of several hundred points) the
- * operation fails and skia drops the clip without a word: everything is drawn unclipped. A clip to a longer region is
- * made with a mask instead, as a clip with a soft edge is, so its outline may have as many points as a region has.
+ * Whether things are clipped to a shape by a mask of its outline (clipMask), not by Skia's clip. Skia cuts every clip
+ * out of the canvas by an operation on paths, and on a long outline that is not straight (a coast of several hundred
+ * points) the operation may fail, and Skia drops the clip without a word: everything is drawn unclipped. A mask holds
+ * for any outline a region may have. Opt-in: a clip to a shape without it is made as it always was.
  */
-export const CLIP_MAX_POINTS = REGION_MAX_POINTS;
-
-/** Whether things are clipped to an outline too long for skia to clip to (CLIP_MAX_POINTS). */
-export function longClip(item: ClipItem): boolean {
-  const shape = itemShape(item);
-  return shape.kind === 'polygon' && shape.smooth !== undefined && shape.points.length > CLIP_MAX_POINTS;
+export function maskedClip(item: ClipItem): boolean {
+  const node = item.node.node;
+  return node.type === 'shape' && node.clipMask === true;
 }
 
 function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingContext2D } {
@@ -170,10 +167,10 @@ function drawItems(
       }
       case 'clip': {
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
-        if (softPx > 0.05 || longClip(item)) {
+        if (softPx > 0.05 || maskedClip(item)) {
           // A clip with a soft edge: the items are drawn whole into a picture of their own, and that picture is kept
-          // as far as the blurred outline of the shape is there. A clip to a long outline is drawn the same way with a
-          // sharp edge: skia cannot clip to it (see longClip).
+          // as far as the blurred outline of the shape is there. A clip by a mask (clipMask) is drawn the same way with a
+          // sharp edge (see maskedClip).
           const inner = { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) };
           const own = (): { canvas: Canvas; ctx: CanvasRenderingContext2D } => {
             const made = layerCanvas(inner);
@@ -272,7 +269,7 @@ function drawGlow(
   covers: boolean,
   seen: ReadonlyMap<LeafItem, number> | null,
   state: { drawn: boolean } = { drawn: false },
-  /** Opens a blank canvas the size of the one drawn on, for what is clipped to a long outline. */
+  /** Opens a blank canvas the size of the one drawn on, for what is clipped by a mask (clipMask). */
   open?: () => { canvas: Canvas; ctx: CanvasRenderingContext2D },
 ): void {
   for (const item of items) {
@@ -281,8 +278,8 @@ function drawGlow(
         drawGlow(ctx, item.items, paint, covers, seen, state, open);
         break;
       case 'clip':
-        if (longClip(item) && open) {
-          // Too long an outline for skia to clip to: the glow is drawn into a canvas of its own, kept inside the outline.
+        if (maskedClip(item) && open) {
+          // A clip by a mask (clipMask): the glow is drawn into a canvas of its own, kept inside the outline.
           const { canvas, ctx: gx } = open();
           const m = ctx.getTransform();
           gx.setTransform(m);

@@ -246,7 +246,7 @@ export default shot({
               dark: 'mid.slope', bright: 'light.sun', amount: 0.85,
               tints: [[100, 'mid.plain'], [300, 'mid.plain'], [550, 'mid.hill'], [1000, 'mid.ochre']],
             }),
-            region({ id: 'city', points: WALLS, smooth: 0, fill: 'mid.ground', lit: false }),
+            region({ id: 'city', points: WALLS, smooth: 0, fill: 'mid.ground', lit: false, clipMask: true }),
             relief({ id: 'city-relief', w: W, h: H, heights: { cols: file.cols, rows: file.rows, values: heights }, vertical: 0.09, dark: 'mid.slope', bright: 'light.sun', amount: 0.85, clipTo: 'city' }),
             ...RIVER.map((r, i) => region({ id: `river-${i}`, points: r, smooth: 0, fill: 'deep.river', lit: false })),
             ...RIVER.map((r, i) => stroke({ id: `bank-${i}`, points: r, closed: true, smooth: 0, color: 'mid.water', width: 2.5 })),

@@ -273,6 +273,13 @@ export interface ShapeOptions {
   /** Id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline. */
   clipTo?: string;
   /**
+   * What is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip: Skia cuts a clip out
+   * of the canvas by an operation on paths, which may fail on an outline of several hundred bends (a coast) and drop the
+   * clip without a word. A soft group clipped to it keeps its blur inside it. Costs a picture of the frame's size for
+   * each clip. Default false: a clip is made as it always was.
+   */
+  clipMask?: boolean;
+  /**
    * Makes the shape a content that fills its outline from the bottom: a number
    * 0..1 (how full it is at the start), or { at, wave } with a ripple of the
    * surface, wave: { amp, length?, speed? }. Animate it with levelTo().
@@ -319,7 +326,7 @@ export interface ShapeOptions {
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze', 'roof', 'openings', 'stands',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze', 'roof', 'openings', 'stands', 'clipMask',
 ];
 
 /** What a heat haze is when only its amount is given. */
@@ -480,16 +487,18 @@ function level(where: string, value: ShapeOptions['level']): LevelSpec {
 }
 
 /** Options that are written into a node only when they are given, so that a node without them is the data it always was. */
-function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level']; stands?: boolean; rise?: unknown }): {
+function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level']; stands?: boolean; rise?: unknown; clipMask?: boolean }): {
   cover?: boolean;
   backdrop?: boolean;
   clipTo?: string;
   level?: LevelSpec;
   stands?: boolean;
+  clipMask?: boolean;
 } {
   if (o.stands && o.rise !== undefined) fail(where, 'stands is for a flat shape that stands up from its plane; a body with a rise stands already: leave one out');
   return {
     ...(o.stands ? { stands: flag(where, 'stands', o.stands) } : {}),
+    ...(o.clipMask ? { clipMask: flag(where, 'clipMask', o.clipMask) } : {}),
     ...(o.cover === undefined ? {} : { cover: flag(where, 'cover', o.cover) }),
     ...(o.backdrop === undefined ? {} : { backdrop: flag(where, 'backdrop', o.backdrop) }),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),

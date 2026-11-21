@@ -429,6 +429,7 @@ All shape factories take these options:
 | `cover` | `false` | an opaque thing in front: glow does not shine through it (see Covers) |
 | `backdrop` | `false` | labels may lie over it without a covers-node warning: ground, a wall, a backdrop |
 | `clipTo` | none | id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline (see Clipping) |
+| `clipMask` | `false` | what is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip, which may drop an outline of several hundred bends (a coast) without a word (see Clipping, A long outline) |
 | `level` | none | makes the shape a content that fills its outline from the bottom (see Levels) |
 | `soft` | none | 0 to 200 units: the shape and what is in it are drawn as one picture and blurred this far, so its edge fades out (see A soft edge) |
 | `rise` | none | 0 to 2000 units: the shape is the top of a body that stands this high on the ground; `riseTo` changes it (see A height: bodies that stand on the ground) |
@@ -481,7 +482,7 @@ emitter({ id: 'snow', at: [0, -200], area: [600, 10], rate: 40, life: 6, size: 5
 - Glow is clipped as well, and a glowing node lifts the background only by the share of it that is inside. Wholly outside its clip a node leaves nothing in the picture.
 - Clipped to a shape with a `level`, a node is drawn only in the filled part of it: fizz in a drink.
 - Clipped to a shape with `soft`, a node fades out across the edge of that shape instead of being cut there (see A soft edge).
-- **A long outline.** Skia cuts a clip out of the canvas by an operation on paths, and on an outline of several hundred bends (a coast) that operation may fail, and the clip would be dropped without a word. So a node clipped to a region of more than 600 points is drawn into a picture of its own and kept inside the outline by a mask of it, as a clip to a soft shape is, with a sharp edge: it holds for the 4000 points of a flat region, in a plane of a perspective layer too, and a `soft` group clipped to it keeps its blur inside it. It costs a picture the size of the frame for each such clip.
+- **A long outline: `clipMask`.** Skia cuts a clip out of the canvas by an operation on paths, and on an outline of several hundred bends (a coast) that operation may fail, and the clip is then dropped without a word. Give the shape that clips `clipMask: true`, and what is clipped to it is drawn into a picture of its own and kept inside the outline by a mask of it, as a clip to a soft shape is, with a sharp edge: it holds for the 4000 points of a flat region, in a plane of a perspective layer too, and a `soft` group clipped to it keeps its blur inside it. It costs a picture the size of the frame for each such clip. Give it to every shape with more than a few hundred points that something is clipped to; without it a clip is made as it always was.
 - A node cannot be clipped to itself or to something inside it. Labels and eyes take no `clipTo`; put an eye in a group and clip that.
 
 #### Levels
