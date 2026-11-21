@@ -56,6 +56,7 @@ import { pathTable } from '../motion/paths.ts';
 import { perspectiveSubject, type CompiledShot } from '../scene/compile.ts';
 import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
 import { CAMERA_SUBJECT, STAGE_H, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
+import { globeTurn } from '../scene/globe.ts';
 import { restForms } from '../scene/outline.ts';
 import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
@@ -494,10 +495,13 @@ export function relativeSteps(series: MotionSeries, s: PlacedSeries): { dx: Floa
     }
   } else if (s.node.parent >= 0) {
     const parent = series.placed[s.node.parent]!;
+    // A globe's turn is in its rotation, but it turns its surface, not the frame its children are placed in.
+    const holder = parent.node.node;
+    const spin = holder.type === 'shape' && holder.globe ? holder.globe.spin : null;
     let px = 0;
     let py = 0;
     for (let f = 0; f < F; f++) {
-      const a = parent.rot[f]! * DEG;
+      const a = (parent.rot[f]! - (spin === null ? 0 : globeTurn(spin, f / FPS))) * DEG;
       const x = s.ownX[f]! * Math.cos(a) - s.ownY[f]! * Math.sin(a);
       const y = s.ownX[f]! * Math.sin(a) + s.ownY[f]! * Math.cos(a);
       if (f > 0) {

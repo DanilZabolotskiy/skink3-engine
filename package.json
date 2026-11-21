@@ -27,7 +27,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test",
-    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts && node bin/skink3.mjs check examples/flow/scene.ts && node bin/skink3.mjs check examples/atlas/scene.ts && node bin/skink3.mjs check examples/drive/scene.ts && node bin/skink3.mjs check examples/space/scene.ts && node bin/skink3.mjs check examples/air/scene.ts && node bin/skink3.mjs check examples/town/scene.ts",
+    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts && node bin/skink3.mjs check examples/flow/scene.ts && node bin/skink3.mjs check examples/atlas/scene.ts && node bin/skink3.mjs check examples/drive/scene.ts && node bin/skink3.mjs check examples/space/scene.ts && node bin/skink3.mjs check examples/air/scene.ts && node bin/skink3.mjs check examples/town/scene.ts && node bin/skink3.mjs check examples/globe/scene.ts",
     "demo:check": "node bin/skink3.mjs check examples/demo/scene.ts",
     "demo:bake": "node bin/skink3.mjs bake examples/demo/scene.ts",
     "demo:still": "node bin/skink3.mjs still examples/demo/scene.ts --frame 450",
@@ -43,6 +43,8 @@
     "drive:sheet": "node bin/skink3.mjs sheet examples/drive/scene.ts",
     "space:check": "node bin/skink3.mjs check examples/space/scene.ts",
     "space:sheet": "node bin/skink3.mjs sheet examples/space/scene.ts",
+    "globe:check": "node bin/skink3.mjs check examples/globe/scene.ts",
+    "globe:sheet": "node bin/skink3.mjs sheet examples/globe/scene.ts",
     "flow:render": "node bin/skink3.mjs render examples/flow/scene.ts",
     "bench:render": "node bench/render.mjs 1920 gpu 20",
     "bench:phys": "node bench/phys.mjs"

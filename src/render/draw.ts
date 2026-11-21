@@ -20,6 +20,7 @@ import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/g
 import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
 import { shapePath } from '../shape/path.ts';
 import { liftedContext, PLANE_NEAR_W0, planeCanvas } from './plane.ts';
+import { drawGlobe } from './globe.ts';
 import { drawRelief } from './relief.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 import { splitRuns, type RunSpan } from '../text/runs.ts';
@@ -725,6 +726,10 @@ export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint:
     drawRelief(ctx, item, (hex) => paint.tone('base', hex));
     return;
   }
+  if ((item.node.node as ShapeNode).globe) {
+    drawGlobe(ctx, item, (hex) => paint.tone('base', hex));
+    return;
+  }
   const lift = item.foot?.lift;
   if (lift) {
     // A body taller than the camera is high: at its whole height, every point mapped by itself (liftedContext).
@@ -1003,6 +1008,16 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
     ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
   }
   ctx.beginPath();
+  if (item.runs) {
+    // A line on a globe: the parts of it that face the viewer.
+    for (const run of item.runs) {
+      ctx.moveTo(run[0]!, run[1]!);
+      for (let i = 2; i < run.length; i += 2) ctx.lineTo(run[i]!, run[i + 1]!);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (item.part) {
     // One stretch of a wall. Its line reaches a little into the stretches beside it, so that the side of none of them shows in the line.
     const reach = 0.75 * itemWidth(item);

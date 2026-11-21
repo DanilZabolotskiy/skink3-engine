@@ -38,6 +38,7 @@ import {
   type PoseSource,
 } from '../scene/evaluate.ts';
 import { formAt, formStep } from '../scene/form.ts';
+import { globeSpins, globeTurn } from '../scene/globe.ts';
 import { outlineTravel, restForms } from '../scene/outline.ts';
 import { eyeOf, perspAt, project } from '../scene/space.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
@@ -399,9 +400,14 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         const ext = shapeExtent(shape);
         radius[n.index] = Math.max(radius[n.index]!, Math.hypot(ext.center[0], ext.center[1]) + ext.outer);
       }
-      turnRadius[n.index] = node.shape.kind === 'circle' ? 0 : radius[n.index]!;
+      // A globe turns its surface: its turn shows at its rim.
+      turnRadius[n.index] = node.shape.kind === 'circle' && !node.globe ? 0 : radius[n.index]!;
     } else if (node.type === 'eye') {
       radius[n.index] = node.r;
+    } else if (node.type === 'stroke' && n.globe) {
+      // A line on a globe lies on its disc.
+      radius[n.index] = n.globe.r + node.width / 2;
+      turnRadius[n.index] = radius[n.index]!;
     } else if (node.type === 'stroke') {
       // The farthest point of the line from its origin, with half its width.
       let far = 0;
@@ -427,7 +433,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     const n = c.nodes[i]!;
     const node = n.node;
     if (n.parent < 0 || (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke' && node.type !== 'text')) continue;
-    const offset = Math.hypot(node.at[0], node.at[1]);
+    // On a globe, a place is [lon, lat]: a thing stands at most its height off the disc, and a line lies on it.
+    const offset = n.globe ? (node.type === 'stroke' ? 0 : n.globe.r + (node.z ?? 0)) : Math.hypot(node.at[0], node.at[1]);
     radius[n.parent] = Math.max(radius[n.parent]!, offset + radius[i]! * node.scale);
     turnRadius[n.parent] = Math.max(turnRadius[n.parent]!, offset + turnRadius[i]! * node.scale);
   }
@@ -461,6 +468,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       // A body whose height is keyed: its top moves, and what rides on it.
       (n.rise !== null && n.rise.segs.length > 0) ||
       n.fill !== null ||
+      // A globe that turns.
+      (node.type === 'shape' && node.globe !== undefined && globeSpins(node.globe)) ||
       // A drive, a hinge that turns, and the camera of a perspective layer: where the node is drawn changes with each.
       n.driven ||
       n.hinge !== null ||
@@ -661,8 +670,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       s.alpha[f] = alpha[i]!;
       s.ownAlpha[f] = own[i]!;
       const rawRot = xf.rot / DEG;
-      s.rot[f] = f === 0 ? rawRot : unwrap(s.rot[f - 1]!, prevRot[i]!, rawRot);
-      prevRot[i] = rawRot;
+      // A globe: its turn is a turn of the node, as far round as its surface has gone, though the node itself is not turned.
+      const turn = node.type === 'shape' && node.globe ? globeTurn(node.globe.spin, t) : 0;
+      s.rot[f] = f === 0 ? rawRot + turn : unwrap(s.rot[f - 1]!, prevRot[i]!, rawRot + turn);
+      prevRot[i] = rawRot + turn;
 
       // Own motion: relative to the parent (a label: to its target).
       let ownRaw = rawRot;
@@ -747,6 +758,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.ownScale[f] = xf.scale;
         s.unit[f] = zoom;
       }
+      ownRaw += turn;
       s.ownRot[f] = f === 0 ? ownRaw : unwrap(s.ownRot[f - 1]!, prevOwnRot[i]!, ownRaw);
       prevOwnRot[i] = ownRaw;
 

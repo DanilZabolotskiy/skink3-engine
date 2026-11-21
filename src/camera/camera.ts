@@ -8,7 +8,7 @@
 import { DEG, type Vec2 } from '../core/math.ts';
 import type { Noise } from '../core/noise.ts';
 import { FPS } from '../core/time.ts';
-import { profileRamps, rampProgress, type MoveProfile } from '../motion/curves.ts';
+import { profileRamps, rampProgress, speedDistance, type MoveProfile } from '../motion/curves.ts';
 import type { CameraToKey, ZoomToKey } from '../motion/intents.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import { STAGE_H, STAGE_W, type CameraPathSpec, type CameraSpec } from '../scene/types.ts';
@@ -63,8 +63,14 @@ function carried(spec: CameraSpec, frame: number, frames: number): Vec2 {
     return [p.x - table.xs[0]!, p.y - table.ys[0]!];
   }
   const h = spec.drift.heading * DEG;
-  const travel = spec.drift.speed * frame;
+  const travel = driftTravel(spec, frame);
   return [Math.cos(h) * travel, Math.sin(h) * travel];
+}
+
+/** How far the straight drift has carried the camera by a frame: at its one speed, or at its keyed speeds. */
+function driftTravel(spec: CameraSpec, frame: number): number {
+  const speeds = spec.drift.speeds;
+  return speeds ? speedDistance(speeds, frame / FPS) : spec.drift.speed * frame;
 }
 
 /** The first place of the camera: its `at`, or the first point of its path. */
@@ -157,12 +163,18 @@ export function buildCameraTrack(spec: CameraSpec, frames: number, keys: readonl
 /**
  * How far along its path the camera is at a frame, in units from the start.
  *
- * With a speed it travels at that speed for the whole shot: round and round a
+ * With keyed speeds it goes as far as they add up to. With a speed it travels
+ * at that speed for the whole shot: round and round a
  * closed path; on an open one to the end and back again, slowing into each
  * turn and out of it. Without a speed it covers the path once over the shot,
  * with the eased ends of its profile.
  */
 export function cameraPathDistance(path: CameraPathSpec, length: number, frame: number, frames: number): number {
+  // Keyed speeds: as far as they add up to; round and round a closed path, never past the end of an open one.
+  if (path.speeds) {
+    const d = speedDistance(path.speeds, frame / FPS);
+    return path.closed ? d : Math.min(d, length);
+  }
   if (path.speed === null) {
     const u = frames > 1 ? frame / (frames - 1) : 0;
     const [a, b] = profileRamps(path.profile, path.ramp);
@@ -196,7 +208,7 @@ export function cameraPathDistance(path: CameraPathSpec, length: number, frame: 
 export function cameraAt(spec: CameraSpec, noise: Noise, frame: number, frames: number, track: CameraTrack | null = null): CameraState {
   const t = frame / FPS;
   const h = spec.drift.heading * DEG;
-  const travel = spec.drift.speed * frame;
+  const travel = driftTravel(spec, frame);
   // Two decorrelated noise lines; the vertical wander is smaller than the horizontal one.
   const wx = spec.drift.wander * noise.n1(t / spec.drift.period + 3.1);
   const wy = spec.drift.wander * 0.6 * noise.n1(t / spec.drift.period + 57.9);

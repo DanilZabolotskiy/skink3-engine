@@ -224,9 +224,19 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
       return [{ part: 'outline', color: tone(itemFill(item)), probes: edgeProbes(ring, PROBES), mode: 'edge', ground: null }];
     }
     case 'stroke': {
+      const probes: Probe[] = [];
+      if (item.runs) {
+        // A line on a globe: probes spread over the parts of it that face the viewer.
+        const flat = item.runs.flatMap((run) => Array.from(run));
+        const count = flat.length / 2;
+        for (let k = 0; k < PROBES; k++) {
+          const i = Math.min(count - 1, Math.floor(((k + 0.5) * count) / PROBES));
+          probes.push({ at: screen(xfApply(item.xf, [flat[2 * i]!, flat[2 * i + 1]!])), inner: null });
+        }
+        return [{ part: 'line', color: tone(item.node.colors['color']!), probes, mode: 'on', ground: null }];
+      }
       const table = pathTable(itemPath(item));
       const drawn = table.length * item.drawn;
-      const probes: Probe[] = [];
       for (let k = 0; k < PROBES; k++) {
         const p = pathAt(table, (drawn * (k + 0.5)) / PROBES);
         probes.push({ at: screen(xfApply(item.xf, [p.x, p.y])), inner: null });

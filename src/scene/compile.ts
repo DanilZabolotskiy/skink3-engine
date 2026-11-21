@@ -84,7 +84,7 @@ import { buildOutlineTrack, type OutlineTrack } from './outline.ts';
 import { buildPerspTrack, type PerspTrack } from './space.ts';
 import { parseRuns, RUN_CLOSE, RUN_OPEN, RunMarkupError } from '../text/runs.ts';
 import { resolveString, type StringTables } from '../text/strings.ts';
-import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_MAX_WIDTH, type LayerSpec, type SceneNode, type ShotSpec } from './types.ts';
+import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_MAX_WIDTH, type GlobeSpec, type LayerSpec, type SceneNode, type ShapeNode, type ShotSpec } from './types.ts';
 
 export class CompileError extends Error {}
 
@@ -163,6 +163,11 @@ export interface CNode {
   readonly form: FormTrack | null;
   /** True when a drive sets something of the node. */
   readonly driven: boolean;
+  /**
+   * A node that stands on a globe (a child of a shape with a globe): the index of the globe, its spec and its radius.
+   * A stroke is then a line on its surface, any other node a thing placed on it by [lon, lat]. Left out: not on one.
+   */
+  readonly globe?: { readonly index: number; readonly spec: GlobeSpec; readonly r: number };
 }
 
 export interface CLayer {
@@ -613,8 +618,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     const view = spec.layers[d.layer]!.perspective;
     const top = d.parent < 0;
     const listed = `that is for a node listed directly in a perspective layer (a layer with the option perspective)`;
+    // A child of a globe stands on it.
+    const holder = d.parent >= 0 ? drafts[d.parent]!.node : null;
+    const onGlobe: ShapeNode | null = holder?.type === 'shape' && holder.globe ? holder : null;
     if (isPlaced(node)) {
-      if (node.z !== undefined && !(top && view)) fail(`${where}: ${node.type} "${node.id}" has a place of three numbers, [x, y, z]: ${listed}`);
+      if (onGlobe && node.z !== undefined) {
+        if (node.type === 'stroke') fail(`${where}: stroke "${node.id}" is a line on the globe "${onGlobe.id}": it lies on the surface and has no height`);
+        if (!(node.z >= 0)) fail(`${where}: ${node.type} "${node.id}" stands on the globe "${onGlobe.id}" at a height of ${node.z} units: a height is 0 or more`);
+      } else if (node.z !== undefined && !(top && view)) fail(`${where}: ${node.type} "${node.id}" has a place of three numbers, [x, y, z]: ${listed}`);
       if (node.depth !== undefined && !top) fail(`${where}: ${node.type} "${node.id}" has a depth: that is for a node listed directly in a layer's nodes; inside a parent, the order of the children is the draw order`);
     }
     if (node.type === 'group' && node.plane) {
@@ -652,6 +663,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           if (view) fail(`${where}: shape "${node.id}" has a haze, and the layer "${spec.layers[d.layer]!.id}" is a perspective layer; a haze lies in a flat layer`);
         }
         if (node.openings?.color) colors['openings'] = col(node, 'openings.color', node.openings.color);
+        if (node.globe) {
+          const g = node.globe;
+          g.layers.forEach((l, k) => (colors[`globe.layer${k}`] = col(node, `layers[${k}].fill`, l.fill)));
+          colors['globe.night'] = col(node, 'light.night', g.night.color);
+          if (g.lights) colors['globe.lights'] = col(node, 'lights.color', g.lights.color);
+          if (g.air) colors['globe.air'] = col(node, 'air.color', g.air.color);
+          if (planeOf[d.index]! >= 0) fail(`${where}: globe "${node.id}" is in a group that lies in a plane; a globe is seen from far away, straight on: put it in a flat layer or list it directly in a perspective layer`);
+        }
         if (node.relief) {
           colors['relief.dark'] = col(node, 'relief.dark', node.relief.dark);
           colors['relief.bright'] = col(node, 'relief.bright', node.relief.bright);
@@ -896,8 +915,20 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     } catch (e) {
       fail(`${where}: ${(e as Error).message}`);
     }
+    if (onGlobe && node.type === 'stroke') {
+      const w = `${where}: stroke "${node.id}" is a line on the globe "${onGlobe.id}"`;
+      if (node.rise !== undefined) fail(`${w}: it lies on the surface; it cannot have a rise`);
+      if (node.dash) fail(`${w}: it is drawn as a solid line; leave dash out`);
+      if (strokePulses.has(d.index)) fail(`${w}: pulse cannot run along it; send a thing placed on the globe along its places instead`);
+      if (reshapes.has(d.index) || driven.length > 0) fail(`${w}: its points are places on the globe; they are not reshaped or driven`);
+      const keyed = [moves, turns, scales, popIns, popOuts, bumps].some((m) => (m.get(d.index)?.length ?? 0) > 0);
+      if (node.at[0] !== 0 || node.at[1] !== 0 || node.rotation !== 0 || node.scale !== 1 || keyed) {
+        fail(`${w}: its points are its places, and it turns with the globe: it has no at, rotation or scale of its own, and nothing moves, turns or scales it`);
+      }
+    }
 
     return {
+      ...(onGlobe ? { globe: { index: d.parent, spec: onGlobe.globe!, r: onGlobe.shape.kind === 'circle' ? onGlobe.shape.r : 1 } } : {}),
       index: d.index,
       id: node.id,
       node,

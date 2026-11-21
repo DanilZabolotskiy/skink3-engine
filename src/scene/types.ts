@@ -11,7 +11,7 @@ import type { SpringSpec } from '../core/dynamics.ts';
 import type { Vec2, Vec3 } from '../core/math.ts';
 import type { LightSpec } from '../look/light.ts';
 import type { ColorRef, Palette } from '../look/palette.ts';
-import type { MoveProfile } from '../motion/curves.ts';
+import type { MoveProfile, SpeedKeys } from '../motion/curves.ts';
 import type { Key } from '../motion/intents.ts';
 import type { PathSpec } from '../motion/paths.ts';
 import type { ShapeSpec } from '../shape/geometry.ts';
@@ -168,6 +168,49 @@ export interface ShapeNode extends NodeBase {
   readonly openings?: OpeningsSpec;
   /** A field of heights drawn as the light falls on it (relief): the shape is the rect it spans. Left out: a plain shape. */
   readonly relief?: ReliefSpec;
+  /** A round body seen from space (globe): the shape is the circle of its disc. Left out: a plain shape. */
+  readonly globe?: GlobeSpec;
+}
+
+/**
+ * A sphere with the outlines of a body's surface on it, as it is seen from far away (an orthographic view): turned
+ * so that one place faces the viewer, turning about its axis, lit from one side. Its colours are in `colors` of its
+ * node: globe.layer<i> for each layer, globe.night, globe.lights and globe.air.
+ */
+export interface GlobeSpec {
+  /** Degrees [longitude east, latitude north] of the place that faces the viewer at the start; north is up. */
+  readonly view: readonly [number, number];
+  /** Degrees per second it turns, east being the way the Earth turns (what faces the viewer moves left to right); or keys of that speed over the shot. */
+  readonly spin: number | SpeedKeys;
+  /** The layers of its surface, painted in order over the disc. */
+  readonly layers: readonly GlobeLayerSpec[];
+  /** Where the light comes from (degrees, 0 from the right, -90 from the top) and the share of the disc it lights; null: the whole disc in the light, and no night. */
+  readonly light: { readonly from: number; readonly lit: number } | null;
+  /** The night side: its colour, how far it darkens the surface (0..1), and how soft the terminator is, as a share of the radius. */
+  readonly night: { readonly color: ColorRef; readonly amount: number; readonly soft: number };
+  /** Lights on the night side (the lights of towns): each point x, y, z on the unit sphere and its weight, in turn. */
+  readonly lights: { readonly points: Float64Array; readonly color: ColorRef; readonly size: number; readonly amount: number } | null;
+  /** The thin rim of air round the disc; null: none. */
+  readonly air: { readonly color: ColorRef; readonly width: number; readonly amount: number } | null;
+  /** 0..1: how much the disc darkens toward its edge, so that it reads as a ball. */
+  readonly shade: number;
+}
+
+/** A layer of a globe's surface: rings filled at once. */
+export interface GlobeLayerSpec {
+  /**
+   * Each ring as points x, y, z on the unit sphere in turn (x toward 0° E on the equator, z north), dense enough to be
+   * joined straight, running counter-clockwise round its smaller side, seen from outside.
+   */
+  readonly rings: readonly Float64Array[];
+  /** For each ring: true when it ran clockwise round its smaller side as it was given, a hole in what holds it. The rings fill non-zero, so rings that overlap fill as one. */
+  readonly holes: readonly boolean[];
+  readonly fill: ColorRef;
+  readonly opacity: number;
+  /** Degrees per second it turns east over the body (clouds that drift); 0 for what lies on it. */
+  readonly drift: number;
+  /** A share of the radius: the layer's edges are blurred this far (soft clouds); 0 for sharp outlines. */
+  readonly soft: number;
 }
 
 /**
@@ -661,6 +704,14 @@ export interface CameraPathSpec extends PathSpec {
   readonly ramp: number;
   /** Seconds the camera takes to slow down, turn round and be back at speed at an end of an open path. */
   readonly turn: number;
+  /**
+   * Keys of its speed over the shot: [seconds from the start of the shot, units
+   * per second], the first at 0, smooth from one key to the next, the last kept
+   * to the end. They replace speed, profile, ramp and turn: round and round a
+   * closed path; on an open one they must not carry the camera past its end.
+   * Written only when they are given.
+   */
+  readonly speeds?: SpeedKeys;
 }
 
 export interface CameraSpec {
@@ -680,6 +731,13 @@ export interface CameraSpec {
     readonly wander: number;
     /** Seconds per wander. */
     readonly period: number;
+    /**
+     * Keys of the speed of the travel over the shot: [seconds from the start of
+     * the shot, units per second], the first at 0, smooth from one key to the
+     * next, the last kept to the end; `speed` is then not used. Written only
+     * when they are given.
+     */
+    readonly speeds?: SpeedKeys;
   };
   /** Slow zoom across the whole shot. */
   readonly pushIn: { readonly from: number; readonly to: number };

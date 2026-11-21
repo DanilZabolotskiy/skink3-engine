@@ -6,9 +6,12 @@ import { springParams, type SpringSpec } from '../core/dynamics.ts';
 import type { Vec2, Vec3 } from '../core/math.ts';
 import { lightVector, type LightSpec } from '../look/light.ts';
 import { ROLES, type ColorRef, type Palette } from '../look/palette.ts';
-import { DEFAULT_RAMP, type MoveProfile } from '../motion/curves.ts';
+import { DEFAULT_RAMP, speedDistance, type MoveProfile, type SpeedKeys } from '../motion/curves.ts';
 import { isSoundKey, type Key } from '../motion/intents.ts';
 import { pathLength, type PathSpec } from '../motion/paths.ts';
+import { frameCount } from '../core/time.ts';
+import { Rng } from '../core/rng.ts';
+import { globeRing, unitOf } from './globe.ts';
 import {
   blobShape,
   capsuleShape,
@@ -34,6 +37,8 @@ import type {
   CameraSpec,
   CastSpec,
   FogSpec,
+  GlobeLayerSpec,
+  GlobeSpec,
   DetailSpec,
   ContrastSpec,
   EmitterNode,
@@ -724,6 +729,184 @@ export function relief(o: {
   };
 }
 
+/** A ring of a globe's layer, or a line on a globe: places [lon, lat] in degrees. */
+export type LonLat = readonly [number, number];
+
+/**
+ * A globe: a round body seen from far away, turned so that one place faces the viewer, turning about its axis, with
+ * the outlines of its surface on it (the land and seas of the Earth, the dark seas of the Moon: any polygons in
+ * degrees, such as skink3-geo's globe.mjs writes). Light from one side leaves a night side with a soft terminator;
+ * lights may shine on the night side alone; a thin rim of air may stand round the disc.
+ *
+ * Its children stand on it. A child placed at [lon, lat] (at: [lon, lat, height] for one over the surface, in units)
+ * rides the turn and hides behind the disc; its rotation is its heading (0 east, 90 north), so a travel with orient
+ * faces along its way. A stroke among its children is a line on the surface: its points are [lon, lat], joined as on
+ * a map, and the part of it on the far side is hidden. Neither is darkened by the night.
+ */
+export function globe(o: {
+  id: string;
+  /** Units: the radius of the disc. */
+  r: number;
+  /** The colour of the disc under its layers: the sea of the Earth, the highlands of the Moon. */
+  fill: ColorRef;
+  /** Degrees [lon, lat] of the place that faces the viewer at the start; default [0, 0]. 90 looks down on the north pole. */
+  view?: LonLat;
+  /** Degrees per second it turns east (the way the Earth turns: what faces the viewer moves left to right), or keys [seconds, degrees per second], smooth between them; default 0. */
+  spin?: number | SpeedKeys;
+  /**
+   * The layers of the surface, painted in order: rings of [lon, lat], outer rings counter-clockwise seen from
+   * outside and holes clockwise (as skink3-geo writes them), filled non-zero. drift turns a layer east over the
+   * body (clouds), degrees per second; soft blurs its edges, a share of the radius.
+   */
+  layers?: readonly { rings: readonly (readonly LonLat[])[]; fill: ColorRef; opacity?: number; drift?: number; soft?: number }[];
+  /**
+   * The sun: from (degrees, 0 from the right, -90 from the top; default -135), lit (the share of the disc it lights,
+   * 0 a new moon, 0.5 a half, 1 full; default 0.7), and the night: its colour, amount (0..1, how dark; default 0.8)
+   * and soft (a share of the radius, how soft the terminator is; default 0.05). Left out: lit all over.
+   */
+  light?: { from?: number; lit?: number; night: ColorRef; amount?: number; soft?: number };
+  /** Lights on the night side: places [lon, lat] or [lon, lat, weight] (weight default 1; 4 is twice as wide), their colour, size (units, default 1.5) and amount (0..1, default 0.9). */
+  lights?: { points: readonly (LonLat | readonly [number, number, number])[]; color: ColorRef; size?: number; amount?: number };
+  /** A thin rim of air round the disc, brighter on the lit side: its colour, width (units, default 3 % of r) and amount (0..1, default 0.7). */
+  air?: { color: ColorRef; width?: number; amount?: number };
+  /** 0..1: how much the disc darkens toward its edge, so that it reads as a ball; default 0.25. */
+  shade?: number;
+  at?: Vec2 | Vec3;
+  depth?: number;
+  rotation?: number;
+  scale?: number;
+  opacity?: number;
+  children?: readonly SceneNode[];
+  /** Key of the node's voice in the bank of sounds. */
+  sound?: string;
+}): ShapeNode {
+  const where = `globe("${o?.id}")`;
+  checkKeys(where, o, ['id', 'r', 'fill', 'view', 'spin', 'layers', 'light', 'lights', 'air', 'shade', 'at', 'depth', 'rotation', 'scale', 'opacity', 'children', 'sound']);
+  const r = num(where, 'r', o.r, 1, 1e5);
+  const lonLat = (w: string, name: string, p: unknown): [number, number] => {
+    if (!Array.isArray(p) || p.length !== 2) fail(w, `${name} must be [lon, lat] in degrees, got ${JSON.stringify(p)}`);
+    return [num(w, `${name}[0]`, p[0], -3600, 3600), num(w, `${name}[1]`, p[1], -90, 90)];
+  };
+  const view = o.view === undefined ? ([0, 0] as const) : lonLat(where, 'view', o.view);
+  const spin = o.spin === undefined ? 0 : typeof o.spin === 'number' ? num(where, 'spin', o.spin, -GLOBE_SPIN_MAX, GLOBE_SPIN_MAX) : speedKeyList(where, 'spin', o.spin, -GLOBE_SPIN_MAX, GLOBE_SPIN_MAX, 'degrees per second');
+  if (o.layers !== undefined && !Array.isArray(o.layers)) fail(where, 'layers must be a list of { rings, fill }');
+  const layers: GlobeLayerSpec[] = (o.layers ?? []).map((l, k) => {
+    const lw = `${where} layers[${k}]`;
+    if (l === null || typeof l !== 'object') fail(lw, 'must be { rings, fill }');
+    checkKeys(lw, l, ['rings', 'fill', 'opacity', 'drift', 'soft']);
+    if (!Array.isArray(l.rings) || l.rings.length === 0) fail(lw, 'rings must be a list of rings, each a list of [lon, lat]');
+    const rings: Float64Array[] = [];
+    const holes: boolean[] = [];
+    l.rings.forEach((ring: readonly LonLat[], j: number) => {
+      if (!Array.isArray(ring) || ring.length < 3) fail(lw, `rings[${j}] must be a list of at least three places [lon, lat]`);
+      const made = globeRing(ring.map((p, i) => lonLat(lw, `rings[${j}][${i}]`, p)));
+      if (made.ring.length < 9) fail(lw, `rings[${j}] has fewer than three different places`);
+      rings.push(made.ring);
+      holes.push(made.hole);
+    });
+    return {
+      rings,
+      holes,
+      fill: color(lw, 'fill', l.fill),
+      opacity: l.opacity === undefined ? 1 : num(lw, 'opacity', l.opacity, 0, 1),
+      drift: l.drift === undefined ? 0 : num(lw, 'drift', l.drift, -GLOBE_SPIN_MAX, GLOBE_SPIN_MAX),
+      soft: l.soft === undefined ? 0 : num(lw, 'soft', l.soft, 0, 0.2),
+    };
+  });
+  let light: GlobeSpec['light'] = null;
+  let night: GlobeSpec['night'] = { color: o.fill, amount: 0, soft: 0 };
+  if (o.light !== undefined) {
+    const lw = `${where} light`;
+    if (o.light === null || typeof o.light !== 'object') fail(lw, 'must be { night, from?, lit?, amount?, soft? }');
+    checkKeys(lw, o.light, ['from', 'lit', 'night', 'amount', 'soft']);
+    if (o.light.night === undefined) fail(lw, 'night is the colour of the night side; it is needed');
+    light = { from: o.light.from === undefined ? -135 : num(lw, 'from', o.light.from, -3600, 3600), lit: o.light.lit === undefined ? 0.7 : num(lw, 'lit', o.light.lit, 0, 1) };
+    night = { color: color(lw, 'night', o.light.night), amount: o.light.amount === undefined ? 0.8 : num(lw, 'amount', o.light.amount, 0, 1), soft: o.light.soft === undefined ? 0.05 : num(lw, 'soft', o.light.soft, 0, 0.5) };
+  }
+  let lights: GlobeSpec['lights'] = null;
+  if (o.lights !== undefined) {
+    const lw = `${where} lights`;
+    if (o.lights === null || typeof o.lights !== 'object') fail(lw, 'must be { points, color, size?, amount? }');
+    checkKeys(lw, o.lights, ['points', 'color', 'size', 'amount']);
+    if (!light) fail(lw, 'they shine on the night side: give the globe a light, which makes one');
+    if (!Array.isArray(o.lights.points) || o.lights.points.length === 0) fail(lw, 'points must be a list of [lon, lat] or [lon, lat, weight]');
+    const points = new Float64Array(4 * o.lights.points.length);
+    o.lights.points.forEach((p, i) => {
+      if (!Array.isArray(p) || (p.length !== 2 && p.length !== 3)) fail(lw, `points[${i}] must be [lon, lat] or [lon, lat, weight], got ${JSON.stringify(p)}`);
+      const [x, y, z] = unitOf(num(lw, `points[${i}][0]`, p[0], -3600, 3600), num(lw, `points[${i}][1]`, p[1], -90, 90));
+      points.set([x, y, z, p.length === 3 ? num(lw, `points[${i}][2]`, p[2], 0, 1e4) : 1], 4 * i);
+    });
+    lights = { points, color: color(lw, 'color', o.lights.color), size: o.lights.size === undefined ? 1.5 : num(lw, 'size', o.lights.size, 0.1, 100), amount: o.lights.amount === undefined ? 0.9 : num(lw, 'amount', o.lights.amount, 0, 1) };
+  }
+  let air: GlobeSpec['air'] = null;
+  if (o.air !== undefined) {
+    const lw = `${where} air`;
+    if (o.air === null || typeof o.air !== 'object') fail(lw, 'must be { color, width?, amount? }');
+    checkKeys(lw, o.air, ['color', 'width', 'amount']);
+    air = { color: color(lw, 'color', o.air.color), width: o.air.width === undefined ? 0.03 * r : num(lw, 'width', o.air.width, 0.5, r), amount: o.air.amount === undefined ? 0.7 : num(lw, 'amount', o.air.amount, 0, 1) };
+  }
+  const base = shapeNode(
+    where,
+    {
+      id: o.id,
+      fill: o.fill,
+      lit: false,
+      ...(o.at === undefined ? {} : { at: o.at }),
+      ...(o.depth === undefined ? {} : { depth: o.depth }),
+      ...(o.rotation === undefined ? {} : { rotation: o.rotation }),
+      ...(o.scale === undefined ? {} : { scale: o.scale }),
+      ...(o.opacity === undefined ? {} : { opacity: o.opacity }),
+      ...(o.children === undefined ? {} : { children: o.children }),
+      ...(o.sound === undefined ? {} : { sound: o.sound }),
+    },
+    wrapShape(where, () => circleShape(r)),
+    null,
+  );
+  return { ...base, globe: { view, spin, layers, light, night, lights, air, shade: o.shade === undefined ? 0.25 : num(where, 'shade', o.shade, 0, 1) } };
+}
+
+/** The fastest a globe turns, or a layer drifts over it, in degrees per second. */
+const GLOBE_SPIN_MAX = 360;
+
+/**
+ * A soft round patch on a globe, for a layer: a ring of [lon, lat] round `at`, `r` degrees of arc across at its mean,
+ * its edge wobbling by up to `wobble` of that (0..0.6, default 0.25), stretched east and west by `stretch` (default
+ * 1); the same seed always gives the same ring. Clouds, a lake, a patch of ice.
+ */
+export function globeBlob(o: { at: LonLat; r: number; points?: number; wobble?: number; stretch?: number; seed?: number }): LonLat[] {
+  const where = 'globeBlob()';
+  checkKeys(where, o, ['at', 'r', 'points', 'wobble', 'stretch', 'seed']);
+  if (!Array.isArray(o.at) || o.at.length !== 2) fail(where, `at must be [lon, lat] in degrees, got ${JSON.stringify(o.at)}`);
+  const lon = num(where, 'at[0]', o.at[0], -3600, 3600) * (Math.PI / 180);
+  const lat = num(where, 'at[1]', o.at[1], -90, 90) * (Math.PI / 180);
+  const r = num(where, 'r', o.r, 0.01, 60);
+  const n = o.points === undefined ? 28 : num(where, 'points', o.points, 6, 400);
+  if (!Number.isInteger(n)) fail(where, `points must be a whole number, got ${n}`);
+  const wobble = o.wobble === undefined ? 0.25 : num(where, 'wobble', o.wobble, 0, 0.6);
+  const stretch = o.stretch === undefined ? 1 : num(where, 'stretch', o.stretch, 0.2, 5);
+  const rng = new Rng(o.seed === undefined ? 1 : num(where, 'seed', o.seed, -1e9, 1e9), 'globeBlob');
+  // A few waves round the edge: smooth, never a spike.
+  const waves = [2, 3, 5].map((k) => ({ k, a: rng.range(0.4, 1) / k, p: rng.range(0, 2 * Math.PI) }));
+  const norm = waves.reduce((sum, w) => sum + w.a, 0);
+  const out: LonLat[] = [];
+  for (let i = 0; i < n; i++) {
+    // Counter-clockwise seen from outside: from east to north.
+    const th = (2 * Math.PI * i) / n;
+    const wave = waves.reduce((sum, w) => sum + w.a * Math.sin(w.k * th + w.p), 0) / norm;
+    const e = Math.cos(th) * stretch;
+    const nn = Math.sin(th);
+    // How far from the middle, in radians, and the bearing (clockwise from north) it lies on.
+    const d = (r / 2) * (1 + wobble * wave) * Math.hypot(e, nn) * (Math.PI / 180);
+    const bearing = Math.atan2(e, nn);
+    const lat2 = Math.asin(Math.sin(lat) * Math.cos(d) + Math.cos(lat) * Math.sin(d) * Math.cos(bearing));
+    const lon2 = lon + Math.atan2(Math.sin(bearing) * Math.sin(d) * Math.cos(lat), Math.cos(d) - Math.sin(lat) * Math.sin(lat2));
+    let lonDeg = (lon2 * 180) / Math.PI;
+    lonDeg -= 360 * Math.round(lonDeg / 360);
+    out.push([Math.round(lonDeg * 1e6) / 1e6, Math.round(((lat2 * 180) / Math.PI) * 1e6) / 1e6]);
+  }
+  return out;
+}
+
 /** A soft irregular blob of mean radius r; the same seed always gives the same outline. */
 export function blob(o: ShapeOptions & { r: number; points?: number; wobble?: number; seed?: number }): ShapeNode {
   const where = `blob("${o?.id}")`;
@@ -1391,6 +1574,31 @@ function flatten<T>(items: Nested<T>, out: T[] = []): T[] {
 }
 
 /**
+ * Keys of the speed of the camera over a shot: [seconds from the start of the shot, units per second], at least two,
+ * the first at 0, in order of time. A speed may be 0: the camera starts or ends at rest.
+ */
+function cameraSpeeds(where: string, value: unknown): SpeedKeys {
+  return speedKeyList(where, 'speeds', value, 0, CAMERA_SPEED_MAX * 60, 'units per second');
+}
+
+/** Keys of a speed over the shot: [seconds from its start, speed], at least two, the first at 0, in order of time. */
+function speedKeyList(where: string, name: string, value: unknown, min: number, max: number, unit: string): SpeedKeys {
+  if (!Array.isArray(value) || value.length < 2) fail(where, `${name} must be a list of at least two keys [seconds from the start of the shot, ${unit}]`);
+  const keys = value.map((k, i) => {
+    if (!Array.isArray(k) || k.length !== 2) fail(where, `${name}[${i}] must be [seconds, ${unit}]`);
+    return [num(where, `${name}[${i}][0]`, k[0], 0, 3600), num(where, `${name}[${i}][1]`, k[1], min, max)] as const;
+  });
+  if (keys[0]![0] !== 0) fail(where, `the first key of ${name} is at 0 seconds: the speed the shot starts with`);
+  for (let i = 1; i < keys.length; i++) {
+    if (!(keys[i]![0] > keys[i - 1]![0])) fail(where, `the keys of ${name} must be in order of time; key ${i} is at ${keys[i]![0]} s, after ${keys[i - 1]![0]} s`);
+  }
+  return keys;
+}
+
+/** The fastest the camera travels, in units per frame (1200 units per second). */
+const CAMERA_SPEED_MAX = 20;
+
+/**
  * A shot: everything needed to bake and render it. The result is validated as
  * a whole (ids, references, colours, string keys, timeline), so a shot that is
  * returned is a shot that can be rendered.
@@ -1415,7 +1623,8 @@ export function shot(o: {
   vignette?: number;
   camera?: {
     at?: Vec2;
-    drift?: { speed?: number; heading?: number; wander?: number; period?: number };
+    /** speeds: keys [seconds from the start of the shot, units per second] in place of the one speed (units per frame). */
+    drift?: { speed?: number; heading?: number; wander?: number; period?: number; speeds?: readonly (readonly [number, number])[] };
     /**
      * A free-form path instead of the straight drift: the places the camera
      * looks at, the first being where it starts. With `speed` (units per frame)
@@ -1433,6 +1642,8 @@ export function shot(o: {
       ramp?: number;
       /** Seconds for a turn at the end of an open path; default 1.6. */
       turn?: number;
+      /** Keys [seconds from the start of the shot, units per second] in place of speed, profile, ramp and turn. */
+      speeds?: readonly (readonly [number, number])[];
     };
     pushIn?: { from?: number; to?: number };
     focus?: { far?: number; near?: number };
@@ -1468,16 +1679,23 @@ export function shot(o: {
   };
   const cam = o.camera ?? {};
   checkKeys(`${where} camera`, cam, ['at', 'drift', 'path', 'pushIn', 'focus']);
-  if (cam.drift) checkKeys(`${where} camera.drift`, cam.drift, ['speed', 'heading', 'wander', 'period']);
+  if (cam.drift) checkKeys(`${where} camera.drift`, cam.drift, ['speed', 'heading', 'wander', 'period', 'speeds']);
+  if (cam.drift?.speeds !== undefined && cam.drift.speed !== undefined) {
+    fail(`${where} camera.drift`, 'speeds says how fast the camera drifts at every moment of the shot; leave speed out');
+  }
   if (cam.pushIn) checkKeys(`${where} camera.pushIn`, cam.pushIn, ['from', 'to']);
   if (cam.focus) checkKeys(`${where} camera.focus`, cam.focus, ['far', 'near']);
   let cameraPath: CameraPathSpec | null = null;
   if (cam.path !== undefined) {
     const p = cam.path;
     const w = `${where} camera.path`;
-    checkKeys(w, p, ['points', 'closed', 'smooth', 'speed', 'profile', 'ramp', 'turn']);
+    checkKeys(w, p, ['points', 'closed', 'smooth', 'speed', 'profile', 'ramp', 'turn', 'speeds']);
     if (cam.at !== undefined || cam.drift?.speed !== undefined || cam.drift?.heading !== undefined) {
       fail(w, 'a path replaces camera.at, camera.drift.speed and camera.drift.heading: leave them out (the first point of the path is where the camera starts)');
+    }
+    if (cam.drift?.speeds !== undefined) fail(w, 'a path takes its own speeds: give camera.path.speeds, and leave camera.drift.speeds out');
+    if (p.speeds !== undefined && (p.speed !== undefined || p.profile !== undefined || p.ramp !== undefined || p.turn !== undefined)) {
+      fail(w, 'speeds says how fast the camera goes along the path at every moment of the shot; leave speed, profile, ramp and turn out');
     }
     if (!Array.isArray(p.points) || p.points.length < 2) fail(w, 'points must be a list of at least two places [x, y]');
     const closed = p.closed ?? false;
@@ -1497,8 +1715,18 @@ export function shot(o: {
       profile,
       ramp: num(w, 'ramp', p.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
       turn: num(w, 'turn', p.turn ?? 1.6, 0.1, 30),
+      // Written only when they are given: a path without them is the data it always was.
+      ...(p.speeds === undefined ? {} : { speeds: cameraSpeeds(w, p.speeds) }),
     };
-    if (!(pathLength(cameraPath) > 1e-6)) fail(w, 'the path has no length');
+    const length = pathLength(cameraPath);
+    if (!(length > 1e-6)) fail(w, 'the path has no length');
+    if (cameraPath.speeds && !closed) {
+      const seconds = (frameCount(num(where, 'seconds', o.seconds, 1 / 60, 3600)) - 1) / 60;
+      const reach = speedDistance(cameraPath.speeds, seconds);
+      if (reach > length + 1e-6) {
+        fail(w, `the speeds carry the camera ${reach.toFixed(1)} units by the last frame (${seconds.toFixed(2)} s), and the open path is ${length.toFixed(1)} units long: lower them, end them at 0 sooner, or close the path`);
+      }
+    }
   }
   const D = CAMERA_DEFAULTS;
   const camera: CameraSpec = {
@@ -1510,6 +1738,8 @@ export function shot(o: {
       heading: num(where, 'camera.drift.heading', cam.drift?.heading ?? D.drift.heading, -3600, 3600),
       wander: num(where, 'camera.drift.wander', cam.drift?.wander ?? D.drift.wander, 0, 400),
       period: num(where, 'camera.drift.period', cam.drift?.period ?? D.drift.period, 0.5, 600),
+      // Written only when they are given: a drift without them is the data it always was.
+      ...(cam.drift?.speeds === undefined ? {} : { speeds: cameraSpeeds(`${where} camera.drift`, cam.drift.speeds) }),
     },
     pushIn: {
       from: num(where, 'camera.pushIn.from', cam.pushIn?.from ?? D.pushIn.from, 0.1, 20),

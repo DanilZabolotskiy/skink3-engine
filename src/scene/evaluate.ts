@@ -43,6 +43,7 @@ import { sampleBackground, type BackgroundState } from './background.ts';
 import { BLINK, type CLayer, type CNode, type CompiledShot } from './compile.ts';
 import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
+import { globeFade, globePlace, globeView, surfaceLine, surfacePath, surfaceRuns } from './globe.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
 import type { GroupNode, LabelSide, StrokeNode } from './types.ts';
@@ -103,6 +104,8 @@ export function shapeOf(n: CNode, t: number): ShapeSpec {
 /** The path of a stroke at time t: the one it was given, what its reshape keys have made of it by then, or the line its driven points or its points of the space give at t. */
 export function strokePathOf(n: CNode, t: number): PathSpec {
   if (n.node.type !== 'stroke') throw new Error(`"${n.id}" is not a stroke`);
+  // A line on a globe: as it lies in the globe's own space at that moment, its far part included.
+  if (n.globe) return surfacePath(surfaceLine(n.node.path), globeView(n.globe.spec, t), n.globe.r);
   if (n.form) return formAt(n, t).path ?? n.node.path;
   return n.outline ? strokePathAt(n.outline, t) : n.node.path;
 }
@@ -438,6 +441,14 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
         space.far[n.index] = p.far;
         xf = { x: p.x, y: p.y, rot, scale: scale * p.k };
       }
+    } else if (n.globe) {
+      // On a globe: a line lies on its surface, in the globe's own space; a thing stands at its place [lon, lat], turned to its heading.
+      if (node.type === 'stroke') xf = parent;
+      else {
+        const at = globePlace(n.globe.spec, n.globe.r, x, y, node.z ?? 0, rot / DEG, t);
+        xf = xfCompose(parent, { x: at.x, y: at.y, rot: at.rot * DEG, scale });
+        if (node.type === 'group' && node.upright) xf = { ...xf, rot };
+      }
     } else {
       xf = xfCompose(parent, { x, y, rot, scale });
       // An upright group keeps its own rotation, whatever it is attached to.
@@ -562,6 +573,8 @@ export interface ShapeItem {
   readonly shape?: ShapeSpec;
   /** A shape whose fill is keyed (fillTo): the fill it has at this frame (#RRGGBB). Left out: the fill of its node. */
   readonly fill?: string;
+  /** A globe: the moment, in seconds, its turn and the drift of its layers are drawn at. Left out: any other shape. */
+  readonly globeAt?: number;
   /** A body that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
   readonly foot?: Foot;
   /**
@@ -631,6 +644,11 @@ export interface StrokeItem {
    * to another, in the units of the stroke. Left out: the whole line.
    */
   readonly part?: readonly [number, number];
+  /**
+   * A line on a globe: the parts of it that face the viewer, as far as it is drawn, each a polyline (x, y in turn) in
+   * the globe's own space. Left out: any other stroke.
+   */
+  readonly runs?: readonly Float64Array[];
 }
 
 /** The shadow of one body on the ground. */
@@ -1037,6 +1055,12 @@ export function opacities(c: CompiledShot, t: number): { own: Float64Array; alph
     own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
     // Not drawn at all: a node that shows only while it travels, outside its travel; a body that waits for its release.
     if ((n.pos !== null && n.pos.onlyWhile && !sampleTravelling(n.pos, t)) || (n.bodySlot >= 0 && awaitsRelease(n, t))) own[n.index] = 0;
+    // A thing placed on a globe hides behind its disc.
+    if (n.globe && n.pos && n.node.type !== 'stroke') {
+      const [lon, lat] = samplePos(n.pos, t);
+      const height = (n.node as { z?: number }).z ?? 0;
+      own[n.index] = own[n.index]! * globeFade(globePlace(n.globe.spec, n.globe.r, lon, lat, height, 0, t).z, height, n.globe.r);
+    }
     alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
   }
   for (const n of c.nodes) {
@@ -1709,7 +1733,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t } : {}) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -1754,7 +1778,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
           // A line with a least width is as wide, in its own units, as it takes to be that wide on screen; never thinner than it was made.
           const held = node.least === undefined ? {} : { width: Math.max(node.width, node.least / Math.max(world[index]!.scale * view.zoom, 1e-9)) };
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
+          // A line on a globe: the parts of it that face the viewer.
+          const runs = n.globe ? surfaceRuns(surfaceLine(node.path), globeView(n.globe.spec, t), n.globe.r, Math.min(1, drawn)) : null;
+          if (runs && runs.length === 0) break;
+          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {

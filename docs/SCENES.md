@@ -239,6 +239,23 @@ camera: {
 - `focus` sets the blur per unit of depth behind (`far`) and in front of (`near`) the focus plane.
 - Over a shot the camera travels `speed × 60 × seconds` units. Lay the scene out along that path and check a contact sheet.
 
+#### Camera speeds
+
+A camera that rides with a traveller at one speed and then steps up to a far higher one, or that keeps speeding up, takes keys of its speed over the shot in place of the one speed. The layers slide with their parallax as they do for any drift.
+
+```ts
+camera: {
+  // 30 units a second for 4 s, then up to 240 over 2 s, kept to the end of the shot.
+  drift: { heading: 0, speeds: [[0, 30], [4, 30], [6, 240]], wander: 0 },
+}
+```
+
+- `speeds` is a list of keys `[seconds from the start of the shot, units per second]`, at least two, the first at 0, in order of time. Between two keys the speed goes from one to the other along a smooth step, so it has no kink; after the last key it stays. A speed may be 0: the camera starts at rest or comes to rest. At most 1200 units per second.
+- The keys are in units per second, as the `speeds` of a `travel` are, so a traveller on a `travel` with the same keys keeps its place in the frame. The one `speed` of the drift and of a path is in units per frame: 0.5 per frame is 30 per second.
+- On the drift, `speeds` replaces `speed`. On a path (`path.speeds`) it replaces `speed`, `profile`, `ramp` and `turn`: the camera goes round and round a closed path, and an open path refuses keys that would carry the camera past its end by the last frame, with the numbers. A path takes `path.speeds`, never `drift.speeds`.
+- The motion review judges the camera's starts and stops as it does any move's: a key that takes the camera from rest to speed within two frames is an `abrupt-start` on `(camera)`; a key a second or two long is sound.
+- A shot without `speeds` is the data it was, and draws what it drew.
+
 #### A camera path
 
 On one heading the travel grows with the length of the shot: at 0.45 units per frame a 19-second shot moves 513 units, a quarter of the frame, and a subject that has to stay in the middle slides out of it. A path lets the camera keep that speed without leaving its subject:
@@ -262,6 +279,7 @@ camera: {
 | `speed` | none | units per frame along the path, like `drift.speed`. The camera keeps it for the whole shot: round and round a closed path; on an open one to the end and back again, slowing to a stop where it turns |
 | `turn` | `1.6` | open path with a speed: the seconds a turn takes, from full speed to a stop and back to full speed the other way |
 | `profile`, `ramp` | `'steady'`, `0.3` | without a speed the camera covers the path once over the shot: `'steady'` at one speed, `'ease'` from rest to rest, `'in'` or `'out'` with one eased end; `ramp` is the share of the shot an eased end takes |
+| `speeds` | none | keys of its speed over the shot, `[seconds, units per second]`, in place of `speed`, `profile`, `ramp` and `turn` (see Camera speeds) |
 
 - A path replaces `at`, `drift.speed` and `drift.heading`; give the path alone. `drift.wander` and `drift.period` still apply.
 - `loopPoints(center, radius, { start?, clockwise?, points? })` returns the points of an ellipse (`radius` is one number or `[rx, ry]`; `start` is the angle of the first point in degrees, 180 by default: left of the centre). With `closed: true` it is a loop that never stops and never leaves its middle. Its length is about `2π × sqrt((rx² + ry²) / 2)`; at 0.45 units per frame the camera needs that many units divided by 27 seconds for one round.
@@ -413,7 +431,7 @@ All shape factories take these options:
 |---|---|---|
 | `id` | required | unique in the shot |
 | `fill` | required | palette reference |
-| `at` | `[0, 0]` | position in the parent's space; `[x, y, z]` for a node listed in a perspective layer |
+| `at` | `[0, 0]` | position in the parent's space; `[x, y, z]` for a node listed in a perspective layer; `[lon, lat]` or `[lon, lat, height]` for a child of a globe (see A globe) |
 | `rotation` | `0` | degrees, clockwise |
 | `scale` | `1` | |
 | `opacity` | `1` | 0..1 at the start; `fadeTo` animates it (see Opacity) |
@@ -1516,6 +1534,42 @@ group({ id: 'map', plane: 'floor', ground: 'hills', fog: { color: 'light.haze', 
 
 `examples/space/scene.ts` shows a floor with a map, a wire cube of driven corners with its shadow, a moon that passes in front of a globe and behind it, a card on a hinge, a ramp, and a camera that rises, goes round and moves in.
 
+## A globe
+
+`globe({ id, r, fill, view?, spin?, layers?, light?, lights?, air?, shade?, at?, depth?, rotation?, scale?, opacity?, children?, sound? })` draws a round body seen from far away: the Earth, the Moon, any planet whose surface is given as outlines. It is a shape (a disc of radius `r`, filled with `fill`, the sea or the bare ground) with the outlines of its surface on the side that faces the viewer, turned so that the place `view` ([lon, lat] in degrees) faces the viewer at the start and turning east about its axis at `spin`. The outlines come from real data: skink3-geo's `globe.mjs` writes a body's polygons in degrees (the land, lakes and ice of the Earth from Natural Earth, the maria of the Moon from the LROC Global Mare Boundaries), and a scene passes their rings to `layers`. The engine holds no outlines and no colours of its own.
+
+```ts
+const EARTH = JSON.parse(readFileSync(new URL('./earth.json', import.meta.url), 'utf8'));
+globe({ id: 'earth', at: [-360, 40], r: 400, fill: 'dark.navy', view: [0, 22], spin: [[0, 0], [2, 5]],
+  layers: [{ rings: EARTH.land, fill: 'mid.jade' }, { rings: EARTH.ice, fill: 'light.snow' },
+    { rings: CLOUDS, fill: 'light.snow', opacity: 0.55, drift: 1.5, soft: 0.012 }],
+  light: { from: -150, lit: 0.62, night: 'deep.ink' },
+  lights: { points: EARTH.towns, color: 'light.cream' },              // [lon, lat] or [lon, lat, weight]
+  air: { color: 'mid.ocean' },
+  children: [
+    stroke({ id: 'belt', points: COIL, color: 'accent.amber', width: 5, drawn: 0 }),   // a line on the surface
+    circle({ id: 'port', at: [-9.1, 38.7], r: 10, fill: 'accent.coral' }),              // a thing at a place
+    group({ id: 'craft', at: [-40, 50, 10], children: [...] }),                         // 10 units over the surface
+  ] }),
+// in the timeline:
+drawOn('belt', { at: 1, dur: 7 }),
+travel('craft', { at: 0.5, path: ROUND, orient: true, speeds: [[0, 1], [1.5, 40], [8, 40], [9.2, 1]] }),
+```
+
+- **The view.** `view: [lon, lat]` is the place in the middle of the disc at the start; `[0, 90]` looks down on the north pole, `[0, -90]` on the south one. The view is orthographic: the disc shows one half of the body, the edge (the limb) is where the surface turns away.
+- **The turn.** `spin` is in degrees per second, east (as the Earth turns: what faces the viewer moves from left to right as the viewer sees it, counter-clockwise round the north pole seen from above it); a negative spin turns west. Keys `[[seconds, degrees per second], ...]` (at least two, the first at 0, in order) change it smoothly, as the `speeds` of a travel do: `[[0, 0], [2, 5]]` starts at rest and turns 5 degrees a second after 2 s. At most 360 degrees a second. The globe's `rotation` turns the whole disc, light and all, in the frame, as for any node; `spin` turns its surface under the light.
+- **Layers.** Each `{ rings, fill, opacity?, drift?, soft? }` is painted in order over the disc: `rings` is a list of outlines, each a list of `[lon, lat]`, outer rings counter-clockwise seen from outside and holes clockwise (as skink3-geo writes them), filled non-zero, so a hole in a ring is open and two clouds that overlap make one. An edge is followed along the sphere (a ring may cross the 180th meridian or go round a pole). `drift` turns a layer east over the body, in degrees per second, on top of the spin (clouds that drift); `soft` blurs its edges by that share of the radius (0..0.2). An opaque layer gets a hairline of its own colour along its edges, which closes the seams where polygons that were thinned apart meet.
+- **Clouds and patches.** `globeBlob({ at, r, points?, wobble?, stretch?, seed? })` returns a ring of `[lon, lat]` round a place: a soft, uneven patch `r` degrees of arc across its half, `points` (28) points, waves `wobble` (0.25) deep, `stretch` (1) times wider east to west than north to south, from the seeded stream of `seed` (1), the same every time.
+- **The light.** `light: { from?, lit?, night, amount?, soft? }`: the sun lights the body from `from` degrees (as a relief's light: 0 from the right, -90 from the top; -135 by default), and `lit` is the share of the disc's width in the light (0 a new moon, 0.5 a half, 1 full; 0.7). The rest is the night side, in `night` at `amount` (0.8), past a terminator as soft as `soft` (0.05 of the radius). A crescent is a small `lit`. The light stays where it is while the body turns: the surface moves through the day into the night. Left out, the body is lit all over and has no night. `shade` (0.25) darkens the disc toward its edge, least where the light falls, so that it reads as a ball.
+- **Lights on the night side.** `lights: { points, color, size?, amount? }`: places `[lon, lat]` or `[lon, lat, weight]` (the towns of the Earth, weight its people in millions) drawn as small glowing dots, `size` (1.5) units across their half times the square root of the weight (up to four times), at `amount` (0.9). They shine only on the night side, fading in past the terminator and out toward the edge, and need a `light`.
+- **Air.** `air: { color, width?, amount? }`: a thin soft rim round the disc, `width` units wide (3 % of the radius), brighter on the lit side, at `amount` (0.7).
+- **Things on it.** A child of a globe stands on it. Its `at` is `[lon, lat]`, or `[lon, lat, height]` in units over the surface; it rides the turn, fades out as it reaches the edge, and is hidden on the far side (one high over the surface shows a little past the edge, as it would). Its `rotation` is its heading, 0 east and 90 north: a `travel` with `orient` along a path of `[lon, lat]` faces along its way, and `moveTo`, `travel` and their keys move it from place to place. It keeps its size (a thing near the edge is not foreshortened) and is not darkened by the night. A group on a globe holds ordinary children in its own space.
+- **Lines on it.** A `stroke` among its children is a line on the surface: its `points` are `[lon, lat]`, joined as on a map (a longitude may run on past 180, so a line can go round several times: `[0, 0]` to `[1080, 10]` is three turns side by side). It turns with the globe, its part on the far side is hidden, and `drawOn` draws it on along its places. It has no `at`, `rotation`, `scale` or height of its own, no `dash`, `rise` or `pulse`, and nothing moves, reshapes or drives it.
+- **Where it goes.** A globe stands in a flat layer, or directly in a perspective layer; it refuses a group that lies in a plane (it is seen from far away, straight on). Lights refuse a globe without a light; a light without a `night` colour is refused; a ring of fewer than three different places is refused; a child under the surface (a negative height) is refused.
+- **The review.** The motion review judges the turn as the rotation of the globe, at its radius: keys that take it from rest to speed within a frame or two are an `abrupt-start` on the globe, keys a second or two long are sound, and a turning globe keeps its part of the frame alive. Things on it are judged where they are drawn, riding the turn; a thing hidden behind the disc is not judged while it is hidden. The contrast review samples a line on a globe along its visible parts.
+- **Its cost.** The outlines are clipped to the near side at every frame. The example `examples/globe` (the Earth at 1:110m and the Moon, about 23 000 points of outline and 1500 lights) draws a 1080p frame in about 50 ms on the CPU, less than the example `examples/space`.
+- Left out, nothing is drawn differently: a scene without a globe is the data it was.
+
 ## Springs: secondary motion
 
 `follow` (any shape, group or label) and `sway` (a capsule with `origin: 'start'`) take a preset name or `{ f, z, r }`:
@@ -1681,6 +1735,7 @@ Things to know when you write a scene:
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
+- A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn (see A globe).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
@@ -2138,4 +2193,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer. See the roadmap in the README.
+No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size) and no heights on a globe. See the roadmap in the README.
