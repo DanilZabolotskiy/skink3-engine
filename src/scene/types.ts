@@ -127,6 +127,12 @@ export interface ShapeNode extends NodeBase {
   readonly cover?: boolean;
   /** Labels may lie over it (ground, a wall, a backdrop): the covers-node warning leaves it out. */
   readonly backdrop?: boolean;
+  /**
+   * In a plane of a perspective layer: the shape stands up from the plane, flat, like a sail or a sign. Its own x
+   * runs along the plane, turned with the node; its own y runs straight up from the plane, and its points with a y
+   * below 0 stand over the node's place. Elsewhere it is drawn as any shape.
+   */
+  readonly stands?: boolean;
   /** Id of a shape of the same layer: this node and what is in it are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
   /** The shape is a content: it fills its own outline from the bottom up to a level. */
@@ -158,6 +164,34 @@ export interface ShapeNode extends NodeBase {
   readonly roof?: RoofSpec;
   /** A body with a rise: rows of openings painted on its side. Left out: a plain side. */
   readonly openings?: OpeningsSpec;
+  /** A field of heights drawn as the light falls on it (relief): the shape is the rect it spans. Left out: a plain shape. */
+  readonly relief?: ReliefSpec;
+}
+
+/**
+ * A field of heights, a grid of them laid over a rect (as a digital elevation model lies over a map), shaded by a
+ * light from one side and from above. Its colours are in `colors` of its node: relief.dark, relief.bright and a
+ * relief.tint<i> for each tint.
+ */
+export interface ReliefSpec {
+  /** Points of the grid across and down; the first row is the top of the rect, the first point of a row its left. */
+  readonly cols: number;
+  readonly rows: number;
+  /** cols * rows heights, row by row, in the units of the data (metres, say). */
+  readonly heights: Float32Array;
+  /** Units of the scene to a unit of height: how steep the slopes are drawn. */
+  readonly vertical: number;
+  /** Degrees, where the light comes from in the plane of the rect: 0 from its right, -90 from its top. */
+  readonly from: number;
+  /** Degrees, how high the light stands over the ground (1..89). */
+  readonly high: number;
+  /** 0..1: how far a slope turns toward the dark or the bright tone. */
+  readonly amount: number;
+  /** The tone of the slopes turned from the light, and of those turned to it. */
+  readonly dark: ColorRef;
+  readonly bright: ColorRef;
+  /** Tints of the ground by height, from the lowest: [height, colour]. Left out: only the shading is drawn, over what is under it. */
+  readonly tints?: readonly (readonly [number, ColorRef])[];
 }
 
 /** How a heat haze moves the picture behind it. All lengths are in the units of the layer. */
@@ -230,6 +264,18 @@ export interface OpeningsSpec {
  * it casts one, as long as the body is high. They are one picture, drawn before everything else of the group, or,
  * with over: 'flat', over its flat members and under its raised ones.
  */
+/**
+ * Depth haze on a plane: from `near` to `far` units from the camera (measured along its line of sight), what the
+ * plane draws turns toward the colour, smoothly, up to `amount` of the way; beyond `far` it stays there.
+ */
+export interface FogSpec {
+  readonly color: ColorRef;
+  readonly near: number;
+  readonly far: number;
+  /** 0..1: how far toward the colour the farthest ground turns. */
+  readonly amount: number;
+}
+
 export interface CastSpec {
   readonly color: ColorRef;
   /** 0..1: how strong that one picture is. */
@@ -271,6 +317,11 @@ export interface GroupNode extends NodeBase {
   readonly plane?: PlaneAxes;
   /** Such a group: false does not draw it when the camera sees the back of its plane. Left out: it is drawn from both sides. */
   readonly back?: boolean;
+  /**
+   * Such a group: a body in it may stand taller than the camera is high over the plane, and is drawn whole, its top
+   * seen from below. Left out: a body is drawn at most 0.9 of the camera's height tall.
+   */
+  readonly tall?: boolean;
   /** Units: the group is drawn as one picture, blurred this far. Left out: sharp. */
   readonly soft?: number;
   /**
@@ -281,6 +332,8 @@ export interface GroupNode extends NodeBase {
   readonly sort?: 'depth';
   /** The bodies in the group cast shadows on the ground it lies on. Left out: no shadows. */
   readonly cast?: CastSpec;
+  /** A group in a plane: what it draws fades toward a colour with its distance from the camera. Left out: no fog. */
+  readonly fog?: FogSpec;
   /**
    * How much detail the bodies inside the group are worth. A body that is smaller on screen than `min` is drawn
    * plain: its top alone. Every other body is drawn with everything it has, its side as one outline. Left out: every

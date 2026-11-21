@@ -33,6 +33,7 @@ import type {
   CameraPathSpec,
   CameraSpec,
   CastSpec,
+  FogSpec,
   DetailSpec,
   ContrastSpec,
   EmitterNode,
@@ -262,6 +263,13 @@ export interface ShapeOptions {
   cover?: boolean;
   /** Labels may lie over it without a covers-node warning (ground, a wall, a backdrop); default false. */
   backdrop?: boolean;
+  /**
+   * In a plane of a perspective layer: true stands the shape up from the plane, flat, as a sail or a sign stands. Its
+   * own x runs along the plane, turned with its rotation; its own y runs straight up, and the points with a y below 0
+   * stand over its place (a sail: [[-30, 0], [30, 0], [0, -80]]). Not for a body (rise). Elsewhere it is drawn as any
+   * shape. Default false.
+   */
+  stands?: boolean;
   /** Id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline. */
   clipTo?: string;
   /**
@@ -311,7 +319,7 @@ export interface ShapeOptions {
 
 const SHAPE_KEYS = [
   'id', 'fill', 'at', 'rotation', 'scale', 'opacity', 'lit', 'highlight', 'glow', 'lift', 'rimLight', 'children', 'follow', 'idle', 'body',
-  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze', 'roof', 'openings',
+  'cover', 'backdrop', 'clipTo', 'level', 'sound', 'depth', 'soft', 'rise', 'side', 'haze', 'roof', 'openings', 'stands',
 ];
 
 /** What a heat haze is when only its amount is given. */
@@ -435,6 +443,18 @@ function detailOf(where: string, value: unknown): { detail?: DetailSpec } {
   return { detail: { min: num(where, 'detail.min', d.min, 0, DETAIL_MAX) } };
 }
 
+/** The depth haze of a group in a plane: written only when it is given, so that a group without it is the data it always was. */
+function fogOf(where: string, value: unknown): { fog?: FogSpec } {
+  if (value === undefined) return {};
+  const f = value as { color?: unknown; near?: unknown; far?: unknown; amount?: unknown };
+  checkKeys(`${where}: fog`, f, ['color', 'near', 'far', 'amount']);
+  if (f.color === undefined) fail(where, 'fog needs a color: what the far ground turns toward, a palette reference; the engine has none of its own');
+  const near = num(where, 'fog.near', f.near, 0, 1e7);
+  const far = num(where, 'fog.far', f.far, 0, 1e7);
+  if (!(far > near)) fail(where, `fog.far (${far}) must lie beyond fog.near (${near})`);
+  return { fog: { color: color(where, 'fog.color', f.color), near, far, amount: f.amount === undefined ? 1 : num(where, 'fog.amount', f.amount, 0, 1) } };
+}
+
 /** What a cast is when it says nothing more than its colour. */
 export const CAST_DEFAULTS = { opacity: 0.35, length: 0.7, soft: 0 } as const;
 
@@ -460,13 +480,16 @@ function level(where: string, value: ShapeOptions['level']): LevelSpec {
 }
 
 /** Options that are written into a node only when they are given, so that a node without them is the data it always was. */
-function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level'] }): {
+function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level']; stands?: boolean; rise?: unknown }): {
   cover?: boolean;
   backdrop?: boolean;
   clipTo?: string;
   level?: LevelSpec;
+  stands?: boolean;
 } {
+  if (o.stands && o.rise !== undefined) fail(where, 'stands is for a flat shape that stands up from its plane; a body with a rise stands already: leave one out');
   return {
+    ...(o.stands ? { stands: flag(where, 'stands', o.stands) } : {}),
     ...(o.cover === undefined ? {} : { cover: flag(where, 'cover', o.cover) }),
     ...(o.backdrop === undefined ? {} : { backdrop: flag(where, 'backdrop', o.backdrop) }),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
@@ -600,6 +623,79 @@ export function rect(o: ShapeOptions & { w: number; h: number; radius?: number }
   return shapeNode(where, o, wrapShape(where, () => rectShape(o.w, o.h, o.radius ?? Math.min(o.w, o.h) * 0.22)), null);
 }
 
+/**
+ * A field of heights drawn as the light falls on it: relief shading of a map from a grid of elevations (a digital
+ * elevation model), over a rect `w` by `h` around its place. The grid's first row lies along the top of the rect, its
+ * first point at the left. Each pixel the field covers is worked out at the size the frame draws it, the grid read
+ * between its points along smooth curves, so a camera that comes near finds no pixels in it. In a plane of a
+ * perspective layer it lies on the plane, as any shape does; with clipTo it is drawn inside another shape (the land).
+ *
+ * - heights: { cols, rows, values }: cols * rows heights, row by row, in any unit (metres, say).
+ * - vertical: units of the scene to one unit of height (default 1): how steep the slopes are drawn.
+ * - sun: { from, high }: degrees, where the light comes from in the rect's plane (0 from its right, -90 from its top;
+ *   default -135, the top left) and how high it stands over the ground (default 45).
+ * - dark, bright: palette references: the tone of the slopes turned from the light and of those turned to it.
+ * - amount: 0..1, how far a slope turns toward them (default 0.7).
+ * - tints: [[height, colour], ...] from the lowest: the ground tinted by its height, shaded over it. Left out: only
+ *   the shading is drawn, the dark and the bright tones as strong as each slope is, over what lies under the field.
+ */
+export function relief(o: {
+  id: string;
+  at?: Vec2 | Vec3;
+  depth?: number;
+  rotation?: number;
+  scale?: number;
+  opacity?: number;
+  clipTo?: string;
+  w: number;
+  h: number;
+  heights: { cols: number; rows: number; values: ArrayLike<number> };
+  vertical?: number;
+  sun?: { from?: number; high?: number };
+  dark: ColorRef;
+  bright: ColorRef;
+  amount?: number;
+  tints?: readonly (readonly [number, ColorRef])[];
+}): ShapeNode {
+  const where = `relief("${o?.id}")`;
+  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints']);
+  const g = o.heights;
+  if (g === null || typeof g !== 'object') fail(where, 'heights must be { cols, rows, values }');
+  checkKeys(`${where} heights`, g, ['cols', 'rows', 'values']);
+  const cols = num(where, 'heights.cols', g.cols, 2, 8192);
+  const rows = num(where, 'heights.rows', g.rows, 2, 8192);
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) fail(where, `heights.cols and heights.rows must be whole numbers, got ${cols} and ${rows}`);
+  if (!g.values || typeof g.values.length !== 'number' || g.values.length !== cols * rows) fail(where, `heights.values must hold cols * rows = ${cols * rows} heights, got ${g.values?.length}`);
+  const heights = Float32Array.from(g.values);
+  for (let i = 0; i < heights.length; i++) if (!Number.isFinite(heights[i])) fail(where, `heights.values[${i}] is not a finite number`);
+  if (o.sun !== undefined) checkKeys(`${where} sun`, o.sun, ['from', 'high']);
+  let tints: [number, ColorRef][] | undefined;
+  if (o.tints !== undefined) {
+    if (!Array.isArray(o.tints) || o.tints.length === 0) fail(where, 'tints must be a list of [height, colour], from the lowest');
+    tints = o.tints.map((t, k) => {
+      if (!Array.isArray(t) || t.length !== 2) fail(where, `tints[${k}] must be [height, colour]`);
+      return [num(where, `tints[${k}][0]`, t[0], -1e6, 1e6), color(where, `tints[${k}][1]`, t[1])];
+    });
+    for (let k = 1; k < tints.length; k++) if (!(tints[k]![0] > tints[k - 1]![0])) fail(where, `tints must run from the lowest height up; tints[${k}] is at ${tints[k]![0]}, after ${tints[k - 1]![0]}`);
+  }
+  const base = shapeNode(where, { id: o.id, fill: o.dark, lit: false, ...(o.at === undefined ? {} : { at: o.at }), ...(o.depth === undefined ? {} : { depth: o.depth }), ...(o.rotation === undefined ? {} : { rotation: o.rotation }), ...(o.scale === undefined ? {} : { scale: o.scale }), ...(o.opacity === undefined ? {} : { opacity: o.opacity }), ...(o.clipTo === undefined ? {} : { clipTo: o.clipTo }) }, wrapShape(where, () => rectShape(num(where, 'w', o.w, 1, 1e6), num(where, 'h', o.h, 1, 1e6), 0)), null);
+  return {
+    ...base,
+    relief: {
+      cols,
+      rows,
+      heights,
+      vertical: o.vertical === undefined ? 1 : num(where, 'vertical', o.vertical, 1e-6, 1e6),
+      from: o.sun?.from === undefined ? -135 : num(where, 'sun.from', o.sun.from, -3600, 3600),
+      high: o.sun?.high === undefined ? 45 : num(where, 'sun.high', o.sun.high, 1, 89),
+      amount: o.amount === undefined ? 0.7 : num(where, 'amount', o.amount, 0, 1),
+      dark: color(where, 'dark', o.dark),
+      bright: color(where, 'bright', o.bright),
+      ...(tints ? { tints } : {}),
+    },
+  };
+}
+
 /** A soft irregular blob of mean radius r; the same seed always gives the same outline. */
 export function blob(o: ShapeOptions & { r: number; points?: number; wobble?: number; seed?: number }): ShapeNode {
   const where = `blob("${o?.id}")`;
@@ -638,6 +734,18 @@ export function group(o: {
   plane?: 'floor' | 'wall' | 'side' | { x: Vec3; y: Vec3 };
   /** With plane: false does not draw the group when the camera sees the back of its plane; default true. */
   back?: boolean;
+  /**
+   * With plane: true lets a body in the group (a shape with a rise) stand taller than the camera is high over the
+   * plane: a tower on a map seen from low down. It is drawn whole, its top seen from below. Left out: a body is drawn
+   * at most 0.9 of the camera's height tall.
+   */
+  tall?: boolean;
+  /**
+   * With plane: depth haze. What the group draws turns toward color (a palette reference) with its distance from the
+   * camera, measured along its line of sight in units of the layer: not at all nearer than near, smoothly more up to
+   * far, and amount of the way (0..1, default 1) at far and beyond. The far land of a tilted map fades into the air.
+   */
+  fog?: { color: ColorRef; near: number; far: number; amount?: number };
   /** Units, up to 200: the group is drawn as one picture, blurred this far: soft shadows, a haze, a cloud. */
   soft?: number;
   /**
@@ -666,15 +774,18 @@ export function group(o: {
   sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'soft', 'sort', 'cast', 'detail']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'tall', 'fog', 'soft', 'sort', 'cast', 'detail']);
   if (o.sort !== undefined && o.sort !== 'depth') fail(where, `sort must be "depth" (the children are drawn far to near), got ${JSON.stringify(o.sort)}; leave it out to draw them as listed`);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   if (o.back !== undefined && o.plane === undefined) fail(where, 'back is for a group that lies in a plane of a perspective layer: give plane');
+  if (o.tall !== undefined && o.plane === undefined) fail(where, 'tall is for a group that lies in a plane of a perspective layer: give plane');
+  if (o.fog !== undefined && o.plane === undefined) fail(where, 'fog is for a group that lies in a plane of a perspective layer: give plane');
   return {
+    ...fogOf(where, o.fog),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...order(where, o.depth),
     // Written only when it is given: a group without a plane is the data it always was.
-    ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) }),
+    ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }), ...(o.tall ? { tall: flag(where, 'tall', o.tall) } : {}) }),
     ...softness(where, o.soft),
     // Written only when they are given: a group without them is the data it always was.
     ...(o.sort === undefined ? {} : { sort: o.sort }),

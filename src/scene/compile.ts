@@ -213,7 +213,7 @@ export interface CompiledShot {
   readonly backgroundTrack: BackgroundTrack | null;
   /** True when some layer of the shot is a perspective layer. */
   readonly spatial: boolean;
-  /** True when a node of the shot is a body with a height (a rise). */
+  /** True when a node of the shot is a body with a height (a rise), or travels a path with heights. */
   readonly risen: boolean;
   /** True when a group of the shot draws its children far to near (sort: 'depth'). */
   readonly sorted: boolean;
@@ -650,6 +650,11 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           if (view) fail(`${where}: shape "${node.id}" has a haze, and the layer "${spec.layers[d.layer]!.id}" is a perspective layer; a haze lies in a flat layer`);
         }
         if (node.openings?.color) colors['openings'] = col(node, 'openings.color', node.openings.color);
+        if (node.relief) {
+          colors['relief.dark'] = col(node, 'relief.dark', node.relief.dark);
+          colors['relief.bright'] = col(node, 'relief.bright', node.relief.bright);
+          node.relief.tints?.forEach((t, k) => (colors[`relief.tint${k}`] = col(node, `relief.tints[${k}]`, t[1])));
+        }
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
           if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
@@ -679,6 +684,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         break;
       case 'group':
         if (node.cast) colors['cast'] = col(node, 'cast.color', node.cast.color);
+        if (node.fog) colors['fog'] = col(node, 'fog.color', node.fog.color);
         if (node.follow) {
           springKind = 'follow';
           springSpec = node.follow;
@@ -1059,7 +1065,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,
     backgroundTrack,
     spatial: perspTracks.some((track) => track !== null),
-    risen: nodes.some((n) => n.rise !== null),
+    risen: nodes.some((n) => n.rise !== null || n.pos?.lifts === true || (n.node.type === 'shape' && n.node.stands === true)),
     sorted: nodes.some((n) => sortsChildren(n.node)),
     detail: detailLevels(nodes),
   };

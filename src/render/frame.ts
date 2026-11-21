@@ -11,8 +11,8 @@ import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
-import { STAGE_H, STAGE_W, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
-import { outlineOf, shapeExtent } from '../shape/geometry.ts';
+import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
+import { outlineOf, REGION_MAX_POINTS, shapeExtent } from '../shape/geometry.ts';
 import {
   drawCast,
   drawEye,
@@ -32,7 +32,7 @@ import {
   type Paint,
 } from './draw.ts';
 import { applyHaze } from './haze.ts';
-import { applyPlane, planeContext, seesPlane } from './plane.ts';
+import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
 import { waitForGpu } from './queue.ts';
 
 export interface RenderOptions {
@@ -104,6 +104,20 @@ interface LayerTarget {
 }
 
 /** A canvas larger than the frame by `pad` pixels on every side, set up to draw in layer space. */
+/**
+ * The most points of an outline that things are clipped to the way skia clips. Skia cuts every clip out of the canvas
+ * by an operation on paths, and on a long outline that is not straight (a coast of several hundred points) the
+ * operation fails and skia drops the clip without a word: everything is drawn unclipped. A clip to a longer region is
+ * made with a mask instead, as a clip with a soft edge is, so its outline may have as many points as a region has.
+ */
+export const CLIP_MAX_POINTS = REGION_MAX_POINTS;
+
+/** Whether things are clipped to an outline too long for skia to clip to (CLIP_MAX_POINTS). */
+export function longClip(item: ClipItem): boolean {
+  const shape = itemShape(item);
+  return shape.kind === 'polygon' && shape.smooth !== undefined && shape.points.length > CLIP_MAX_POINTS;
+}
+
 function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingContext2D } {
   const canvas = newCanvas(t.scratch, t.width + 2 * t.pad, t.height + 2 * t.pad, t.gpu);
   const ctx = canvas.getContext('2d');
@@ -156,9 +170,10 @@ function drawItems(
       }
       case 'clip': {
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
-        if (softPx > 0.05) {
+        if (softPx > 0.05 || longClip(item)) {
           // A clip with a soft edge: the items are drawn whole into a picture of their own, and that picture is kept
-          // as far as the blurred outline of the shape is there.
+          // as far as the blurred outline of the shape is there. A clip to a long outline is drawn the same way with a
+          // sharp edge: skia cannot clip to it (see longClip).
           const inner = { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) };
           const own = (): { canvas: Canvas; ctx: CanvasRenderingContext2D } => {
             const made = layerCanvas(inner);
@@ -175,7 +190,7 @@ function drawItems(
           gx.save();
           gx.setTransform(1, 0, 0, 1, 0, 0);
           gx.globalCompositeOperation = 'destination-in';
-          gx.filter = `blur(${softPx.toFixed(3)}px)`;
+          if (softPx > 0.05) gx.filter = `blur(${softPx.toFixed(3)}px)`;
           gx.drawCanvas(mask, 0, 0);
           gx.restore();
           ctx.save();
@@ -196,12 +211,31 @@ function drawItems(
         drawItems(ctx, item.items, paint, target, [...stretches, item]);
         ctx.restore();
         break;
-      case 'plane':
+      case 'plane': {
+        const fog = item.far === undefined ? undefined : (item.node.node as GroupNode).fog;
+        if (fog) {
+          // A plane with fog is drawn into a picture of its own, the fog laid over what it draws, and composited.
+          const { canvas, ctx: gx } = layerCanvas(target);
+          for (const s of stretches) {
+            if (s.kind === 'plane') applyPlane(gx, s);
+            else applyStretch(gx, s);
+          }
+          applyPlane(gx, item);
+          if (!seesPlane(gx)) break;
+          drawItems(planeContext(gx), item.items, paint, target, [...stretches, item]);
+          fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'source-atop');
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawCanvas(canvas, 0, 0);
+          ctx.restore();
+          break;
+        }
         ctx.save();
         applyPlane(ctx, item);
         if (seesPlane(ctx)) drawItems(planeContext(ctx), item.items, paint, target, [...stretches, item]);
         ctx.restore();
         break;
+      }
     }
   }
 }
@@ -238,30 +272,63 @@ function drawGlow(
   covers: boolean,
   seen: ReadonlyMap<LeafItem, number> | null,
   state: { drawn: boolean } = { drawn: false },
+  /** Opens a blank canvas the size of the one drawn on, for what is clipped to a long outline. */
+  open?: () => { canvas: Canvas; ctx: CanvasRenderingContext2D },
 ): void {
   for (const item of items) {
     switch (item.kind) {
       case 'group':
-        drawGlow(ctx, item.items, paint, covers, seen, state);
+        drawGlow(ctx, item.items, paint, covers, seen, state, open);
         break;
       case 'clip':
+        if (longClip(item) && open) {
+          // Too long an outline for skia to clip to: the glow is drawn into a canvas of its own, kept inside the outline.
+          const { canvas, ctx: gx } = open();
+          const m = ctx.getTransform();
+          gx.setTransform(m);
+          drawGlow(planeCanvasOf(ctx) ? planeContext(gx) : gx, item.items, paint, covers, seen, state, open);
+          const { canvas: mask, ctx: mx } = open();
+          mx.setTransform(m);
+          fillClipShape(mx, item);
+          gx.save();
+          gx.setTransform(1, 0, 0, 1, 0, 0);
+          gx.globalCompositeOperation = 'destination-in';
+          gx.drawCanvas(mask, 0, 0);
+          gx.restore();
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawCanvas(canvas, 0, 0);
+          ctx.restore();
+          break;
+        }
         ctx.save();
         clipToShape(ctx, item);
-        drawGlow(ctx, item.items, paint, covers, seen, state);
+        drawGlow(ctx, item.items, paint, covers, seen, state, open);
         ctx.restore();
         break;
       case 'stretch':
         ctx.save();
         applyStretch(ctx, item);
-        drawGlow(ctx, item.items, paint, covers, seen, state);
+        drawGlow(ctx, item.items, paint, covers, seen, state, open);
         ctx.restore();
         break;
-      case 'plane':
+      case 'plane': {
         ctx.save();
         applyPlane(ctx, item);
-        if (seesPlane(ctx)) drawGlow(planeContext(ctx), item.items, paint, covers, seen, state);
+        const fog = item.far === undefined ? undefined : (item.node.node as GroupNode).fog;
+        if (seesPlane(ctx) && fog && open) {
+          // A glow on a plane with fog fades as the ground it lies on does.
+          const { canvas, ctx: gx } = open();
+          gx.setTransform(ctx.getTransform());
+          drawGlow(planeContext(gx), item.items, paint, covers, seen, state, open);
+          // Taking away keeps no colour: the fog's own stands in for any.
+          fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'destination-out');
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawCanvas(canvas, 0, 0);
+        } else if (seesPlane(ctx)) drawGlow(planeContext(ctx), item.items, paint, covers, seen, state, open);
         ctx.restore();
         break;
+      }
       default: {
         // A cover has something to hide only once some glow has been drawn.
         if (covers && state.drawn && item.kind === 'shape' && (item.node.node as ShapeNode).cover === true) eraseGlow(ctx, item);
@@ -381,7 +448,10 @@ function drawLayerPart(
     const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
     const gpad = Math.ceil(wide * 3);
     const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
-    drawGlow(gx, items, paint, c.covers.length > 0, seen);
+    drawGlow(gx, items, paint, c.covers.length > 0, seen, undefined, () => {
+      const made = newCanvas(target.scratch, gc.width, gc.height, target.gpu);
+      return { canvas: made, ctx: made.getContext('2d') };
+    });
     halo = { canvas: gc, pad: gpad, tight, wide };
     ctx.save();
     ctx.globalCompositeOperation = 'screen';

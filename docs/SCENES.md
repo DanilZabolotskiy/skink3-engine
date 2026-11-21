@@ -435,6 +435,7 @@ All shape factories take these options:
 | `side` | a shadow tone of the fill | palette colour of the side of a shape with a `rise` |
 | `roof` | none | `{ kind, height, ridge? }`: a gable, a hip, a cone or a dome on a shape with a `rise` (see A roof and openings on a body) |
 | `openings` | none | `{ width, height, step?, rows?, shape?, sill?, inset?, color? }`: rows of windows or arches on the side of a shape with a `rise` (see A roof and openings on a body) |
+| `stands` | `false` | in a plane of a perspective layer: the shape stands up from the plane, flat, as a sail or a sign does (see A perspective layer, A shape that stands up) |
 | `haze` | none | `{ amount, scale?, speed?, direction? }`: the picture drawn before the shape wavers inside its outline like air over heat, and what is drawn after it stays steady; `hazeTo` changes the amount (see A heat haze) |
 | `sound` | none | key of the shape's voice in a bank of sounds: what its intents and its contacts sound like (see Sound) |
 | `depth` | `0` | for a shape listed directly in a layer: its place in the draw order; the larger depth is drawn first (see `layer`) |
@@ -480,6 +481,7 @@ emitter({ id: 'snow', at: [0, -200], area: [600, 10], rate: 40, life: 6, size: 5
 - Glow is clipped as well, and a glowing node lifts the background only by the share of it that is inside. Wholly outside its clip a node leaves nothing in the picture.
 - Clipped to a shape with a `level`, a node is drawn only in the filled part of it: fizz in a drink.
 - Clipped to a shape with `soft`, a node fades out across the edge of that shape instead of being cut there (see A soft edge).
+- **A long outline.** Skia cuts a clip out of the canvas by an operation on paths, and on an outline of several hundred bends (a coast) that operation may fail, and the clip would be dropped without a word. So a node clipped to a region of more than 600 points is drawn into a picture of its own and kept inside the outline by a mask of it, as a clip to a soft shape is, with a sharp edge: it holds for the 4000 points of a flat region, in a plane of a perspective layer too, and a `soft` group clipped to it keeps its blur inside it. It costs a picture the size of the frame for each such clip.
 - A node cannot be clipped to itself or to something inside it. Labels and eyes take no `clipTo`; put an eye in a group and clip that.
 
 #### Levels
@@ -629,13 +631,40 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 - Its outline can change over time: `reshape` runs every point to a new place (see An outline that changes).
 - **Not a rigid body.** A body is convex: build the ground of the simulation from `rect`s and `polygon`s, and draw the region over or under them.
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, soft?, sort?, cast?, detail? })`
+#### `relief({ id, w, h, heights, dark, bright, ... })`
+
+Relief: a field of heights, a grid of them laid over a rect `w` by `h` (a digital elevation model over a map), drawn as the light falls on it. Slopes turned to the light turn toward `bright`, slopes turned from it toward `dark`, and flat ground is left as it is.
+
+```ts
+// The hills of a map, from a grid of 400 by 300 heights in metres, shaded on the land alone.
+relief({ id: 'hills', w: 2400, h: 1800, heights: { cols: 400, rows: 300, values: DEM }, vertical: 0.6,
+  dark: 'deep.ink', bright: 'light.cream', tints: [[0, 'mid.jade'], [400, 'mid.rose']], clipTo: 'land' }),
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `w`, `h` | required | the rect the field spans, around its place |
+| `heights` | required | `{ cols, rows, values }`: `cols * rows` heights (2 to 8192 a side), row by row; the first row lies along the top of the rect, the first height of a row at its left. Any unit |
+| `vertical` | `1` | units of the scene to one unit of height: how steep the slopes are drawn. Raise it to make low hills read |
+| `sun` | `{ from: -135, high: 45 }` | degrees: where the light comes from in the plane the field lies in (0 from the right, -90 from the top; it does not turn with the field) and how high it stands over the ground (1 to 89) |
+| `dark`, `bright` | required | palette colours: the tone of the slopes turned from the light, and of those turned to it |
+| `amount` | `0.7` | 0..1: how far a slope turns toward them. A slope that takes no light at all turns `amount` of the way to `dark`; one that faces the light, to `bright` |
+| `tints` | none | `[[height, colour], ...]`, from the lowest: the ground takes the colour of its height, between the two tints around it, and is shaded over that. Left out, only the shading is drawn, as translucent tones over what lies under the field |
+
+It also takes `at`, `depth`, `rotation`, `scale`, `opacity` and `clipTo`.
+
+- **No pixels of its own.** Every pixel the field covers is worked out at the size the frame draws it: taken back into the field (through the perspective of a plane too), and its shade and its height read off the grid between its points along smooth curves. A camera that pushes in finds a smooth field however near it comes, and the same frame is the same on the processor and on the GPU. Detail finer than the grid is not there: give a grid as fine as the closest view needs.
+- **On a map.** In a group with a `plane` it lies on the plane, as any shape does; `clipTo` keeps it on the land, and things drawn after it lie over it. It is shading only: the ground stays flat, so a body or a travel over a hill does not rise with it unless it is given the height (see A perspective layer).
+- The shading is worked out once per field and per direction of the light; each frame then reads it. A field that covers the whole frame costs about 0.3 s a frame at 1080p and 1 s at 4K, on one machine.
+- Under `tints`, a grid whose water lies below the lowest land, `[[-10, 'mid.ocean'], [0, 'mid.ocean'], [1, 'mid.jade'], ...]`, draws its own coast along the curve where the heights cross between them; a coast from a vector outline is crisper (`clipTo`).
+
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, tall?, fog?, soft?, sort?, cast?, detail? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
 Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a group has no picture of its own, so it can hold a detail of a wide view at its true size there, for a zoom into it (see Camera, a zoom into a detail).
 
-`depth` is its place in the draw order of its layer (see `layer`). `plane` and `back` are for a group listed in a perspective layer: the group and all it holds lie in a plane of the space (see A perspective layer). A group with nothing in it also serves as a corner: a place that a `drive` moves and that `link`s hold on to (see A node that follows a function of time).
+`depth` is its place in the draw order of its layer (see `layer`). `plane`, `back`, `tall` and `fog` are for a group listed in a perspective layer: the group and all it holds lie in a plane of the space (see A perspective layer). A group with nothing in it also serves as a corner: a place that a `drive` moves and that `link`s hold on to (see A node that follows a function of time).
 
 `soft` (0 to 200 units) blurs the group and all it holds as one picture: soft shadows, a haze, a cloud and its shadow (see A soft edge).
 
@@ -1105,11 +1134,12 @@ const path: Vec2[] = [[-1180, -260], [-860, -300], [-600, -60], [-300, 150]];
 | `orient` | `false` | the node turns to face along the path (its local x axis points the way it goes) |
 | `only` | `false` | the node is drawn only while it travels: hidden before `at` and after it arrives |
 
+- **A path with heights.** Points of three numbers, `[x, y, height]`, run the path that high over the ground, rising and falling between its points along the same curve as the place: a ship hauled over a hill. In a plane of a perspective layer the node is drawn that high over the plane, as the top of a body that high is (larger, nearer the camera), with all it holds; elsewhere that far up the screen. The speed is measured along the ground. All the points of a path have two numbers or all three.
 - The path is measured by its own length, so the speed along it is exactly what the profile says, on curves as on straight stretches.
 - After the travel the node stays at the last point (a closed path: at the first).
 - A flow reads as a flow when it enters and leaves: start the path outside the frame or behind a `cover`, and end it there. `only: true` spares the fades; a flow that should already run at frame 0 starts its first keys before 0.
 - A node is turned by `roll` or `orient`, or by `turnTo`, not by both.
-- `pathLength`, `pathTable` and `pathAt` are exported for scene code that needs the length of a path or a point on it.
+- `pathLength`, `pathTable`, `pathAt` and `pathHeightAt` are exported for scene code that needs the length of a path, a point on it or its height there.
 
 ### A travel whose speed changes
 
@@ -1443,6 +1473,12 @@ turnTo('card', { at: 5, to: 90, about: 'x', dur: 1.6, profile: 'ease' }),    // 
 - `to` is degrees from the plane as authored. A positive turn about x lifts the edge at its +y toward its front; a positive turn about y lifts the edge at its +x.
 - `speed`, `speeds`, `dur`, `profile` and `overshoot` are those of any turn. Turns about x, turns about y and turns in the plane are three chains of their own.
 
+**Depth haze: `fog`.** `fog: { color, near, far, amount? }` on a group with `plane` turns what the group draws toward `color` (a palette colour) with its distance from the camera, measured along the camera's line of sight in units of the layer: not at all nearer than `near`, more and more up to `far` along a smooth curve, and `amount` of the way (0..1, default 1) at `far` and beyond. The far land of a tilted map fades into the air, its near land stays clear, and the fog moves with the camera. The plane is drawn into a picture of its own and the haze laid over it, so it tints the plane's fill, its shapes, its bodies and their shadows alike, and fades the glow on it. Left out, a plane is drawn as it always was.
+
+**Bodies taller than the camera is high: `tall`.** A body in a plane (a shape with a `rise`) is held under the camera: it is drawn at most 0.9 of the camera's height over the plane, its roof included, so a tower on a map seen from low down is cut short. `tall: true` on the group with `plane` draws such a body whole: the part of it above the camera's height is seen from below, the underside of its roof where it shows, and what would come round behind the camera is left out. Its shadow is that of the body as high as it is held. Bodies placed on the top of a tall body, and strokes with a rise, are still held. Without `tall` a body is drawn as it always was.
+
+**A shape that stands up: `stands`.** `stands: true` on a shape in a plane stands it up from the plane, flat, as a sail, a flag or a sign does. Its own x runs along the plane, turned with its `rotation`; its own y runs straight up, so the points with a negative y stand over its place: `polygon({ id: 'sail', points: [[-30, 0], [40, 0], [-10, -90]], stands: true, ... })` is a lateen sail on a hull. Seen from the side it shows its whole shape; turned toward the camera it narrows to an edge. It is not a body and takes no `rise`. Outside a plane it is drawn as any shape.
+
 **A region and a stroke through points of the space.** Give `points` of three numbers: a ramp, the face of a box, a path that climbs. The points of a region run clockwise as its front is seen; `back: false` leaves it out when it is seen from behind. Such a node takes no `level`, no `idle` and no `reshape`; `drive` moves its points (`points: [[x, y, z], ...]`). The whole of a stroke is as wide as a flat stroke at the distance of its middle.
 
 **What is drawn over what.** The nodes listed in the layer are drawn farthest first, by the distance of each one's place from the camera, whatever the order of the list; what is equally far keeps the order of the list. A node is ordered as a whole, by its place, and nodes that pass through each other are not cut. So give a ground that lies under everything a large `depth` (it is added to the distance), and drive the `depth` of a thing where its place alone orders it wrongly. A link is as far as the middle between its two nodes.
@@ -1454,7 +1490,7 @@ turnTo('card', { at: 5, to: 90, about: 'x', dur: 1.6, profile: 'ease' }),    // 
 - The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space. Only the bodies of a group with `cast` throw shadows, and only on their plane (see Bodies in a group: shadows, depth order, detail); draw any other shadow as links or as a region on the ground and drive it. A shape or a stroke in a plane may stand up from it with `rise`, as the top of a body, with a roof and openings if it is given them (see A height: bodies that stand on the ground).
 - Nothing but a plane is cut at the camera. A node whose place, or one of whose points of the space, is nearer than 2 % of the lens in front of the camera, or behind it, is not drawn at that frame.
 - Rigid bodies are refused in a perspective layer: the physics bake is flat. Springs (`follow`, `sway`) work on the picture, so a move of the layer's camera sets them swinging.
-- No blur by distance: the `blur` of the layer applies to all of it. One node or one group, also in a plane, is blurred by its own `soft`.
+- No blur by distance: the `blur` of the layer applies to all of it. One node or one group, also in a plane, is blurred by its own `soft`. A plane fades by distance with `fog`.
 
 `examples/space/scene.ts` shows a floor with a map, a wire cube of driven corners with its shadow, a moon that passes in front of a globe and behind it, a card on a hinge, a ramp, and a camera that rises, goes round and moves in.
 

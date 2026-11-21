@@ -5,7 +5,7 @@
 // Opacity is not applied here: a faded node arrives wrapped in a group, and the
 // compositor fades the whole group as one picture.
 
-import { Path2D, type CanvasRenderingContext2D } from 'skia-canvas';
+import { DOMMatrix, Path2D, type CanvasRenderingContext2D } from 'skia-canvas';
 import { quadAt, TAU, vrot, type Quad, type Vec2, type Xf } from '../core/math.ts';
 import { atmosphereTone, HIGHLIGHT_HUE, lightTone, mix, SHADOW_HUE, shadowTone, withAlpha } from '../look/color.ts';
 import { litParts } from '../look/light.ts';
@@ -19,7 +19,8 @@ import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode,
 import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
 import { shapePath } from '../shape/path.ts';
-import { PLANE_NEAR_W0, planeCanvas } from './plane.ts';
+import { liftedContext, PLANE_NEAR_W0, planeCanvas } from './plane.ts';
+import { drawRelief } from './relief.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 import { splitRuns, type RunSpan } from '../text/runs.ts';
 
@@ -463,7 +464,7 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
   let first = -1;
   // Corners are drawn on a grid far finer than a pixel. Where many faces meet (the top of a dome), their corners differ
   // by the last digits of the arithmetic, and a path with a crowd of such points is not filled at all.
-  const grid = ROOF_GRID * Math.max(item.xf.scale, 1e-9);
+  const grid = ROOF_GRID * Math.max(Math.abs(item.xf.scale), 1e-9);
   const outline = (q: readonly number[], stride: number): number[] => {
     let px = Math.round(q[0]! * grid) / grid;
     let py = Math.round(q[1]! * grid) / grid;
@@ -501,7 +502,7 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
       const k = (j + 1) % m;
       area += q[2 * j]! * q[2 * k + 1]! - q[2 * k]! * q[2 * j + 1]!;
     }
-    if (turned ? area >= 0 : area <= 0) continue;
+    if (foot.tall ? !facesEye(face.points, face.normal, foot) : turned ? area >= 0 : area <= 0) continue;
     const whole = outline(q, 2);
     if (face.wall) {
       walls.push(whole);
@@ -545,6 +546,14 @@ function fillRoof(easel: Easel, item: ShapeItem, shape: ShapeSpec, roof: RoofSpe
 }
 
 /**
+ * Whether a face of a roof of a tall body is turned to the camera: in its plane a face higher than the eye is drawn
+ * from points behind the camera, and the way its outline winds there says nothing; the camera's place does.
+ */
+function facesEye(points: Float64Array, normal: readonly [number, number, number], foot: Foot): boolean {
+  return (foot.ux - points[0]!) * normal[0] + (foot.uy - points[1]!) * normal[1] + (foot.uh - foot.h - points[2]!) * normal[2] > 0;
+}
+
+/**
  * A hip roof on a free outline, in the units of its top: every slope turned to the viewer, far to near, so that a
  * near wing hides the slopes behind it. All of them are first one path in the tone of the farthest, so that nothing
  * shows between two slopes; then each run of slopes of one tone is one path.
@@ -560,7 +569,7 @@ function fillRegionRoof(
   lit: (nx: number, ny: number, nz: number) => number,
 ): void {
   const top = highest(foot);
-  const grid = ROOF_GRID * Math.max(item.xf.scale, 1e-9);
+  const grid = ROOF_GRID * Math.max(Math.abs(item.xf.scale), 1e-9);
   const seen: { near: number; step: number; outline: number[] }[] = [];
   for (const face of roofFaces(shape, roof)) {
     const m = face.points.length / 3;
@@ -581,7 +590,7 @@ function fillRegionRoof(
       cx += (face.points[3 * j]! + face.points[3 * k]!) * w;
       cy += (face.points[3 * j + 1]! + face.points[3 * k + 1]!) * w;
     }
-    if (turned ? area >= 0 : area <= 0) continue;
+    if (foot.tall ? !facesEye(face.points, face.normal, foot) : turned ? area >= 0 : area <= 0) continue;
     let plan = 0;
     for (let j = 0; j < m; j++) {
       const k = (j + 1) % m;
@@ -712,16 +721,29 @@ export function fillClipShape(ctx: CanvasRenderingContext2D, item: ClipItem): vo
 
 /** A shape with its automatic light. A content with a level is drawn below its surface only; a body that stands up, over its side. */
 export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
+  if ((item.node.node as ShapeNode).relief) {
+    drawRelief(ctx, item, (hex) => paint.tone('base', hex));
+    return;
+  }
+  const lift = item.foot?.lift;
+  if (lift) {
+    // A body taller than the camera is high: at its whole height, every point mapped by itself (liftedContext).
+    drawShape(liftedContext(ctx), { ...item, xf: lift.xf, foot: lift.foot }, paint);
+    return;
+  }
   if (!item.level) {
     if (item.detail?.plain) {
       fillPlain(ctx, item, item.detail.unit, paint);
       return;
     }
     if (item.foot) {
-      if (item.detail) fillSideRuns(ctx, item, item.foot, item.detail.unit, paint);
+      // The side of a tall body as one outline would take its top for its far edge, which, seen from below, it is not.
+      if (item.detail && !item.foot.tall) fillSideRuns(ctx, item, item.foot, item.detail.unit, paint);
       else fillSide(ctx, item, item.foot, paint);
       // A roof stands in place of the flat top.
       if (fillSolid(ctx, item, item.foot, paint)) return;
+      // A top higher than the eye is seen from below: the side hides it.
+      if (item.foot.tall && item.foot.h >= item.foot.uh) return;
     }
     fillShape(ctx, item, paint);
     return;
@@ -745,6 +767,25 @@ export function drawShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint:
   ctx.restore();
 }
 
+/**
+ * Moves the canvas into the own space of a shape that stands up from its plane (stands): its x along the plane,
+ * turned with it, its y straight up. A point (px, py) of it stands over the place xf + R (s px, 0) at the height
+ * -s py, and the camera, over (sx, sy) at the height H, sees it in the plane where the line from the eye through it
+ * meets the plane: xf + R (s px, 0) + (sx, sy) s py / H over 1 + s py / H. A perspective of its own.
+ */
+function standUp(ctx: CanvasRenderingContext2D, xf: Xf, upon: readonly [number, number, number]): void {
+  const s = xf.scale;
+  const m = new DOMMatrix();
+  m.m11 = Math.cos(xf.rot) * s;
+  m.m12 = Math.sin(xf.rot) * s;
+  m.m21 = (upon[0] * s) / upon[2];
+  m.m22 = (upon[1] * s) / upon[2];
+  m.m24 = s / upon[2];
+  m.m41 = xf.x;
+  m.m42 = xf.y;
+  ctx.transform(m);
+}
+
 function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint): void {
   const node = item.node.node as ShapeNode;
   const { xf } = item;
@@ -752,9 +793,12 @@ function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint)
   const shape = itemShape(item);
   const path = shapePath(shape);
   ctx.save();
-  ctx.translate(xf.x, xf.y);
-  ctx.rotate(xf.rot);
-  ctx.scale(xf.scale, xf.scale);
+  if (item.upon && item.upon[2] !== 0) standUp(ctx, xf, item.upon);
+  else {
+    ctx.translate(xf.x, xf.y);
+    ctx.rotate(xf.rot);
+    ctx.scale(xf.scale, xf.scale);
+  }
   ctx.fillStyle = paint.tone('base', base);
   ctx.fill(path);
   if (node.lit) {

@@ -678,7 +678,12 @@ export function travel(
   id: string,
   opts: {
     at: number;
-    path: readonly Vec2[];
+    /**
+     * The points it passes through. Three numbers each, [x, y, height]: the path also runs that high over the ground,
+     * rising and falling between its points (in a plane of a perspective layer the node is drawn that high over the
+     * plane, as the top of a body is; anywhere else that far up the screen). Its speed is measured along the ground.
+     */
+    path: readonly Vec2[] | readonly Vec3[];
     speed?: number;
     dur?: number;
     profile?: Exclude<MoveProfile, 'settle'>;
@@ -710,10 +715,17 @@ export function travel(
   if (!Array.isArray(opts.path) || opts.path.length < 2) throw new IntentError(`${w}: path must be a list of at least two points [x, y]`);
   const closed = opts.closed ?? false;
   if (closed && opts.path.length < 3) throw new IntentError(`${w}: a closed path needs at least three points`);
+  const given = opts.path as readonly (readonly number[])[];
+  const high = Array.isArray(given[0]) && given[0].length === 3;
+  for (let i = 0; i < given.length; i++) {
+    if (!Array.isArray(given[i]) || given[i]!.length !== (high ? 3 : 2)) throw new IntentError(`${w}: path[${i}] must be ${high ? '[x, y, height], as the first point is' : '[x, y]'}`);
+  }
   const path: PathSpec = {
-    points: opts.path.map((p, i) => point(w, `path[${i}]`, p)),
+    points: given.map((p, i) => point(w, `path[${i}]`, [p[0], p[1]])),
     closed,
     smooth: num(w, 'smooth', opts.smooth ?? 1, 0, 1),
+    // Written only when they are given: a path on the ground is the data it always was.
+    ...(high ? { heights: given.map((p, i) => num(w, `path[${i}][2]`, p[2], -1e5, 1e5)) } : {}),
   };
   const loops = num(w, 'loops', opts.loops ?? 1, 1, 1000);
   if (!closed && loops !== 1) throw new IntentError(`${w}: loops needs closed: true`);

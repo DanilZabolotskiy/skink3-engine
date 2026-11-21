@@ -42,7 +42,7 @@ import type {
   WidthToKey,
 } from './intents.ts';
 import { sampleDrive, sampleDriven, type DriveTrack } from './drive.ts';
-import { pathAt, pathTable, type PathSpec } from './paths.ts';
+import { pathAt, pathHeightAt, pathTable, type PathSpec } from './paths.ts';
 
 /** A move never backs away or overshoots by more than this many units, however long it is. */
 export const MAX_ANTICIPATION_UNITS = 44;
@@ -86,6 +86,8 @@ export interface PosTrack {
   readonly turns: boolean;
   /** A path of this track shows the node only while it travels. */
   readonly onlyWhile: boolean;
+  /** A path of this track runs over the ground (heights): the node is drawn as high as the path runs (sampleHeight). */
+  readonly lifts?: boolean;
   /** The place follows the samples of a drive: the track then has no moves. */
   readonly drive?: DriveTrack;
 }
@@ -121,7 +123,30 @@ export function buildPosTrack(id: string, base: Vec2, keys: readonly (MoveToKey 
     }
     free = k.at + k.dur;
   }
-  return { base, segs, turns: segs.some((s) => s.roll !== null || s.orient), onlyWhile: segs.some((s) => s.only) };
+  const lifts = segs.some((s) => s.path?.heights !== undefined);
+  return { base, segs, turns: segs.some((s) => s.roll !== null || s.orient), onlyWhile: segs.some((s) => s.only), ...(lifts ? { lifts } : {}) };
+}
+
+/**
+ * How high over the ground a node is at time t, in the units of its place: as high as the path it travels runs (a
+ * path with heights), or ran when it arrived; before its first travel, as high as that path starts. 0 on any other
+ * stretch: a move or a hop sets the node on the ground.
+ */
+export function sampleHeight(track: PosTrack, t: number): number {
+  if (!track.lifts) return 0;
+  let seg: MoveSeg | null = null;
+  for (const s of track.segs) {
+    if (t >= s.at) seg = s;
+    else break;
+  }
+  if (!seg) {
+    const first = track.segs[0];
+    return first?.path?.heights ? first.path.heights[0]! : 0;
+  }
+  if (seg.kind !== 'path' || !seg.path!.heights) return 0;
+  const u = Math.min(1, (t - seg.at) / seg.dur);
+  const table = pathTable(seg.path!);
+  return pathHeightAt(seg.path!, plainProgress(seg, u) * table.length * seg.loops);
 }
 
 /** Progress (0..1) of a segment with a profile other than settle. */

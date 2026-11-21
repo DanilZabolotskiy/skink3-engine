@@ -12,6 +12,11 @@ export interface PathSpec {
   readonly closed: boolean;
   /** 0 joins the points with straight lines, 1 with a smooth curve (a Catmull-Rom spline); between them the corners are partly rounded. */
   readonly smooth: number;
+  /**
+   * A height at each point, in units: how high over the ground the path runs there. Between two points it changes
+   * along the same curve as the place. Left out: the path lies on the ground.
+   */
+  readonly heights?: readonly number[];
 }
 
 export interface PathTable {
@@ -96,6 +101,57 @@ export function pathTable(spec: PathSpec): PathTable {
     tables.set(spec, t);
   }
   return t;
+}
+
+const heightTables = new WeakMap<object, Float64Array>();
+
+/** The height of a path with heights at each sample of its table, along the same spline as its place. */
+function heightsOf(spec: PathSpec & { readonly heights: readonly number[] }): Float64Array {
+  let zs = heightTables.get(spec);
+  if (zs) return zs;
+  const hs = spec.heights;
+  const n = hs.length;
+  const spans = spec.closed ? n : n - 1;
+  zs = new Float64Array(spans * SAMPLES + 1);
+  const at = (i: number): number => (spec.closed ? hs[((i % n) + n) % n]! : hs[Math.max(0, Math.min(n - 1, i))]!);
+  const k = spec.smooth / 6;
+  let o = 0;
+  for (let i = 0; i < spans; i++) {
+    const z0 = at(i);
+    const z1 = at(i + 1);
+    const c1 = z0 + (z1 - at(i - 1)) * k;
+    const c2 = z1 - (at(i + 2) - z0) * k;
+    for (let s = 0; s < SAMPLES; s++) {
+      const t = s / SAMPLES;
+      const u = 1 - t;
+      zs[o++] = u * u * u * z0 + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * z1;
+    }
+  }
+  zs[o] = at(spans);
+  heightTables.set(spec, zs);
+  return zs;
+}
+
+/** How high a path with heights runs at distance `s` from its start, held within it as pathAt holds the place; 0 for a path without heights. */
+export function pathHeightAt(spec: PathSpec, s: number): number {
+  if (!spec.heights) return 0;
+  const table = pathTable(spec);
+  const zs = heightsOf(spec as PathSpec & { readonly heights: readonly number[] });
+  const L = table.length;
+  if (L <= 1e-12) return zs[0]!;
+  let d = s;
+  if (table.closed) d -= Math.floor(d / L) * L;
+  else d = d < 0 ? 0 : d > L ? L : d;
+  let lo = 0;
+  let hi = table.cum.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (table.cum[mid]! <= d) lo = mid;
+    else hi = mid;
+  }
+  const span = table.cum[hi]! - table.cum[lo]!;
+  const t = span > 1e-12 ? (d - table.cum[lo]!) / span : 0;
+  return zs[lo]! + (zs[hi]! - zs[lo]!) * t;
 }
 
 /** Length of a path in units. */

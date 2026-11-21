@@ -14,6 +14,7 @@ import {
   sampleBend,
   sampleCount,
   sampleDrawn,
+  sampleHeight,
   sampleLevel,
   sampleRise,
   sampleLid,
@@ -44,7 +45,7 @@ import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
-import type { LabelSide, StrokeNode } from './types.ts';
+import type { GroupNode, LabelSide, StrokeNode } from './types.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
 export interface PoseSource {
@@ -237,10 +238,36 @@ export interface Foot extends Upright {
   readonly k: number;
   readonly x: number;
   readonly y: number;
+  /**
+   * A body of a plane with `tall` that is taller than RISE_NEAR of the camera's height: where it is drawn at its
+   * whole height, its top (`xf`, behind the camera in the plane when the top is higher than the eye) and its foot.
+   * The foot itself says where it stands for everything else (its order, its shadow), at the height it is held to.
+   */
+  readonly lift?: { readonly xf: Xf; readonly foot: Foot };
 }
 
 /** A body in a plane never rises nearer the camera than this share of the camera's own height over the plane. */
 const RISE_NEAR = 0.9;
+
+/** A tall body is never drawn with its top this near the height of the eye, as a share of that height: there the top has no place in the plane. */
+const LIFT_EYE_GAP = 1e-3;
+
+/**
+ * Where a body of a plane with `tall` is drawn at its whole height `high` (in the units of the plane): its top, seen
+ * from the camera, is the foot drawn larger about the point the camera stands over, as for any body; higher than the
+ * camera, larger by a negative factor, on the far side of that point, behind the camera. `xf` is the node's own
+ * transform in the plane, (gx, gy) its place from that point, `over` that point in the units of the body.
+ */
+function liftOf(xf: Xf, high: number, stand: Vec3, gx: number, gy: number, over: Vec2): { xf: Xf; foot: Foot } {
+  const eye = stand[2];
+  const h = Math.abs(eye - high) < LIFT_EYE_GAP * eye ? eye * (1 + LIFT_EYE_GAP) : high;
+  const grow = eye / (eye - h);
+  const back = vrot([(gx * (1 - grow)) / (xf.scale * grow), (gy * (1 - grow)) / (xf.scale * grow)], -xf.rot);
+  return {
+    xf: { x: stand[0] + gx * grow, y: stand[1] + gy * grow, rot: xf.rot, scale: xf.scale * grow },
+    foot: { k: 1 / grow, x: back[0], y: back[1], h: h / xf.scale, ux: over[0], uy: over[1], uh: eye / xf.scale, tall: true },
+  };
+}
 
 /**
  * World transforms of all nodes at a frame, in the space of their layer.
@@ -336,6 +363,18 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       const lever = (node.shape.length - 2 * node.shape.r) * Math.max(xf.scale, 0.05);
       xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
+    if (n.pos?.lifts) {
+      // A travel along a path with heights: the node is drawn as high over the ground as the path runs.
+      const z = sampleHeight(n.pos, t) * parent.scale;
+      if (z !== 0) {
+        const stand = inPlane ? space.stands.get(n.plane) : undefined;
+        if (stand && stand[2] > 0) {
+          // In a plane, as the top of a body that high: drawn larger about the point the camera stands over.
+          const grow = stand[2] / (stand[2] - Math.min(z, RISE_NEAR * stand[2]));
+          xf = { x: stand[0] + (xf.x - stand[0]) * grow, y: stand[1] + (xf.y - stand[1]) * grow, rot: xf.rot, scale: xf.scale * grow };
+        } else if (!inPlane && !n.persp) xf = { ...xf, y: xf.y - z };
+      }
+    }
     if (n.rise) {
       // A body with a height: from here on its transform is that of its top.
       const rise = sampleRise(n.rise, t);
@@ -353,7 +392,10 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
           const back = vrot([(gx * (1 - grow)) / (xf.scale * grow), (gy * (1 - grow)) / (xf.scale * grow)], -xf.rot);
           // The point the camera stands over, and the height of the camera, in the units of the body.
           const over = vrot([-gx / xf.scale, -gy / xf.scale], -xf.rot);
-          feet?.set(n.index, { k: 1 / grow, x: back[0], y: back[1], h: height / xf.scale, ux: over[0], uy: over[1], uh: stand[2] / xf.scale });
+          // In a plane with tall: a body that, with its roof, reaches past what the others are held to is drawn whole.
+          const roofed = node.type === 'shape' && node.roof ? node.roof.height : 0;
+          const lift = stand[2] > 0 && (rise + roofed) * xf.scale > RISE_NEAR * stand[2] && (c.nodes[n.plane]!.node as GroupNode).tall ? liftOf(xf, rise * xf.scale, stand, gx, gy, over) : undefined;
+          feet?.set(n.index, { k: 1 / grow, x: back[0], y: back[1], h: height / xf.scale, ux: over[0], uy: over[1], uh: stand[2] / xf.scale, ...(lift ? { lift } : {}) });
           xf = { x: stand[0] + gx * grow, y: stand[1] + gy * grow, rot: xf.rot, scale: xf.scale * grow };
         } else {
           // In a flat layer the top is the foot moved up the screen.
@@ -428,6 +470,11 @@ export interface ShapeItem {
    * is so small that its top alone is drawn (it has no `foot` then). Left out: a body of no such group.
    */
   readonly detail?: Worth;
+  /**
+   * A shape that stands up from its plane (stands): the point of the plane the camera stands over and how high over
+   * the plane the camera is, in the units of the plane. Left out: it lies in the plane, or in no plane.
+   */
+  readonly upon?: Vec3;
 }
 
 export interface EyeItem {
@@ -631,6 +678,8 @@ export interface PlaneItem {
   readonly node: CNode;
   readonly map: PlaneMap;
   readonly items: readonly Item[];
+  /** A plane with fog: how far its origin is from the camera, along its line of sight. */
+  readonly far?: number;
 }
 
 /** The shape an item is drawn with, or clips to, at its frame. */
@@ -1354,6 +1403,12 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     const foot = feet?.get(index);
     return foot ? { foot } : {};
   };
+  // A shape that stands up from its plane carries where the camera stands over that plane; any other is what it always was.
+  const upon = (n: CNode): { upon?: Vec3 } => {
+    if (n.node.type !== 'shape' || !n.node.stands || n.plane < 0) return {};
+    const stand = places?.stands.get(n.plane);
+    return stand ? { upon: stand } : {};
+  };
 
   const layers = c.layers.map((layer): LayerState => {
     const view = layerView(camera, layer.parallax);
@@ -1419,7 +1474,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           continue;
         }
         const inner: Item[] = [];
-        items.push({ kind: 'plane', node: n, map, items: inner });
+        items.push({ kind: 'plane', node: n, map, items: inner, ...((node as GroupNode).fog ? { far: places!.far[index]! } : {}) });
         open.push({ start: index, end: n.subtreeEnd, items: inner });
         items = inner;
       }
@@ -1516,7 +1571,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;

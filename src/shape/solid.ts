@@ -20,7 +20,16 @@ export interface Upright {
   readonly ux: number;
   readonly uy: number;
   readonly uh: number;
+  /**
+   * A body of a plane whose bodies may rise above the camera (a group with `tall`), taller than the camera is high:
+   * its points are drawn at any height (highest), and none exactly at the height of the eye, where it has no place in
+   * the plane (upright).
+   */
+  readonly tall?: boolean;
 }
+
+/** A point of a tall body this near the height of the eye, as a share of that height, is drawn this much off it. */
+const EYE_GAP = 1e-3;
 
 /**
  * Where the point `z` units over the foot of a body is drawn, on the upright
@@ -30,7 +39,9 @@ export interface Upright {
  */
 export function upright(u: Upright, x: number, y: number, z: number): Vec2 {
   if (u.uh === 0) return [x + u.ux * (u.h - z), y + u.uy * (u.h - z)];
-  const m = (u.uh - u.h) / (u.uh - z);
+  let below = u.uh - z;
+  if (u.tall && Math.abs(below) < EYE_GAP * u.uh) below = below < 0 ? -EYE_GAP * u.uh : EYE_GAP * u.uh;
+  const m = (u.uh - u.h) / below;
   return [u.ux + (x - u.ux) * m, u.uy + (y - u.uy) * m];
 }
 
@@ -39,7 +50,7 @@ const NEAR_SHARE = 0.5;
 
 /** The greatest height over the foot at which something on a body is drawn: in a plane, short of the camera. */
 export function highest(u: Upright): number {
-  return u.uh > 0 ? u.h + NEAR_SHARE * (u.uh - u.h) : Infinity;
+  return u.uh > 0 && !u.tall ? u.h + NEAR_SHARE * (u.uh - u.h) : Infinity;
 }
 
 // --- The outline of a body, corner by corner ---------------------------------------------------
