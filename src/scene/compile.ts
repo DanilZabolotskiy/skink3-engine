@@ -217,6 +217,8 @@ export interface CompiledShot {
   readonly risen: boolean;
   /** True when a group of the shot draws its children far to near (sort: 'depth'). */
   readonly sorted: boolean;
+  /** By node index of a group in a plane with a ground: the node indices of its reliefs, in the order they are listed. Null in a shot without any. */
+  readonly grounds: ReadonlyMap<number, readonly number[]> | null;
   /**
    * By node index: the least size on screen at which a body is drawn in full, from the nearest group above the node
    * that says so (detail), and -1 for a node under no such group. Null in a shot without any.
@@ -972,6 +974,22 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const byId = new Map<string, CNode>();
   for (const n of nodes) byId.set(n.id, n);
 
+  // A plane that stands things on a ground: the ground is a relief among its own children.
+  let grounds: Map<number, number[]> | null = null;
+  for (const n of nodes) {
+    if (n.node.type !== 'group' || n.node.ground === undefined) continue;
+    const ids = typeof n.node.ground === 'string' ? [n.node.ground] : n.node.ground;
+    const list = ids.map((id) => {
+      const g = byId.get(id);
+      if (!g || g.parent !== n.index || g.node.type !== 'shape' || !g.node.relief) {
+        fail(`${where}: group "${n.id}" stands on the ground "${id}": that is a relief listed among the group's own children`);
+      }
+      return g.index;
+    });
+    if (new Set(list).size !== list.length) fail(`${where}: group "${n.id}" names a relief of its ground twice`);
+    (grounds ??= new Map()).set(n.index, list.sort((a, b) => a - b));
+  }
+
   // 5. Intended exceptions to the motion review and to the physics review must
   // name things that exist, so that an exception does not outlive the node it
   // was written for.
@@ -1067,6 +1085,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     spatial: perspTracks.some((track) => track !== null),
     risen: nodes.some((n) => n.rise !== null || n.pos?.lifts === true || (n.node.type === 'shape' && n.node.stands === true)),
     sorted: nodes.some((n) => sortsChildren(n.node)),
+    grounds,
     detail: detailLevels(nodes),
   };
 }

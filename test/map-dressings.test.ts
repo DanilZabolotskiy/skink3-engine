@@ -135,6 +135,26 @@ test('woods, trees and houses: bodies drawn far to near, casting shadows only in
   const plain = houses({ id: 'town', within: SQUARE, step: 24, seed: 2, roofs: ['accent.coral'], side: 'dark.plum', rise: 8, street: 1000 }) as unknown as { children: unknown[] };
   assert.ok(plain.children.length > town.children.length * 1.3);
   assert.ok(refused(() => houses({ id: 't', within: SQUARE, step: 24, seed: 2, roofs: ['accent.coral'], side: 'dark.plum', rise: 8, street: 1 }), /street must be/));
+  // Roofs on request: steeper by the house's shorter side, gabled or of both kinds, with a contrast; the houses the same.
+  type House = { at: Vec2; fill: string; rise: number; shape: { points: Vec2[] }; roof: { kind: string; height: number; contrast?: number } };
+  const town2 = (roof?: object): House[] => (houses({ id: 'town', within: SQUARE, step: 24, seed: 2, roofs: ['accent.coral', 'mid.rose'], side: 'dark.plum', rise: 8, ...(roof ? { roof } : {}) }) as unknown as { children: House[] }).children;
+  const plainRoofs = town2();
+  // Without the option a roof is what it always was: hipped, 0.6 of the walls high, and no more keys.
+  assert.ok(plainRoofs.every((h) => JSON.stringify(Object.keys(h.roof)) === '["kind","height"]' && h.roof.height === Math.round(h.rise * 0.6 * 10) / 10 + 0));
+  const mixed = town2({ kind: 'mixed', pitch: 0.45, contrast: 1.5 });
+  assert.equal(mixed.length, plainRoofs.length);
+  assert.ok(mixed.every((h, i) => h.at[0] === plainRoofs[i]!.at[0] && h.at[1] === plainRoofs[i]!.at[1] && h.fill === plainRoofs[i]!.fill), 'the same houses in the same colours');
+  const kinds = new Set(mixed.map((h) => h.roof.kind));
+  assert.deepEqual([...kinds].sort(), ['gable', 'hip']);
+  const share = mixed.filter((h) => h.roof.kind === 'gable').length / mixed.length;
+  assert.ok(share > 0.35 && share < 0.65, `${share} gabled`);
+  assert.ok(mixed.every((h) => h.roof.contrast === 1.5));
+  const side = (h: House): number => Math.min(...[0, 1].map((k) => Math.max(...h.shape.points.map((p) => p[k]!)) - Math.min(...h.shape.points.map((p) => p[k]!))));
+  assert.ok(mixed.every((h) => Math.abs(h.roof.height - 0.45 * side(h)) <= 0.051), 'a pitch of the shorter side');
+  assert.ok(town2({ kind: 'gable' }).every((h) => h.roof.kind === 'gable'));
+  assert.ok(plainRoofs.every((h) => h.roof.kind === 'hip' && h.roof.contrast === undefined));
+  assert.ok(refused(() => town2({ kind: 'dome' }), /roof.kind must be 'hip', 'gable' or 'mixed'/));
+  assert.ok(refused(() => town2({ pitch: 0.4, slope: 1 }), /slope/));
   assert.ok(refused(() => woods({ id: 'w', within: [SQUARE], step: 30, r: 10, seed: 1, crowns: [] }), /at least one palette reference/));
 });
 
@@ -164,6 +184,21 @@ test('logRoad and locator: logs across the road at their step; the locator in th
   const logs = (road[1] as unknown as { children: { at: Vec2 }[] }).children;
   // The path is about 612 long, its points 5 apart: a log at the first point 12 or more past the last log.
   assert.ok(logs.length > 35 && logs.length < 52, `${logs.length} logs`);
+  // The plain road is what it always was: the options left out, nothing changes.
+  assert.equal(JSON.stringify(road), JSON.stringify(logRoad({ id: 'road', path, width: 20, step: 12, bed: 'dark.plum', log: 'mid.rose', rail: 'light.cream' })));
+  // A corduroy road: round lit logs side by side at an even step, a little out of line, in the colours given; no rails.
+  const corduroy = logRoad({ id: 'road', path, width: 20, step: 6, bed: 'dark.plum', log: ['mid.rose', 'accent.coral'], round: true, share: 0.9, jitter: 0.5, seed: 3, rails: false });
+  assert.deepEqual(corduroy.map((n) => n.id), ['road', 'road-logs']);
+  const round = (corduroy[1] as unknown as { children: { at: Vec2; shape: { kind: string; r: number; length: number }; lit: boolean; fill: string; rotation: number }[] }).children;
+  assert.ok(round.every((l) => l.shape.kind === 'capsule' && l.lit && Math.abs(l.shape.r - 2.7) < 0.06));
+  assert.deepEqual([...new Set(round.map((l) => l.fill))].sort(), ['accent.coral', 'mid.rose']);
+  const gaps = round.slice(1).map((l, i) => Math.hypot(l.at[0] - round[i]!.at[0], l.at[1] - round[i]!.at[1]));
+  assert.ok(gaps.every((g) => g > 4.5 && g < 7.5), `logs ${Math.min(...gaps)} to ${Math.max(...gaps)} apart`);
+  assert.ok(new Set(round.map((l) => l.shape.length)).size > 10, 'logs of different lengths');
+  assert.equal(JSON.stringify(corduroy), JSON.stringify(logRoad({ id: 'road', path, width: 20, step: 6, bed: 'dark.plum', log: ['mid.rose', 'accent.coral'], round: true, share: 0.9, jitter: 0.5, seed: 3, rails: false })));
+  assert.notEqual(JSON.stringify(corduroy), JSON.stringify(logRoad({ id: 'road', path, width: 20, step: 6, bed: 'dark.plum', log: ['mid.rose', 'accent.coral'], round: true, share: 0.9, jitter: 0.5, seed: 4, rails: false })));
+  assert.ok(refused(() => logRoad({ id: 'road', path, width: 20, step: 6, bed: 'dark.plum', log: 'mid.rose' }), /rail is the colour of the rails/));
+  assert.ok(refused(() => logRoad({ id: 'road', path, width: 20, step: 6, bed: 'dark.plum', log: 'mid.rose', rail: 'light.cream', round: 1 as never }), /round must be true or false/));
   const inset = locator({ id: 'where', at: [700, -380], w: 300, h: 200, land: [oval(80, 60).map(([x, y]) => [x + 700, y - 380] as Vec2)], spot: [700, -380], sea: 'dark.navy', landFill: 'mid.mist', frame: 'light.cream', mark: 'accent.coral' });
   assert.deepEqual(inset.map((n) => n.id), ['where-border', 'where-panel', 'where-land0', 'where-halo', 'where-spot']);
   const shaded = locator({ id: 'where', at: [0, 0], w: 300, h: 200, land: [], spot: [0, 0], sea: 'dark.navy', landFill: 'mid.mist', frame: 'light.cream', mark: 'accent.coral', shadow: 'deep.abyss' });

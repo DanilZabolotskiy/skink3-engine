@@ -194,6 +194,8 @@ export interface ReliefSpec {
   readonly bright: ColorRef;
   /** Tints of the ground by height, from the lowest: [height, colour]. Left out: only the shading is drawn, over what is under it. */
   readonly tints?: readonly (readonly [number, ColorRef])[];
+  /** Units of the rect: the field fades out over this distance toward its edges. Left out: it ends sharp at its edges. */
+  readonly feather?: number;
 }
 
 /** How a heat haze moves the picture behind it. All lengths are in the units of the layer. */
@@ -276,6 +278,12 @@ export interface FogSpec {
   readonly far: number;
   /** 0..1: how far toward the colour the farthest ground turns. */
   readonly amount: number;
+  /**
+   * Distances from the camera: the plane is drawn whole up to `near` and fades out to nothing at `far`, so that what
+   * lies behind it (the sky, the background) shows through, and its far edge melts away. Left out: it ends where its
+   * things end.
+   */
+  readonly fade?: { readonly near: number; readonly far: number };
 }
 
 export interface CastSpec {
@@ -324,6 +332,12 @@ export interface GroupNode extends NodeBase {
    * seen from below. Left out: a body is drawn at most 0.9 of the camera's height tall.
    */
   readonly tall?: boolean;
+  /**
+   * Such a group: the id of a relief among its own children that is its ground, or the ids of a few (a finer one over
+   * part of a coarser one, listed after it). The reliefs are drawn raised, and what the group lists after the first
+   * of them stands on them, each thing at the height of the ground under its place. Left out: the plane is flat.
+   */
+  readonly ground?: string | readonly string[];
   /** Units: the group is drawn as one picture, blurred this far. Left out: sharp. */
   readonly soft?: number;
   /**

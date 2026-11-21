@@ -221,6 +221,8 @@ function drawItems(
           if (!seesPlane(gx)) break;
           drawItems(planeContext(gx), item.items, paint, target, [...stretches, item]);
           fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'source-atop');
+          // A plane that fades out with distance lets what lies behind it show through.
+          if (fog.fade) fogPlane(gx, item.far!, { ...fog.fade, amount: 1 }, paint.tone('base', item.node.colors['fog']!), 'destination-out');
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.drawCanvas(canvas, 0, 0);
@@ -320,6 +322,7 @@ function drawGlow(
           drawGlow(planeContext(gx), item.items, paint, covers, seen, state, open);
           // Taking away keeps no colour: the fog's own stands in for any.
           fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'destination-out');
+          if (fog.fade) fogPlane(gx, item.far!, { ...fog.fade, amount: 1 }, paint.tone('base', item.node.colors['fog']!), 'destination-out');
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.drawCanvas(canvas, 0, 0);
         } else if (seesPlane(ctx)) drawGlow(planeContext(ctx), item.items, paint, covers, seen, state, open);

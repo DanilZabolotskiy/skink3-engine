@@ -7,7 +7,7 @@
 import { DEG, type Vec2 } from '../core/math.ts';
 import { Rng } from '../core/rng.ts';
 import type { ColorRef } from '../look/palette.ts';
-import { checkKeys, circle, fail, group, num, rect, region, stroke, vec } from './build.ts';
+import { capsule, checkKeys, circle, fail, group, num, rect, region, stroke, vec } from './build.ts';
 import type { SceneNode } from './types.ts';
 
 /** A closed outline on the stage, without its first point repeated. */
@@ -39,6 +39,17 @@ function points(where: string, name: string, value: unknown, least: number): Rin
 
 function seedOf(where: string, value: unknown): Seed {
   if (!(typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)))) fail(where, `seed must be a number or a string, got ${JSON.stringify(value)}`);
+  return value;
+}
+
+/** A palette reference or a list of them, as a list. */
+function colourOrList(where: string, name: string, value: unknown): readonly ColorRef[] {
+  if (typeof value === 'string') return [value as ColorRef];
+  return colours(where, name, value);
+}
+
+function flagOf(where: string, name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') fail(where, `${name} must be true or false, got ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -530,12 +541,19 @@ export interface HousesOptions {
   jitter?: number;
   keep?: (p: Vec2) => boolean;
   shadow?: ColorRef;
+  /**
+   * The roofs: `kind` 'hip' (four slopes), 'gable' (two slopes and a ridge along the longer side) or 'mixed' (each
+   * house one of the two, about half each); `pitch`, how high a roof stands as a share of its house's shorter side
+   * (0.45 makes a steep roof that reads from far); `contrast`, how far its lit and its shaded slopes lie from its
+   * colour (1 as the light gives them, up to 2). Left out: a hipped roof 0.6 of its walls high.
+   */
+  roof?: { kind?: 'hip' | 'gable' | 'mixed'; pitch?: number; contrast?: number };
 }
 
 /** A town as a dense fabric of small houses, each a low block under a hipped roof, on a turned lattice with streets, drawn far to near. */
 export function houses(o: HousesOptions): SceneNode {
   const where = `houses("${o?.id}")`;
-  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'turn', 'seed', 'roofs', 'side', 'rise', 'street', 'bounds', 'jitter', 'keep', 'shadow']);
+  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'turn', 'seed', 'roofs', 'side', 'rise', 'street', 'bounds', 'jitter', 'keep', 'shadow', 'roof']);
   const step = num(where, 'step', o.step, 1e-3, 1e6);
   const turn = o.turn === undefined ? 0 : num(where, 'turn', o.turn, -3600, 3600);
   const roofs = colours(where, 'roofs', o.roofs);
@@ -543,8 +561,22 @@ export function houses(o: HousesOptions): SceneNode {
   const street = o.street === undefined ? 4 : num(where, 'street', o.street, 2, 1000);
   if (!Number.isInteger(street)) fail(where, `street must be a whole number, got ${street}`);
   const keep = fn<(p: Vec2) => boolean>(where, 'keep', o.keep);
+  if (o.roof !== undefined) {
+    if (o.roof === null || typeof o.roof !== 'object') fail(where, 'roof must be { kind, pitch, contrast }');
+    checkKeys(`${where} roof`, o.roof, ['kind', 'pitch', 'contrast']);
+    if (o.roof.kind !== undefined && !['hip', 'gable', 'mixed'].includes(o.roof.kind)) fail(where, `roof.kind must be 'hip', 'gable' or 'mixed', got ${JSON.stringify(o.roof.kind)}`);
+  }
+  const pitch = o.roof?.pitch === undefined ? null : num(where, 'roof.pitch', o.roof.pitch, 0.05, 2);
+  const contrast = o.roof?.contrast === undefined ? null : num(where, 'roof.contrast', o.roof.contrast, 0, 2);
   const root = new Rng(seedOf(where, o.seed), 'houses');
   const look = root.stream('look');
+  // A stream of its own for the kinds of the roofs, so that the houses are the same with or without it.
+  const kinds = root.stream('roofs');
+  const roofOf = (up: number, w: number, h: number): { kind: 'hip' | 'gable'; height: number; contrast?: number } => {
+    const kind = o.roof?.kind === 'gable' ? 'gable' : o.roof?.kind === 'mixed' ? (kinds.next() < 0.5 ? 'gable' : 'hip') : 'hip';
+    const height = pitch === null ? tenth(up * 0.6) : tenth(pitch * Math.min(w, h));
+    return { kind, height, ...(contrast === null ? {} : { contrast }) };
+  };
   const n = street;
   const children = lattice(where, {
     within: points(where, 'within', o.within, 3),
@@ -560,7 +592,7 @@ export function houses(o: HousesOptions): SceneNode {
     .map(({ at }, i) => {
       const [w, h] = [tenth(step * (0.62 + look.next() * 0.22)), tenth(step * 0.82 * (0.6 + look.next() * 0.22))];
       const up = tenth(rise * (0.75 + look.next() * 0.6));
-      return rect({ id: `${o.id}-${i}`, at, w, h, radius: 0, rotation: tenth(turn + (look.next() * 2 - 1) * 5), fill: roofs[Math.floor(look.next() * roofs.length)]!, side: o.side, lit: false, rise: up, roof: { kind: 'hip', height: tenth(up * 0.6) } });
+      return rect({ id: `${o.id}-${i}`, at, w, h, radius: 0, rotation: tenth(turn + (look.next() * 2 - 1) * 5), fill: roofs[Math.floor(look.next() * roofs.length)]!, side: o.side, lit: false, rise: up, roof: roofOf(up, w, h) });
     });
   return group({ id: o.id, sort: 'depth', ...shadows(o.shadow, 0.4, 1.2), children });
 }
@@ -575,17 +607,68 @@ export interface LogRoadOptions {
   /** Units between the logs. */
   step: number;
   bed: ColorRef;
-  log: ColorRef;
-  rail: ColorRef;
+  /** The colour of the logs, or a list of colours each log takes one of. */
+  log: ColorRef | readonly ColorRef[];
+  /** The pale rail along each side; not needed with rails: false. */
+  rail?: ColorRef;
+  /**
+   * Round logs: each a lit stick with round ends, so that it reads as a log with a lit and a shaded side, laid at an
+   * even `step` along the road. Left out: flat bars, each where the line has run a step since the last.
+   */
+  round?: boolean;
+  /** How thick a log is, as a share of the step: 0.9 lays them side by side with a thin gap between. Left out: 0.38. */
+  share?: number;
+  /** 0..1: how unevenly the logs lie, each a little longer or shorter, out of line and turned. Left out: 0, all alike. */
+  jitter?: number;
+  /** The seed of the jitter and of the colours of the logs (0). */
+  seed?: Seed;
+  /** False: no rails along the sides. Left out: true. */
+  rails?: boolean;
 }
 
-/** A road laid over the ground, as a map shows one: a bed of earth, logs laid across it every `step` units, and a pale rail along each side. */
+/** Where a log of a road lies: its middle, and the direction of the road there (radians). */
+type LogAt = { at: Vec2; ang: number };
+
+/** Places evenly `step` apart along a line, from its first point, each with the direction of the line there. */
+function evenAlong(path: readonly Vec2[], step: number): LogAt[] {
+  const out: LogAt[] = [];
+  let next = 0;
+  let run = 0;
+  for (let i = 1; i < path.length; i++) {
+    const [a, b] = [path[i - 1]!, path[i]!];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len <= 0) continue;
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    while (next <= run + len) {
+      const t = (next - run) / len;
+      out.push({ at: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], ang });
+      next += step;
+    }
+    run += len;
+  }
+  return out;
+}
+
+/**
+ * A road laid over the ground, as a map shows one: a bed of earth, logs laid across it every `step` units, and a pale
+ * rail along each side. With `round`, `share`, `jitter` and `rails: false` it is a corduroy road of round logs laid
+ * side by side, each a little out of line.
+ */
 export function logRoad(o: LogRoadOptions): SceneNode[] {
   const where = `logRoad("${o?.id}")`;
-  checkKeys(where, o, ['id', 'path', 'width', 'step', 'bed', 'log', 'rail']);
+  checkKeys(where, o, ['id', 'path', 'width', 'step', 'bed', 'log', 'rail', 'round', 'share', 'jitter', 'seed', 'rails']);
   const path = points(where, 'path', o.path, 2);
   const w = num(where, 'width', o.width, 0.1, 1e4);
   const step = num(where, 'step', o.step, 0.1, 1e6);
+  const round = o.round === undefined ? false : flagOf(where, 'round', o.round);
+  const rails = o.rails === undefined ? true : flagOf(where, 'rails', o.rails);
+  if (rails && o.rail === undefined) fail(where, 'rail is the colour of the rails: give it, or rails: false');
+  const share = o.share === undefined ? 0.38 : num(where, 'share', o.share, 0.05, 1.5);
+  const jitter = o.jitter === undefined ? 0 : num(where, 'jitter', o.jitter, 0, 1);
+  const tones = colourOrList(where, 'log', o.log);
+  // The plain road of the first version, exactly as it was made: flat bars of one colour where the line has run a step.
+  const plain = !round && o.share === undefined && o.jitter === undefined && o.seed === undefined && typeof o.log === 'string';
+  const rng = new Rng(o.seed === undefined ? 0 : seedOf(where, o.seed), 'logRoad');
   const logs: SceneNode[] = [];
   const left: Vec2[] = [];
   const right: Vec2[] = [];
@@ -598,16 +681,51 @@ export function logRoad(o: LogRoadOptions): SceneNode[] {
     left.push([tenth(p[0] + nx * w * 0.42), tenth(p[1] + ny * w * 0.42)]);
     right.push([tenth(p[0] - nx * w * 0.42), tenth(p[1] - ny * w * 0.42)]);
     if (i > 0) run += Math.hypot(p[0] - path[i - 1]![0], p[1] - path[i - 1]![1]);
-    if (i === 0 || run >= step) {
+    if (plain && (i === 0 || run >= step)) {
       run = 0;
-      logs.push(rect({ id: `${o.id}-log${logs.length}`, at: p, w: Math.max(2, step * 0.38), h: w * 0.94, radius: 0, rotation: tenth(ang / DEG), fill: o.log, lit: false }));
+      logs.push(rect({ id: `${o.id}-log${logs.length}`, at: p, w: Math.max(2, step * 0.38), h: w * 0.94, radius: 0, rotation: tenth(ang / DEG), fill: o.log as ColorRef, lit: false }));
+    }
+  }
+  if (!plain) {
+    const thick = Math.max(1, step * share);
+    const places = round ? evenAlong(path, step) : [];
+    if (!round) {
+      // Flat bars where the line has run a step, as the plain road lays them.
+      let since = 0;
+      for (let i = 0; i < path.length; i++) {
+        const [a, b] = [path[Math.max(0, i - 1)]!, path[Math.min(path.length - 1, i + 1)]!];
+        if (i > 0) since += Math.hypot(path[i]![0] - path[i - 1]![0], path[i]![1] - path[i - 1]![1]);
+        if (i === 0 || since >= step) {
+          since = 0;
+          places.push({ at: path[i]!, ang: Math.atan2(b[1] - a[1], b[0] - a[0]) });
+        }
+      }
+    }
+    for (const { at, ang } of places) {
+      // Each log a little longer or shorter, out of line along itself, and turned; its colour one of the list.
+      const [u1, u2, u3, u4] = [rng.next(), rng.next(), rng.next(), rng.next()];
+      const length = Math.max(2 * thick, w * 0.94 * (1 - jitter * 0.14 * u1));
+      const off = (u2 * 2 - 1) * jitter * w * 0.05;
+      const turn = ang + (u3 * 2 - 1) * jitter * 5 * DEG;
+      const fill = tones[Math.floor(u4 * tones.length)]!;
+      const across: Vec2 = [tenth(at[0] - Math.sin(ang) * off), tenth(at[1] + Math.cos(ang) * off)];
+      const id = `${o.id}-log${logs.length}`;
+      logs.push(
+        round
+          ? capsule({ id, at: across, length: tenth(length), r: tenth(thick / 2), rotation: tenth(turn / DEG + 90), fill, lit: true })
+          : rect({ id, at: across, w: tenth(thick), h: tenth(length), radius: 0, rotation: tenth(turn / DEG), fill, lit: false }),
+      );
     }
   }
   return [
     stroke({ id: o.id, points: [...path], smooth: 0, color: o.bed, width: w, opacity: 0.95 }),
     group({ id: `${o.id}-logs`, children: logs }),
-    stroke({ id: `${o.id}-rail0`, points: left, smooth: 0, color: o.rail, width: Math.max(2, w * 0.07), opacity: 0.85 }),
-    stroke({ id: `${o.id}-rail1`, points: right, smooth: 0, color: o.rail, width: Math.max(2, w * 0.07), opacity: 0.85 }),
+    ...(rails
+      ? [
+          stroke({ id: `${o.id}-rail0`, points: left, smooth: 0, color: o.rail!, width: Math.max(2, w * 0.07), opacity: 0.85 }),
+          stroke({ id: `${o.id}-rail1`, points: right, smooth: 0, color: o.rail!, width: Math.max(2, w * 0.07), opacity: 0.85 }),
+        ]
+      : []),
   ];
 }
 

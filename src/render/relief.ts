@@ -9,10 +9,15 @@
 //
 // The colours are the scene's: what the shade turns toward on the dark side and on the lit side, and, given, the
 // tints of the ground by height. Without tints only the shading is drawn, over what lies under it.
+//
+// A relief that is the ground of its plane (a group with `ground`) is drawn raised: its hills stand up as the camera of
+// the layer sees them. Each pixel is then a ray from the camera through the plane, walked down from the highest the
+// ground reaches until it meets the ground; the shade and the tint are those of the point it meets.
 
 import { Canvas, ImageData, type CanvasRenderingContext2D } from 'skia-canvas';
 import { parseHex } from '../look/color.ts';
 import type { ShapeItem } from '../scene/evaluate.ts';
+import { curveWeights as weights, fadeAt } from '../scene/ground.ts';
 import type { ReliefSpec, ShapeNode } from '../scene/types.ts';
 import { planeCanvas } from './plane.ts';
 
@@ -61,14 +66,213 @@ function shadingOf(spec: ReliefSpec, w: number, h: number, from: number, high: n
   return made;
 }
 
-/** Catmull-Rom weights of the four points around a place t (0..1) between the second and the third. */
-function weights(t: number, out: Float64Array): void {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  out[0] = 0.5 * (-t3 + 2 * t2 - t);
-  out[1] = 0.5 * (3 * t3 - 5 * t2 + 2);
-  out[2] = 0.5 * (-3 * t3 + 4 * t2 + t);
-  out[3] = 0.5 * (t3 - t2);
+/** The highest a raised ground is drawn, as a share of the camera's height over the plane: as for a body's rise. */
+const RAISE_NEAR = 0.9;
+
+/** How far apart the steps of a ray are taken, across the ground, in cells of its grid. */
+const RAY_STEP = 0.5;
+
+/** The side of a block of the grid, in cells: a ray skips a stretch over blocks that are all lower than it is. */
+const BLOCK = 4;
+
+/** The highest point of each block of BLOCK x BLOCK cells of a grid (its edge points included), row by row. */
+interface Blocks {
+  readonly across: number;
+  readonly down: number;
+  readonly most: Float32Array;
+}
+
+const blockings = new WeakMap<ReliefSpec, Blocks>();
+
+function blocksOf(spec: ReliefSpec): Blocks {
+  const hit = blockings.get(spec);
+  if (hit) return hit;
+  const { cols, rows, heights } = spec;
+  const across = Math.ceil((cols - 1) / BLOCK);
+  const down = Math.ceil((rows - 1) / BLOCK);
+  const most = new Float32Array(across * down).fill(-Infinity);
+  for (let r = 0; r < rows; r++) {
+    // A point on the edge between two blocks belongs to both.
+    const b0 = Math.min(down - 1, Math.floor(r / BLOCK));
+    const b1 = r % BLOCK === 0 && r > 0 ? b0 - 1 : b0;
+    for (let c = 0; c < cols; c++) {
+      const a0 = Math.min(across - 1, Math.floor(c / BLOCK));
+      const a1 = c % BLOCK === 0 && c > 0 ? a0 - 1 : a0;
+      const v = heights[r * cols + c]!;
+      for (const b of [b0, b1]) for (const a of [a0, a1]) if (v > most[b * across + a]!) most[b * across + a] = v;
+    }
+  }
+  const made = { across, down, most };
+  blockings.set(spec, made);
+  return made;
+}
+
+/** The height of a grid at a place of it, in points of it, between its four nearest points; -Infinity outside it. */
+function nearHeight(heights: Float32Array, cols: number, rows: number, gx: number, gy: number): number {
+  if (!(gx >= 0 && gy >= 0 && gx <= cols - 1 && gy <= rows - 1)) return -Infinity;
+  const c0 = Math.min(cols - 2, Math.floor(gx));
+  const r0 = Math.min(rows - 2, Math.floor(gy));
+  const tx = gx - c0;
+  const ty = gy - r0;
+  const at = r0 * cols + c0;
+  const top = heights[at]! + (heights[at + 1]! - heights[at]!) * tx;
+  const low = heights[at + cols]! + (heights[at + cols + 1]! - heights[at + cols]!) * tx;
+  return top + (low - top) * ty;
+}
+
+/** A raised ground as one ray of it sees it: its grid, and where the camera stands over it (field units). */
+interface Ray {
+  heights: Float32Array;
+  cols: number;
+  rows: number;
+  /** From the field's units to points of the grid: g = (p - x0) * sx. */
+  x0: number;
+  y0: number;
+  sx: number;
+  sy: number;
+  vertical: number;
+  /** Where the camera stands over the field and how high, and the highest the ground is drawn. */
+  s0: number;
+  s1: number;
+  eye: number;
+  top: number;
+  /** The heights the ground spans, and a step across it, in its units. */
+  zLo: number;
+  zHi: number;
+  step: number;
+  blocks: Blocks;
+}
+
+/** The highest the ground stands (field units) in the blocks a stretch of a ray crosses, from grid point (ga, ha) to (gb, hb). */
+function stretchTop(r: Ray, ga: number, ha: number, gb: number, hb: number): number {
+  const { across, down, most } = r.blocks;
+  const a0 = Math.max(0, Math.min(across - 1, Math.floor(Math.min(ga, gb) / BLOCK)));
+  const a1 = Math.max(0, Math.min(across - 1, Math.floor(Math.max(ga, gb) / BLOCK)));
+  const b0 = Math.max(0, Math.min(down - 1, Math.floor(Math.min(ha, hb) / BLOCK)));
+  const b1 = Math.max(0, Math.min(down - 1, Math.floor(Math.max(ha, hb) / BLOCK)));
+  let top = -Infinity;
+  for (let b = b0; b <= b1; b++) for (let a = a0; a <= a1; a++) top = Math.max(top, most[b * across + a]!);
+  return top * r.vertical;
+}
+
+/** The ground's height (field units, held under the top) where the ray through (qx, qy) from the point the camera stands over is at height z. */
+function rayGround(r: Ray, qx: number, qy: number, z: number): number {
+  const t = 1 - z / r.eye;
+  return Math.min(nearHeight(r.heights, r.cols, r.rows, (r.s0 + qx * t - r.x0) * r.sx, (r.s1 + qy * t - r.y0) * r.sy) * r.vertical, r.top);
+}
+
+/**
+ * The height at which the ray through the point (qx, qy) of the plane (from the point the camera stands over) first
+ * meets the ground, walked down from the highest the ground reaches; NaN when it misses it. Only the heights at which
+ * the ray is over the field are walked.
+ */
+function meet(r: Ray, qx: number, qy: number): number {
+  // The ray is over the point s + q (1 - z / H): over the field between two heights, as the field spans it.
+  let zTop = r.zHi;
+  let zBottom = r.zLo;
+  const ends: [number, number, number][] = [
+    [qx, r.x0 - r.s0, r.x0 + (r.cols - 1) / r.sx - r.s0],
+    [qy, r.y0 - r.s1, r.y0 + (r.rows - 1) / r.sy - r.s1],
+  ];
+  for (const [q, lo, hi] of ends) {
+    if (Math.abs(q) < 1e-12) {
+      if (lo > 0 || hi < 0) return Number.NaN;
+      continue;
+    }
+    // 1 - z / H between lo / q and hi / q, so z between H (1 - hi / q) and H (1 - lo / q), the order by the sign of q.
+    const za = r.eye * (1 - hi / q);
+    const zb = r.eye * (1 - lo / q);
+    zTop = Math.min(zTop, Math.max(za, zb));
+    zBottom = Math.max(zBottom, Math.min(za, zb));
+  }
+  if (!(zTop >= zBottom)) return Number.NaN;
+  // Stretches BLOCK cells long across the ground: one over blocks all lower than its lower end is skipped whole; in
+  // the others the ray is walked in steps.
+  const across = Math.hypot(qx, qy) / r.eye;
+  const span = zTop - zBottom;
+  const stretches = Math.min(4096, Math.max(1, Math.ceil((across * span) / (r.step * (BLOCK / RAY_STEP)))));
+  const dzStretch = span / stretches;
+  const fine = Math.max(1, Math.ceil(BLOCK / RAY_STEP));
+  const dz = dzStretch / fine;
+  for (let k = 0; k < stretches; k++) {
+    const za = zTop - k * dzStretch;
+    const zb = za - dzStretch;
+    const ta = 1 - za / r.eye;
+    const tb = 1 - zb / r.eye;
+    const top = stretchTop(r, (r.s0 + qx * ta - r.x0) * r.sx, (r.s1 + qy * ta - r.y0) * r.sy, (r.s0 + qx * tb - r.x0) * r.sx, (r.s1 + qy * tb - r.y0) * r.sy);
+    if (Math.min(top, r.top) < zb) continue;
+    let hi = za + dz;
+    for (let j = 0; j <= fine; j++) {
+      const z = za - j * dz;
+      if (rayGround(r, qx, qy, z) < z) {
+        hi = z;
+        continue;
+      }
+      let lo = z;
+      for (let n = 0; n < 6; n++) {
+        const mid = (lo + hi) / 2;
+        if (rayGround(r, qx, qy, mid) >= mid) lo = mid;
+        else hi = mid;
+      }
+      return lo;
+    }
+  }
+  return Number.NaN;
+}
+
+/** The side of a tile of pixels, of which a raised ground walks the rays of the corners and the middle first. */
+const TILE = 4;
+
+/** How far the middle of a tile may lie from what its corners give it, in cells of the grid, for the tile to be filled from its corners. */
+const TILE_TRUE = 0.2;
+
+/**
+ * Where on the grid (in points of it) each pixel of a band of TILE rows of a raised ground shows the ground, NaN where
+ * it shows none. The rays of the corners of each tile and of its middle are walked; where the middle lies where its
+ * corners put it (no hill's edge crosses the tile), the tile is filled between its corners, and otherwise every pixel
+ * of it walks its own ray. `top` and `low` hold the corners of the band's upper and lower edge, `low` filled here.
+ */
+function band(
+  hit: (X: number, Y: number, out: Float64Array, k: number) => void,
+  bx0: number,
+  Y0: number,
+  bw: number,
+  rows: number,
+  top: Float64Array,
+  low: Float64Array,
+  outX: Float32Array,
+  outY: Float32Array,
+): void {
+  const tiles = Math.ceil(bw / TILE);
+  for (let i = 0; i <= tiles; i++) hit(bx0 + i * TILE + 0.5, Y0 + TILE + 0.5, low, i);
+  const mid = new Float64Array(2);
+  const one = new Float64Array(2);
+  for (let i = 0; i < tiles; i++) {
+    const [ax, ay, bx, by] = [top[2 * i]!, top[2 * i + 1]!, top[2 * i + 2]!, top[2 * i + 3]!];
+    const [cx, cy, dx, dy] = [low[2 * i]!, low[2 * i + 1]!, low[2 * i + 2]!, low[2 * i + 3]!];
+    let smooth = !Number.isNaN(ax) && !Number.isNaN(bx) && !Number.isNaN(cx) && !Number.isNaN(dx);
+    if (smooth) {
+      hit(bx0 + i * TILE + TILE / 2 + 0.5, Y0 + TILE / 2 + 0.5, mid, 0);
+      smooth = !Number.isNaN(mid[0]!) && Math.hypot(mid[0]! - (ax + bx + cx + dx) / 4, mid[1]! - (ay + by + cy + dy) / 4) <= TILE_TRUE;
+    }
+    for (let r = 0; r < rows; r++) {
+      const v = r / TILE;
+      for (let c = 0; c < TILE; c++) {
+        const px = i * TILE + c;
+        if (px >= bw) break;
+        const o = r * bw + px;
+        if (smooth) {
+          const u = c / TILE;
+          outX[o] = (ax * (1 - u) + bx * u) * (1 - v) + (cx * (1 - u) + dx * u) * v;
+          outY[o] = (ay * (1 - u) + by * u) * (1 - v) + (cy * (1 - u) + dy * u) * v;
+        } else {
+          hit(bx0 + px + 0.5, Y0 + r + 0.5, one, 0);
+          outX[o] = one[0]!;
+          outY[o] = one[1]!;
+        }
+      }
+    }
+  }
 }
 
 /** Colours as 0..255 numbers. */
@@ -134,7 +338,24 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const width = raw.canvas.width;
   const height = raw.canvas.height;
 
-  // The pixels the field may cover: around its corners, or the whole canvas when a corner lies behind the camera.
+  const { cols, rows, heights } = spec;
+  // A raised ground: where the camera stands over it and how high (in the field's own units), and the heights it spans.
+  const raise = item.raise;
+  let zLo = 0;
+  let zHi = 0;
+  if (raise) {
+    zLo = Infinity;
+    zHi = -Infinity;
+    for (const v of heights) {
+      zLo = Math.min(zLo, v * spec.vertical);
+      zHi = Math.max(zHi, v * spec.vertical);
+    }
+    zHi = Math.min(zHi, RAISE_NEAR * raise[2]);
+    zLo = Math.min(zLo, zHi);
+  }
+
+  // The pixels the field may cover: around its corners, or the whole canvas when a corner lies behind the camera. A
+  // raised ground also covers its corners as high and as low as it reaches, drawn larger or smaller about the camera.
   let bx0 = 0;
   let by0 = 0;
   let bx1 = width;
@@ -145,6 +366,12 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
     [x1, y1],
     [x0, y1],
   ];
+  if (raise) {
+    for (const z of [zLo, zHi]) {
+      const k = raise[2] / (raise[2] - z);
+      for (const [x, y] of corners.slice(0, 4)) corners.push([raise[0] + (x - raise[0]) * k, raise[1] + (y - raise[1]) * k]);
+    }
+  }
   let behind = false;
   let cx0 = Infinity;
   let cy0 = Infinity;
@@ -190,7 +417,6 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   // The light in the field's own space: it comes from where the scene says on the map, the field turned with it.
   const from = (spec.from * Math.PI) / 180 - xf.rot;
   const { shade } = shadingOf(spec, fw, fh, from, (spec.high * Math.PI) / 180);
-  const { cols, rows, heights } = spec;
   const colors = item.node.colors;
   const dark = rgbOf(tone(colors['relief.dark']!));
   const bright = rgbOf(tone(colors['relief.bright']!));
@@ -198,21 +424,62 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const amount = spec.amount;
   const sx = (cols - 1) / fw;
   const sy = (rows - 1) / fh;
+  const feather = spec.feather ?? 0;
+  // A raised ground: its rays are walked in steps a share of a cell of the grid apart, across it.
+  const ray: Ray | null = raise
+    ? { heights, cols, rows, x0, y0, sx, sy, vertical: spec.vertical, s0: raise[0], s1: raise[1], eye: raise[2], top: RAISE_NEAR * raise[2], zLo, zHi, step: RAY_STEP * Math.min(fw / (cols - 1), fh / (rows - 1)), blocks: blocksOf(spec) }
+    : null;
 
   const data = new Uint8ClampedArray(bw * bh * 4);
   const wx = new Float64Array(4);
   const wy = new Float64Array(4);
   const tint = [0, 0, 0];
+  // A raised ground: the point of the grid each pixel shows, found a band of rows at a time.
+  const hit = (X: number, Y: number, out: Float64Array, k: number): void => {
+    out[2 * k] = Number.NaN;
+    out[2 * k + 1] = Number.NaN;
+    const w = ig * X + ih * Y + ii;
+    if (!ray || !(w > 0)) return;
+    // The ray from the camera through this point q of the plane: at a height z it is over the point
+    // s + (q - s) (1 - z / H). The pixel shows the point where it first meets the ground.
+    const qx = (ia * X + ic * Y + ie) / w - ray.s0;
+    const qy = (ib * X + id * Y + if_) / w - ray.s1;
+    const z = meet(ray, qx, qy);
+    if (Number.isNaN(z)) return;
+    const t = 1 - z / ray.eye;
+    out[2 * k] = (ray.s0 + qx * t - x0) * sx;
+    out[2 * k + 1] = (ray.s1 + qy * t - y0) * sy;
+  };
+  const corners0 = ray ? new Float64Array(2 * (Math.ceil(bw / TILE) + 1)) : null;
+  const corners1 = ray ? new Float64Array(2 * (Math.ceil(bw / TILE) + 1)) : null;
+  const shownX = ray ? new Float32Array(bw * TILE) : null;
+  const shownY = ray ? new Float32Array(bw * TILE) : null;
+  let [upper, lower] = [corners0, corners1];
+  if (upper) for (let i = 0; i <= Math.ceil(bw / TILE); i++) hit(bx0 + i * TILE + 0.5, by0 + 0.5, upper, i);
   for (let py = 0; py < bh; py++) {
     const Y = by0 + py + 0.5;
+    if (ray && py % TILE === 0) {
+      band(hit, bx0, by0 + py, bw, Math.min(TILE, bh - py), upper!, lower!, shownX!, shownY!);
+      [upper, lower] = [lower, upper];
+    }
     for (let px = 0; px < bw; px++) {
       const X = bx0 + px + 0.5;
-      const w = ig * X + ih * Y + ii;
-      if (!(w > 0)) continue;
-      // Where the pixel lies on the grid, in points of it.
-      const gx = (((ia * X + ic * Y + ie) / w - x0) * sx);
-      const gy = (((ib * X + id * Y + if_) / w - y0) * sy);
+      let gx: number;
+      let gy: number;
+      if (ray) {
+        gx = shownX![(py % TILE) * bw + px]!;
+        gy = shownY![(py % TILE) * bw + px]!;
+        if (Number.isNaN(gx)) continue;
+      } else {
+        const w = ig * X + ih * Y + ii;
+        if (!(w > 0)) continue;
+        // Where the pixel lies on the grid, in points of it.
+        gx = (((ia * X + ic * Y + ie) / w - x0) * sx);
+        gy = (((ib * X + id * Y + if_) / w - y0) * sy);
+      }
       if (!(gx >= 0 && gy >= 0 && gx <= cols - 1 && gy <= rows - 1)) continue;
+      const shown = feather > 0 ? fadeAt(x0 + gx / sx, y0 + gy / sy, x0, y0, x1, y1, feather) : 1;
+      if (!(shown > 0)) continue;
       const c0 = Math.min(cols - 2, Math.floor(gx));
       const r0 = Math.min(rows - 2, Math.floor(gy));
       weights(gx - c0, wx);
@@ -241,14 +508,14 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
         data[o] = tint[0]! + (to[0] - tint[0]!) * t;
         data[o + 1] = tint[1]! + (to[1] - tint[1]!) * t;
         data[o + 2] = tint[2]! + (to[2] - tint[2]!) * t;
-        data[o + 3] = 255;
+        data[o + 3] = 255 * shown;
       } else {
         // The shading alone: the dark or the lit tone, as strong as the shade, over what lies under it.
         const to = s < 0 ? dark : bright;
         data[o] = to[0];
         data[o + 1] = to[1];
         data[o + 2] = to[2];
-        data[o + 3] = Math.abs(s) * 255;
+        data[o + 3] = Math.abs(s) * 255 * shown;
       }
     }
   }
@@ -260,7 +527,7 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
     raw.setTransform(m);
     raw.beginPath();
     raw.rect(x0, y0, fw, fh);
-    if (!behind) raw.clip();
+    if (!behind && !ray) raw.clip();
     raw.setTransform(1, 0, 0, 1, 0, 0);
     raw.drawCanvas(picture, bx0, by0);
     raw.restore();

@@ -46,6 +46,7 @@ import { formAt } from './form.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
 import type { GroupNode, LabelSide, StrokeNode } from './types.ts';
+import { groundField, type GroundField } from './ground.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
 export interface PoseSource {
@@ -217,10 +218,26 @@ export interface Places {
    * point of that plane the camera stands over, in the units of the plane, and how high it is over the front of it.
    */
   readonly stands: Map<number, Vec3>;
+  /** By node index of a group that lies in a plane with a ground: the ground at the frame, once its relief is placed. */
+  readonly grounds: Map<number, GroundField>;
+  /** By node index, in a plane with a ground: how high over the plane the ground stands the node (its units); 0 for any other. */
+  readonly lifted: Float64Array;
+  /** By node index: 1 for a body whose transform is that of its top at the frame, so that what is inside it rides on that top. */
+  readonly topped: Uint8Array;
 }
 
 export function newPlaces(c: CompiledShot): Places {
-  return { flat: new Array<Xf | undefined>(c.nodes.length), planes: new Map(), far: new Float64Array(c.nodes.length), point: new Float64Array(3 * c.nodes.length), eyes: c.layers.map(() => null), stands: new Map() };
+  return {
+    flat: new Array<Xf | undefined>(c.nodes.length),
+    planes: new Map(),
+    far: new Float64Array(c.nodes.length),
+    point: new Float64Array(3 * c.nodes.length),
+    eyes: c.layers.map(() => null),
+    stands: new Map(),
+    grounds: new Map(),
+    lifted: new Float64Array(c.nodes.length),
+    topped: new Uint8Array(c.nodes.length),
+  };
 }
 
 /**
@@ -270,6 +287,72 @@ function liftOf(xf: Xf, high: number, stand: Vec3, gx: number, gy: number, over:
 }
 
 /**
+ * Points of a region or a stroke of a plane with a ground, in the node's own units, laid on the ground point by point:
+ * each as the camera sees it at the height of the ground under it (its parent's height `base` taken off first), and
+ * a stretch longer than a cell of the ground's grid cut into pieces that each follow it.
+ */
+function laidOn(points: readonly Vec2[], closed: boolean, xf: Xf, base: number, ground: GroundField, stand: Vec3): Vec2[] {
+  const eye = stand[2];
+  const back = (eye - base) / eye;
+  const cos = Math.cos(xf.rot);
+  const sin = Math.sin(xf.rot);
+  const step = ground.cell / Math.max(1e-9, xf.scale);
+  const out: Vec2[] = [];
+  const put = (px: number, py: number): void => {
+    const ux = stand[0] + (xf.x + (px * cos - py * sin) * xf.scale - stand[0]) * back;
+    const uy = stand[1] + (xf.y + (px * sin + py * cos) * xf.scale - stand[1]) * back;
+    const grow = eye / (eye - Math.min(ground.at(ux, uy), RISE_NEAR * eye));
+    const dx = (stand[0] + (ux - stand[0]) * grow - xf.x) / xf.scale;
+    const dy = (stand[1] + (uy - stand[1]) * grow - xf.y) / xf.scale;
+    out.push([dx * cos + dy * sin, -dx * sin + dy * cos]);
+  };
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const a = points[i]!;
+    put(a[0], a[1]);
+    if (i === n - 1 && !closed) break;
+    const b = points[(i + 1) % n]!;
+    const pieces = Math.min(64, Math.floor(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let k = 1; k < pieces; k++) put(a[0] + ((b[0] - a[0]) * k) / pieces, a[1] + ((b[1] - a[1]) * k) / pieces);
+  }
+  return out;
+}
+
+/** The camera's place over a plane, as seen from a height `base` over it: the same point, that much lower. */
+function lowered(stand: Vec3 | undefined, base: number): Vec3 | undefined {
+  return stand && base !== 0 ? [stand[0], stand[1], stand[2] - base] : stand;
+}
+
+/** A node of a plane drawn point by point on its ground, not as a whole: a region and a stroke. */
+function followsPointwise(n: CNode): boolean {
+  return n.node.type === 'stroke' || (n.node.type === 'shape' && n.node.shape.kind === 'polygon' && n.node.shape.smooth !== undefined && !n.node.relief);
+}
+
+/** A relief of the ground of its plane: it is drawn raised, and is not lifted as a whole. */
+function isGround(c: CompiledShot, n: CNode): boolean {
+  return c.grounds?.get(n.plane)?.includes(n.index) === true;
+}
+
+/**
+ * A node of a plane with a ground, at the height of the ground under its place: its transform in the plane grown about
+ * the point the camera stands over, as a body's top is (the transform of its parent was grown for the parent's own
+ * height), and that height. A node inside a body rides on its top; a region and a stroke follow the ground point by
+ * point where they are drawn; what comes before the relief lies flat.
+ */
+function onGround(c: CompiledShot, n: CNode, xf: Xf, space: Places): [Xf, number] {
+  const base = n.parent >= 0 ? space.lifted[n.parent]! : 0;
+  const ground = space.grounds.get(n.plane);
+  const stand = space.stands.get(n.plane);
+  if (!ground || !stand || !(stand[2] > 0) || (n.parent >= 0 && space.topped[n.parent]) || followsPointwise(n) || isGround(c, n)) return [xf, base];
+  const eye = stand[2];
+  // Where the node would be on the plane without its parent's height, and the ground there.
+  const back = (eye - base) / eye;
+  const z = Math.min(ground.at(stand[0] + (xf.x - stand[0]) * back, stand[1] + (xf.y - stand[1]) * back), RISE_NEAR * eye);
+  const grow = (eye - base) / (eye - z);
+  return [{ x: stand[0] + (xf.x - stand[0]) * grow, y: stand[1] + (xf.y - stand[1]) * grow, rot: xf.rot, scale: xf.scale * grow }, z];
+}
+
+/**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
  * Nodes without a place of their own (links, emitters) get the identity.
@@ -293,6 +376,11 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     space.planes.clear();
     space.stands.clear();
     space.flat.fill(undefined);
+    if (c.grounds) {
+      space.grounds.clear();
+      space.lifted.fill(0);
+      space.topped.fill(0);
+    }
     c.layers.forEach((layer, li) => {
       space.eyes[li] = layer.persp ? eyeOf(perspAt(layer.persp, t)) : null;
     });
@@ -332,7 +420,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
         let map = planeMap(eye, [x, y, z], axes);
         if (map && !map.front && node.back === false) map = null;
         // In a shot with bodies, or with children drawn far to near: where the camera stands in that plane, and how high over it.
-        if (c.risen || c.sorted) space.stands.set(n.index, standOf(eye, [x, y, z], axes));
+        if (c.risen || c.sorted || c.grounds?.has(n.index)) space.stands.set(n.index, standOf(eye, [x, y, z], axes));
         const flat: Xf = { x: 0, y: 0, rot, scale };
         space.flat[n.index] = flat;
         space.planes.set(n.index, map);
@@ -363,11 +451,17 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       const lever = (node.shape.length - 2 * node.shape.r) * Math.max(xf.scale, 0.05);
       xf = { ...xf, rot: poses.sway(n.springSlot, frame, [xf.x, xf.y], xf.rot, lever, xf.scale > HIDDEN) };
     }
+    // On a plane with a ground: how high the ground stands the node, and the camera's height over that.
+    let base = 0;
+    if (inPlane && c.grounds) {
+      [xf, base] = onGround(c, n, xf, space);
+      space.lifted[n.index] = base;
+    }
     if (n.pos?.lifts) {
       // A travel along a path with heights: the node is drawn as high over the ground as the path runs.
       const z = sampleHeight(n.pos, t) * parent.scale;
       if (z !== 0) {
-        const stand = inPlane ? space.stands.get(n.plane) : undefined;
+        const stand = inPlane ? lowered(space.stands.get(n.plane), base) : undefined;
         if (stand && stand[2] > 0) {
           // In a plane, as the top of a body that high: drawn larger about the point the camera stands over.
           const grow = stand[2] / (stand[2] - Math.min(z, RISE_NEAR * stand[2]));
@@ -380,7 +474,8 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       const rise = sampleRise(n.rise, t);
       // A body with a roof keeps its roof while it lies flat: the roof stands on the ground then.
       if (rise > RISE_FLAT || (node.type === 'shape' && node.roof !== undefined)) {
-        const stand = inPlane ? space.stands.get(n.plane) : undefined;
+        const stand = inPlane ? lowered(space.stands.get(n.plane), base) : undefined;
+        if (inPlane && c.grounds) space.topped[n.index] = 1;
         if (stand) {
           // In a plane the body stands on the plane, toward its front. Seen from the camera, a point that high over a
           // place of the plane lies on the line from the point the camera stands over through that place, farther
@@ -408,6 +503,10 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     }
     if (inPlane) {
       space.flat[n.index] = xf;
+      // The ground of the plane, once its relief is placed: what comes after it stands on it.
+      if (c.grounds?.get(n.plane)?.includes(n.index) && node.type === 'shape' && node.relief && node.shape.kind === 'polygon') {
+        space.grounds.set(n.plane, groundField(n.index, node.relief, node.shape.points, xf, space.grounds.get(n.plane)));
+      }
       const map = space.planes.get(n.plane);
       out[n.index] = map ? throughPlane(map, xf) : { ...xf, scale: 0 };
     } else out[n.index] = xf;
@@ -475,6 +574,11 @@ export interface ShapeItem {
    * the plane the camera is, in the units of the plane. Left out: it lies in the plane, or in no plane.
    */
   readonly upon?: Vec3;
+  /**
+   * The relief that is the ground of its plane (ground): the point the camera stands over and how high over the plane
+   * the camera is, in the relief's own units. It is drawn raised. Left out: it is drawn flat.
+   */
+  readonly raise?: Vec3;
 }
 
 export interface EyeItem {
@@ -1393,7 +1497,40 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   const { own, alpha } = opacities(c, t);
 
   // A region whose outline is keyed, driven or seen in perspective carries the shape it has at this frame; any other item is what it always was.
-  const reshaped = (n: CNode): { shape?: ShapeSpec } => (n.outline || n.form ? { shape: shapeOf(n, t) } : {});
+  const reshaped = (n: CNode): { shape?: ShapeSpec } => {
+    const shape = n.outline || n.form ? shapeOf(n, t) : null;
+    // A region on a plane with a ground lies on it point by point.
+    const laid = c.grounds && n.plane >= 0 && followsPointwise(n) ? groundOf(n.plane) : null;
+    if (laid && n.node.type === 'shape') {
+      const spec = shape ?? n.node.shape;
+      if (spec.kind === 'polygon') return { shape: { ...spec, points: laidOn(spec.points, true, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]) } };
+    }
+    return shape ? { shape } : {};
+  };
+  // The ground of a plane and where the camera stands over it, at this frame; null for a plane without one.
+  const groundOf = (plane: number): [GroundField, Vec3] | null => {
+    const ground = places?.grounds.get(plane);
+    const stand = places?.stands.get(plane);
+    return ground && stand && stand[2] > 0 ? [ground, stand] : null;
+  };
+  // The relief that is the ground of its plane is drawn raised: where the camera stands, in the relief's own units.
+  const raised = (n: CNode): { raise?: Vec3 } => {
+    if (!c.grounds || n.plane < 0 || !isGround(c, n)) return {};
+    const stand = places?.stands.get(n.plane);
+    if (!stand || !(stand[2] > 0)) return {};
+    const xf = placeOf(n.index);
+    const [x, y] = vrot([(stand[0] - xf.x) / xf.scale, (stand[1] - xf.y) / xf.scale], -xf.rot);
+    return { raise: [x, y, stand[2] / xf.scale] };
+  };
+  // A stroke on a plane with a ground lies on it point by point.
+  const strokeLaid = (n: CNode): { path?: PathSpec } => {
+    const keyed = n.outline || n.form ? strokePathOf(n, t) : null;
+    const laid = c.grounds && n.plane >= 0 ? groundOf(n.plane) : null;
+    if (!laid || n.node.type !== 'stroke') return keyed ? { path: keyed } : {};
+    const path = keyed ?? n.node.path;
+    if (path.heights) return keyed ? { path: keyed } : {};
+    return { path: { ...path, points: laidOn(path.points, path.closed, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]) } };
+  };
   // A shape without a fillTo is the item it always was.
   const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
   // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
@@ -1406,7 +1543,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   // A shape that stands up from its plane carries where the camera stands over that plane; any other is what it always was.
   const upon = (n: CNode): { upon?: Vec3 } => {
     if (n.node.type !== 'shape' || !n.node.stands || n.plane < 0) return {};
-    const stand = places?.stands.get(n.plane);
+    // On a plane with a ground, it stands up from the ground under it: the camera is that much lower over it.
+    const stand = lowered(places?.stands.get(n.plane), places?.lifted[n.index] ?? 0);
     return stand ? { upon: stand } : {};
   };
 
@@ -1571,7 +1709,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -1616,7 +1754,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const pulses = n.stroke!.pulses.length > 0 ? sampleStrokePulses(n.stroke!, pathTable(strokePathOf(n, t)).length, t) : [];
           // A line with a least width is as wide, in its own units, as it takes to be that wide on screen; never thinner than it was made.
           const held = node.least === undefined ? {} : { width: Math.max(node.width, node.least / Math.max(world[index]!.scale * view.zoom, 1e-9)) };
-          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...(n.outline || n.form ? { path: strokePathOf(n, t) } : {}), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
+          items.push({ kind: 'stroke', node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {

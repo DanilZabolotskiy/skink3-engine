@@ -52,7 +52,7 @@ polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /**/ radius: 8 }); // 0.
 rect({ id: 'tray', fill: 'mid.mist', w: 240, h: 50, /**/ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed: 1 });
 region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
-group({ id: 'face', /**/ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog
+group({ id: 'face', /**/ upright: false, children: [] }); // + at, rotation, scale, opacity; upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen), at, rotation, scale
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + runInk: '2.0 · [Aug 2026]': runs in that ink
@@ -62,7 +62,7 @@ group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min:
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 }); // + at, scale, opacity
 ```
 
-- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's), `soft` (a blurred edge; groups too), `rise` (a body that high; + `side`; strokes too), `stands` (a sail). `relief`: hills. All but `region` are convex; a `group` composes them.
+- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `cover`, `backdrop`, `clipTo`, `level`, `highlight: false`, `lift` (0..1 of the glow's), `soft` (a blurred edge; groups too), `rise` (a body that high; + `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`). All but `region` are convex.
 - `stroke`: `smooth: 0`: straight lines; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `label`: its tail points at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; a shape's child lies on it; in a `parallax: 0` layer, the frame's.
 
