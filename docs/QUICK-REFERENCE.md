@@ -1,6 +1,6 @@
 # Quick reference for scene authors
 
-What a scene can use; open SCENES.md or a review document only at an indexed section. What neither has is not built.
+What a scene can use; open SCENES.md or a review doc only at an indexed section. What neither has is not built.
 
 - After `/**/`: defaults.
 - Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
@@ -11,7 +11,7 @@ What a scene can use; open SCENES.md or a review document only at an indexed sec
 import { circle, definePalette, hsv, layer, moveTo, popIn, Rng, shot } from 'skink3-engine';
 
 const palette = definePalette({ deep: { night: hsv(250, 0.9, 0.2) }, dark: { indigo: hsv(258, 0.8, 0.5) }, mid: { mist: hsv(250, 0.5, 0.7) }, accent: { amber: hsv(40, 0.9, 1) }, light: { cream: hsv(52, 0.3, 1) } });
-new Rng(7, 'scatter').range(-800, 800); // seeded by both; also int, pick, shuffle, next, sign, gauss, stream
+new Rng(7, 'scatter').range(-800, 800); // seeded by both; + int, pick, shuffle, gauss, stream
 const scene = shot({
   id: 'minimal', seconds: 4, seed: 1, palette, strings: { en: { 'label.dot': 'A dot' } },
   background: { inner: 'dark.indigo', outer: 'deep.night' }, atmosphere: 'mid.mist',
@@ -40,7 +40,7 @@ perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6, profile: 'ease' }); // +
 - `drift.speed`: units/frame along `heading` (norm 0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`: with `speed` (units/frame) it loops a closed one (`loopPoints(center, r | [rx, ry])`), else covers it once.
 - Keys chain. `cameraTo`: `zoom` times the authored view, `to` its final aim; path and drift wait. Under `zoomTo` they run on.
-- `depth` 0: the focus plane; above 0 farther (less parallax, blurred, tinted to `atmosphere`), below (to -0.9) nearer. Drawn farthest first, nodes as listed, children after parents.
+- `depth` 0: the focus plane; above 0 farther (less parallax, blurred, toward `atmosphere`), below (to -0.9) nearer. Drawn farthest first, nodes as listed, children after parents.
 - A listed node's `depth` (larger: behind) orders any layer. In a perspective layer listed nodes take `at: [x, y, z]`, face the camera; `region`, `stroke`: `points` of three; a `group` with `plane` lies in it; near over far; behind the camera: cut.
 
 ## Nodes
@@ -76,7 +76,7 @@ circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 
 shot({ ...scene, /**/ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
-A dynamic body waits, touching nothing, till `release` (s, from -`prewarm`), then only physics moves it. `velocity`: units/s; `spin`: deg/s; `appear: 'release'`: undrawn till then.
+A dynamic body waits untouched till `release` (s, from -`prewarm`), then only physics moves it. `velocity`: units/s; `spin`: deg/s; `appear: 'release'`: undrawn till then.
 
 ## Motion and timing
 
@@ -101,7 +101,7 @@ solidTo('route', { at: 5, /**/ to: 1, dur: 0.6 }); // closes the gaps of its das
 bendTo('wire', { at: 3, to: 0, /**/ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
 widthTo('wire', { at: 4, to: 20, /**/ dur: 0.6, overshoot: 0.15 }); // a link's or stroke's width
 reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /**/ dur: 1.2, profile: 'ease' }); // a region or a stroke, point for point; + smooth; matchPoints, reachedAt: any two outlines
-drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /**/ at: 0 }); // a function of time: at, rotation, scale, opacity, depth, points; or samples: { at: [...] }
+drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /**/ at: 0 }); // a function of time: at, rotation, scale, opacity, depth, points; or samples
 pulse('wire', { at: 2, /**/ dur: 0.7, bump: 0.14 }); // bumps the far node at at + dur. A stroke: + from, to (shares), profile, length, node
 openTo('pupil', { at: 1, to: 1, /**/ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
@@ -110,7 +110,7 @@ stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + o
 
 - A negative `at` (to -600): under way at frame 0.
 - No key is anchored to a word: take `at` from word times; `arrive`, `land`, `at + dur` are exact.
-- `profile`: `'settle'` (`moveTo` only): back away, shoot past, settle. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: its share of `dur`, 0.3).
+- `profile`: `'settle'` (`moveTo` only): back away, shoot past, settle. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: share of `dur`, 0.3).
 
 ## Effects
 
@@ -120,7 +120,7 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 3 } }); // what is drawn before it wavers; + scale 40, speed 30, direction -90
 ```
 
-- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (s of way as a tail).
+- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing`: `'steady'` or `'spark'` (shrinks away). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (a tail, s).
 - `cover`: hides the glow drawn before it. `backdrop`: labels may lie on it. `clipTo`: only inside that shape, fading at a `soft` edge; a coast: `clipMask` on it. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
 
 ## Sound
@@ -153,7 +153,7 @@ queue   render slots: SKINK3_RENDER_SLOTS (4; 0: off)
 common  --lang tag (first table) --width px (1920) --cpu --out file (./out/<shot>/) --cache dir (./cache) --priority high|low
 ```
 
-Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps, else warns. `--crop`: stage units from top-left.
+Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps, else warns. `--crop`: units from top-left.
 
 ## Reading the reviews
 
@@ -183,7 +183,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] });
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`** (camera, zoom, background keys, physics); **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`**; **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md: **The findings**, **The life of the background**, **Reading a trail**, **Reading a graph**, **Thresholds**.
 
@@ -195,4 +195,5 @@ PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**.
 constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CONTRAST_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
 errors: SceneError IntentError PaletteError
 functions: hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt pathHeightAt frameToSeconds secondsToFrame Noise
+maps: water woods trees flecks parcels houses logRoad locator inside distTo scatter oval smoothLine patches
 ```

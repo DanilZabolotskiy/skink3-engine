@@ -62,11 +62,11 @@ import type {
 
 export class SceneError extends Error {}
 
-function fail(where: string, message: string): never {
+export function fail(where: string, message: string): never {
   throw new SceneError(`${where}: ${message}`);
 }
 
-function checkKeys(where: string, opts: object, allowed: readonly string[]): void {
+export function checkKeys(where: string, opts: object, allowed: readonly string[]): void {
   if (opts === null || typeof opts !== 'object' || Array.isArray(opts)) fail(where, 'expected an options object');
   for (const key of Object.keys(opts)) {
     if (!allowed.includes(key)) fail(where, `unknown option "${key}" (allowed: ${allowed.join(', ')})`);
@@ -80,14 +80,14 @@ function idOf(where: string, value: unknown): string {
   return value;
 }
 
-function num(where: string, name: string, value: unknown, min: number, max: number): number {
+export function num(where: string, name: string, value: unknown, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
     fail(where, `${name} must be a number in ${min}..${max}, got ${JSON.stringify(value)}`);
   }
   return value;
 }
 
-function vec(where: string, name: string, value: unknown): Vec2 {
+export function vec(where: string, name: string, value: unknown): Vec2 {
   if (!Array.isArray(value) || value.length !== 2 || !value.every((v) => typeof v === 'number' && Number.isFinite(v))) {
     fail(where, `${name} must be [x, y], got ${JSON.stringify(value)}`);
   }

@@ -14,6 +14,8 @@ export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile, type SpeedKeys } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, pathHeightAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { matchPoints, reachedAt } from './motion/match.ts';
+export { water, woods, trees, flecks, parcels, houses, logRoad, locator, inside, distTo, scatter, oval, smoothLine, patches } from './scene/map.ts';
+export type { WaterOptions, WoodsOptions, TreesOptions, FlecksOptions, ParcelsOptions, HousesOptions, LogRoadOptions, LocatorOptions, ScatterOptions } from './scene/map.ts';
 export { definePalette, checkPalette, resolveColor, PaletteError, ROLES } from './look/palette.ts';
 export type { ColorRef, HueBand, Palette, PaletteIssue, PaletteRule, PaletteSpec, PaletteTones, Role } from './look/palette.ts';
 export { hsv, hexToHsv, lightness, mix } from './look/color.ts';
