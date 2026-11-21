@@ -166,7 +166,7 @@ test('render queue: a low waiter is served in the end, however much quick work c
 });
 
 test('render queue: its settings, and SKINK3_RENDER_SLOTS=0 turns it off', async () => {
-  assert.equal(queueConfig({}).slots, 3, 'three slots unless set');
+  assert.equal(queueConfig({}).slots, 4, 'four slots unless set');
   assert.equal(queueConfig({ SKINK3_RENDER_SLOTS: '0' }).slots, 0);
   assert.equal(queueConfig({ SKINK3_RENDER_SLOTS: ' 5 ' }).slots, 5);
   assert.equal(queueConfig({ SKINK3_SLOT_DIR: 'somewhere' }).dir, 'somewhere');

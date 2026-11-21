@@ -7,7 +7,7 @@
 // finds them all taken waits for its turn.
 //
 // - The slots are small files in a directory outside any repository, the same for every process of the user
-//   (SKINK3_SLOT_DIR). Their number is SKINK3_RENDER_SLOTS: 3 when it is not set, 0 for no limit and no queue.
+//   (SKINK3_SLOT_DIR). Their number is SKINK3_RENDER_SLOTS: 4 when it is not set, 0 for no limit and no queue.
 // - Waiting is first come, first served, in two classes: quick work (a still, a sheet, a render at preview size)
 //   before long work (a render wider than the preview, or one marked low). A low waiter that has waited AGING_MS
 //   counts as quick, in its place by arrival, so it is served in the end however much quick work comes.
@@ -28,8 +28,11 @@ import { join } from 'node:path';
 /** The class of a waiter: quick work goes first. */
 export type Priority = 'high' | 'low';
 
-/** Render slots of a machine when SKINK3_RENDER_SLOTS is not set. */
-export const DEFAULT_SLOTS = 3;
+/**
+ * Render slots of a machine when SKINK3_RENDER_SLOTS is not set. Four since November 21, 2026: with three, two 4K
+ * renders drew about 25 frames/s in all, with the GPU about 65 % busy and about 5 of its 16 GB of memory in use.
+ */
+export const DEFAULT_SLOTS = 4;
 
 /** The width of a preview. A render wider than this is long work (low) unless it is marked. */
 export const PREVIEW_WIDTH = 1920;

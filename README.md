@@ -41,7 +41,7 @@ Each picture of an example is one frame with neutral content, at 1920×1080, as 
 - **Text and languages.** String tables per language, bundled fonts for Latin, Cyrillic and Greek with a check of every glyph, text that fits itself, runs of a label or a text in a second ink that each language marks in its own string, and subtitles from word timings (.srt, .vtt, .ytt).
 - **Sound.** The sound effects of a shot, built from its events and a bank of sounds that a production brings.
 - **Reviews without watching.** The motion review, the physics review and the contrast review report their findings as text, with trails, graphs and close-ups.
-- **Render.** Deterministic frames on the GPU, in parallel chunks, at any 16:9 width; a re-render matches pixel for pixel. A render queue for the whole machine keeps the processes that draw on the GPU at once to a few (three unless `SKINK3_RENDER_SLOTS` says otherwise), whatever checkout they run from: quick work first, a long master in the end ([docs/SCENES.md](docs/SCENES.md#the-render-queue)).
+- **Render.** Deterministic frames on the GPU, in parallel chunks, at any 16:9 width; a re-render matches pixel for pixel. A render queue for the whole machine keeps the processes that draw on the GPU at once to a few (four unless `SKINK3_RENDER_SLOTS` says otherwise), whatever checkout they run from: quick work first, a long master in the end ([docs/SCENES.md](docs/SCENES.md#the-render-queue)).
 
 Not built yet: transitions between shots, soft bodies, ropes, flocks and fluids, motion blur, narration, music and the mix of a film's sound. The full list of what a scene cannot do yet closes [docs/SCENES.md](docs/SCENES.md); what each module does is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the roadmap is at the end of this file.
 
@@ -135,7 +135,7 @@ Scene modules import from the package name (`import { shot, circle } from 'skink
 
 The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit.
 
-The renders in the table ran before the render queue; with it, a render draws with at most three workers at once unless `SKINK3_RENDER_SLOTS` says otherwise. Measured with the queue on November 21, 2026, on the same machine while other renders kept its GPU busy:
+The renders in the table ran before the render queue; with it, a render draws with at most four workers at once unless `SKINK3_RENDER_SLOTS` says otherwise. Measured with the queue, then of three slots, on November 21, 2026, on the same machine while other renders kept its GPU busy:
 
 | What | Result |
 |---|---|

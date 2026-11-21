@@ -83,7 +83,7 @@ its count and its length.
 
 The render queue: a process that draws on the GPU first takes one of the
 machine's render slots, which every checkout shares (SKINK3_RENDER_SLOTS,
-default 3, 0 for no limit; in the directory SKINK3_SLOT_DIR), and waits when
+default 4, 0 for no limit; in the directory SKINK3_SLOT_DIR), and waits when
 they are all taken: quick work first, then a render wider than 1920 or one
 given --priority low (or SKINK3_RENDER_PRIORITY=low), which is served in the
 end however much quick work comes. A render keeps at most as many workers

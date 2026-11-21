@@ -149,7 +149,7 @@ trail   ghosts --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--
 graph   speed --node id | --camera [--from f] [--to f] | [--time s,s]
 events  intents, contacts, bursts as JSON
 sfx     the sound track, a WAV --bank bank.json [--sheet [--cols 4] [--tile 480]]
-queue   render slots: SKINK3_RENDER_SLOTS (3; 0: off)
+queue   render slots: SKINK3_RENDER_SLOTS (4; 0: off)
 common  --lang tag (first table) --width px (1920) --cpu --out file (./out/<shot>/) --cache dir (./cache) --priority high|low
 ```
 
