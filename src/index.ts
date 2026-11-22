@@ -38,6 +38,7 @@ export type {
   RoofKind,
   OpeningsSpec,
   CastSpec,
+  CountSpec,
   DetailSpec,
   IdleSpec,
   IntendedSpec,

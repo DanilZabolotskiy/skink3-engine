@@ -487,7 +487,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         push(draws, index, key);
         break;
       case 'countTo':
-        if (node.type !== 'text' || !node.count) fail(`${where}: countTo cannot target ${node.type} "${node.id}"; it applies to a text that is a counter (give the text the option count)`);
+        if ((node.type !== 'text' && node.type !== 'label') || !node.count) fail(`${where}: countTo cannot target ${node.type} "${node.id}"; it applies to a text or a label that is a counter (give it the option count)`);
         push(counts, index, key);
         break;
       case 'solidTo':
@@ -771,10 +771,15 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         colors['ink'] = col(node, 'ink', node.ink);
         targetIndex = ref(node, 'target', node.target);
         for (const lang of Object.keys(spec.strings)) {
+          let words = '';
           try {
-            resolveString(spec.strings, lang, node.text);
+            words = resolveString(spec.strings, lang, node.text);
           } catch (e) {
             fail(`${where}: label "${node.id}": ${(e as Error).message}`);
+          }
+          // The string of a counter says where its number goes, once, in every language.
+          if (node.count && words.split(COUNT_MARK).length !== 2) {
+            fail(`${where}: label "${node.id}" is a counter: its string "${node.text}" [${lang}] must hold ${COUNT_MARK} once, where the number goes; it is ${JSON.stringify(words)}`);
           }
         }
         if (node.runInk) {
@@ -944,7 +949,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       level: node.type === 'shape' && node.level ? buildLevelTrack(node.level.at, levels.get(d.index) ?? []) : null,
       stretch: squashes.has(d.index) ? buildStretchTrack(squashes.get(d.index)!) : null,
       axis: axisScales.has(d.index) ? buildAxisTrack(axisScales.get(d.index)!) : null,
-      count: node.type === 'text' && node.count ? countTrackOf(node.id, node.count.from, counts.get(d.index) ?? []) : null,
+      count: (node.type === 'text' || node.type === 'label') && node.count ? countTrackOf(node.id, node.count.from, counts.get(d.index) ?? []) : null,
       stroke: node.type === 'stroke' ? buildStrokeTrack(node.drawn, node.solid, draws.get(d.index) ?? [], solids.get(d.index) ?? [], strokePulses.get(d.index) ?? []) : null,
       outline,
       // A line without a widthTo has no track: it is as wide as it was made.
@@ -1019,6 +1024,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     });
     if (new Set(list).size !== list.length) fail(`${where}: group "${n.id}" names a relief of its ground twice`);
     (grounds ??= new Map()).set(n.index, list.sort((a, b) => a - b));
+  }
+  // Shadows laid on a ground need one under them.
+  for (const n of nodes) {
+    if (n.node.type !== 'group' || !n.node.cast?.ground) continue;
+    if (!(n.plane >= 0 && grounds?.has(n.plane))) {
+      fail(`${where}: group "${n.id}" lays its shadows on the ground (cast.ground), and it lies in no plane with a ground: give its plane a ground (a relief among the plane group's children), or leave cast.ground out`);
+    }
   }
 
   // 5. Intended exceptions to the motion review and to the physics review must

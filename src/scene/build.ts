@@ -36,6 +36,7 @@ import type {
   CameraPathSpec,
   CameraSpec,
   CastSpec,
+  CountSpec,
   FogSpec,
   GlobeLayerSpec,
   GlobeSpec,
@@ -429,10 +430,11 @@ function openingsOf(where: string, o: { rise?: number; openings?: ShapeOptions['
 /** The shadows the bodies of a group cast: written only when they are given, so that a group without them is the data it always was. */
 function castOf(where: string, value: unknown): { cast?: CastSpec } {
   if (value === undefined) return {};
-  const c = value as { color?: unknown; opacity?: unknown; dir?: unknown; length?: unknown; soft?: unknown; over?: unknown };
-  checkKeys(`${where}: cast`, c, ['color', 'opacity', 'dir', 'length', 'soft', 'over']);
+  const c = value as { color?: unknown; opacity?: unknown; dir?: unknown; length?: unknown; soft?: unknown; over?: unknown; ground?: unknown };
+  checkKeys(`${where}: cast`, c, ['color', 'opacity', 'dir', 'length', 'soft', 'over', 'ground']);
   if (c.color === undefined) fail(where, 'cast needs a color: the colour of the shadows, a palette reference; the engine has none of its own');
   if (c.over !== undefined && c.over !== 'flat') fail(where, `cast.over must be "flat" (the shadows lie over the flat members of the group and under its raised ones), got ${JSON.stringify(c.over)}; leave it out to draw them under all the members`);
+  if (c.ground !== undefined && typeof c.ground !== 'boolean') fail(where, `cast.ground must be true or false (true: the shadows lie on the ground of the plane), got ${JSON.stringify(c.ground)}`);
   return {
     cast: {
       color: color(where, 'cast.color', c.color),
@@ -442,6 +444,8 @@ function castOf(where: string, value: unknown): { cast?: CastSpec } {
       soft: c.soft === undefined ? CAST_DEFAULTS.soft : num(where, 'cast.soft', c.soft, 0, SOFT_MAX),
       // Written only when it is given: a cast without it is the data it always was.
       ...(c.over === undefined ? {} : { over: 'flat' as const }),
+      // Written only when it is true: a cast without it is the data it always was.
+      ...(c.ground === true ? { ground: true as const } : {}),
     },
   };
 }
@@ -982,7 +986,7 @@ export function group(o: {
    * shot); soft: units of blur (default 0); over: 'flat' draws the children with no rise in them first, as listed,
    * then the shadows over them, then the raised children (default: the shadows under every child).
    */
-  cast?: { color: ColorRef; opacity?: number; dir?: number; length?: number; soft?: number; over?: 'flat' };
+  cast?: { color: ColorRef; opacity?: number; dir?: number; length?: number; soft?: number; over?: 'flat'; ground?: boolean };
   /**
    * For a group of many bodies (shapes and strokes with a rise): how much detail they are worth. A body smaller on
    * screen than min (units of the stage: the pixels of a frame 1920 wide), across and in height, is drawn plain: its
@@ -1202,18 +1206,25 @@ export function label(o: {
   /** 0..1 at the start; default 1. */
   opacity?: number;
   follow?: SpringSpec;
+  /**
+   * Makes the label a counter, as on a text: its string holds "{n}" where the number goes; the number starts at this
+   * value (or at `from`, with `decimals` places, and `grouping: false` for digits alone) and countTo() runs it.
+   */
+  count?: number | { from: number; decimals?: number; grouping?: boolean };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): LabelNode {
   const where = `label("${o?.id}")`;
-  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'runInk', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow', 'sound']);
+  checkKeys(where, o, ['id', 'text', 'target', 'fill', 'ink', 'runInk', 'side', 'gap', 'size', 'minSize', 'maxWidth', 'maxLines', 'opacity', 'follow', 'count', 'sound']);
   if (typeof o.text !== 'string' || !isStringKey(o.text)) {
     fail(where, `text must be a string-table key such as "label.core", got ${JSON.stringify(o.text)}. On-screen text never appears in scene code: put the words in the shot's string tables`);
   }
   const side = o.side ?? 'top';
   if (!['top', 'bottom', 'left', 'right'].includes(side)) fail(where, `side must be top, bottom, left or right, got ${JSON.stringify(side)}`);
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 400);
+  const count = countOf(where, o.count, o.runInk);
   return {
+    ...(count === undefined ? {} : { count }),
     ...voice(where, o.sound),
     ...(o.runInk === undefined ? {} : { runInk: color(where, 'runInk', o.runInk) }),
     type: 'label',
@@ -1272,9 +1283,9 @@ export function text(o: {
   box?: ColorRef;
   /**
    * Makes the text a counter. Its string holds "{n}" where the number goes; the number starts at this value (or at
-   * `from`, with `decimals` places after the decimal sign) and countTo() runs it.
+   * `from`, with `decimals` places after the decimal sign, and `grouping: false` for digits alone) and countTo() runs it.
    */
-  count?: number | { from: number; decimals?: number };
+  count?: number | { from: number; decimals?: number; grouping?: boolean };
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
   clipTo?: string;
   /** Key of the node's voice in the bank of sounds. */
@@ -1288,19 +1299,7 @@ export function text(o: {
   const align = o.align ?? 'center';
   if (!TEXT_ALIGNS.includes(align)) fail(where, `align must be left, center or right, got ${JSON.stringify(align)}`);
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 600);
-  let count: TextNode['count'];
-  if (o.count !== undefined) {
-    if (typeof o.count === 'number') count = { from: num(where, 'count', o.count, -1e15, 1e15), decimals: 0 };
-    else {
-      if (o.count === null || typeof o.count !== 'object') fail(where, `count must be a number, or { from, decimals }, got ${JSON.stringify(o.count)}`);
-      checkKeys(`${where} count`, o.count, ['from', 'decimals']);
-      const decimals = o.count.decimals === undefined ? 0 : num(where, 'count.decimals', o.count.decimals, 0, 6);
-      if (!Number.isInteger(decimals)) fail(where, `count.decimals must be a whole number, got ${decimals}`);
-      count = { from: num(where, 'count.from', o.count.from, -1e15, 1e15), decimals };
-    }
-    // The line of a counter is set anew for every number it shows, piece by piece; a run has no place in it.
-    if (o.runInk !== undefined) fail(where, 'a counter takes no runInk: its number is set anew at every value. Put the words of the second ink in a text of their own');
-  }
+  const count = countOf(where, o.count, o.runInk);
   return {
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(count === undefined ? {} : { count }),
@@ -1323,6 +1322,25 @@ export function text(o: {
     scale: o.scale === undefined ? 1 : num(where, 'scale', o.scale, 0.01, 100),
     opacity: o.opacity === undefined ? 1 : num(where, 'opacity', o.opacity, 0, 1),
   };
+}
+
+/** The number of a text or a label that is a counter: written only when it is given, its grouping only when it is false. */
+function countOf(where: string, value: unknown, runInk: unknown): CountSpec | undefined {
+  if (value === undefined) return undefined;
+  let count: CountSpec;
+  if (typeof value === 'number') count = { from: num(where, 'count', value, -1e15, 1e15), decimals: 0 };
+  else {
+    if (value === null || typeof value !== 'object') fail(where, `count must be a number, or { from, decimals, grouping }, got ${JSON.stringify(value)}`);
+    const o = value as { from?: unknown; decimals?: unknown; grouping?: unknown };
+    checkKeys(`${where} count`, o, ['from', 'decimals', 'grouping']);
+    const decimals = o.decimals === undefined ? 0 : num(where, 'count.decimals', o.decimals, 0, 6);
+    if (!Number.isInteger(decimals)) fail(where, `count.decimals must be a whole number, got ${decimals}`);
+    if (o.grouping !== undefined && typeof o.grouping !== 'boolean') fail(where, `count.grouping must be true or false (false: the digits alone, with no sign between their groups), got ${JSON.stringify(o.grouping)}`);
+    count = { from: num(where, 'count.from', o.from, -1e15, 1e15), decimals, ...(o.grouping === false ? { grouping: false as const } : {}) };
+  }
+  // The line of a counter is set anew for every number it shows, piece by piece; a run has no place in it.
+  if (runInk !== undefined) fail(where, 'a counter takes no runInk: its number is set anew at every value. Put the words of the second ink in a text of their own');
+  return count;
 }
 
 /**

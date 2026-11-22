@@ -21,6 +21,7 @@ import { backgroundStep } from '../scene/background.ts';
 import { fillStep } from '../scene/fill.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import {
+  castFall,
   computeWorld,
   eyeOpen,
   FAINT,
@@ -29,19 +30,21 @@ import {
   LEVEL_EMPTY,
   levelGeometry,
   newPlaces,
+  shadowDrop,
   textLayout,
   opacities,
   shapeOf,
   SHUT,
   strokePathOf,
   swayDirection,
+  type Places,
   type PoseSource,
 } from '../scene/evaluate.ts';
 import { formAt, formStep } from '../scene/form.ts';
 import { globeSpins, globeTurn } from '../scene/globe.ts';
 import { outlineTravel, restForms } from '../scene/outline.ts';
 import { eyeOf, perspAt, project } from '../scene/space.ts';
-import { STAGE_H, STAGE_W } from '../scene/types.ts';
+import { STAGE_H, STAGE_W, type GroupNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 import { T } from './thresholds.ts';
@@ -376,6 +379,31 @@ function castLength(c: CompiledShot, n: CNode): number {
     if (above.type === 'group' && above.cast) return above.cast.length;
   }
   return 0;
+}
+
+/**
+ * Under a cast that lies on the ground (cast.ground): how much longer the shadow of the top of a body is than on level
+ * ground, where the body stands at this frame (less than 1 where the ground rises toward the shadow). 1 for any other
+ * node. `rise` is the body's height in its own units.
+ */
+function groundShare(c: CompiledShot, n: CNode, places: Places | undefined, rise: number): number {
+  if (!places || n.plane < 0 || !(rise > 0)) return 1;
+  let p = n.parent;
+  while (p >= 0 && !(c.nodes[p]!.node.type === 'group' && (c.nodes[p]!.node as { cast?: unknown }).cast)) p = c.nodes[p]!.parent;
+  const cast = p >= 0 ? (c.nodes[p]!.node as GroupNode).cast : undefined;
+  const ground = places.grounds.get(n.plane);
+  const stand = places.stands.get(n.plane);
+  const top = places.flat[n.index];
+  if (!cast?.ground || !ground || !stand || !(stand[2] > 0) || !top || n.index < c.grounds!.get(n.plane)![0]!) return 1;
+  // The top is the foot drawn larger about the point the camera stands over: the body's height over the ground under
+  // it, and the true place of its foot.
+  const z = places.lifted[n.index]!;
+  const eye = stand[2] - z;
+  const r = rise * top.scale;
+  const high = Math.min((r * eye) / (eye + r), 0.9 * eye);
+  const x = stand[0] + ((top.x - stand[0]) * (eye - high)) / stand[2];
+  const y = stand[1] + ((top.y - stand[1]) * (eye - high)) / stand[2];
+  return high > 1e-9 ? shadowDrop(ground, x, y, z, high, castFall(c, cast)) / high : 1;
 }
 
 /** Evaluates the shot at every frame and returns the series of everything in it. */
@@ -764,13 +792,17 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
       if (s.open && n.lid) s.open[f] = sampleLid(n.lid, t) * eyeOpen(n.blinks, t);
       if (s.level) s.level[f] = levelGeometry(n, xf, t).y;
-      if (s.shadow && n.rise) s.shadow[f] = castLength(c, n) * Math.max(0, sampleRise(n.rise, t)) * xf.scale;
+      if (s.shadow && n.rise) {
+        s.shadow[f] = castLength(c, n) * Math.max(0, sampleRise(n.rise, t)) * xf.scale;
+        // On the ground, the shadow is as long as the ground under it makes it.
+        if (c.grounds) s.shadow[f] = s.shadow[f]! * groundShare(c, n, places, sampleRise(n.rise, t));
+      }
       if (s.axis && n.axis) {
         const a = sampleAxis(n.axis, t);
         s.axis.sx[f] = a ? a.sx : 1;
         s.axis.sy[f] = a ? a.sy : 1;
       }
-      if (s.life && node.type === 'text' && node.count && n.count) {
+      if (s.life && (node.type === 'text' || node.type === 'label') && node.count && n.count) {
         // The number as it is shown: a change of its last place is a change on screen.
         const k = 10 ** node.count.decimals;
         s.life[f] = Math.round(sampleCount(n.count, t) * k) * 16;

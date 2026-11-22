@@ -46,7 +46,7 @@ import { formAt } from './form.ts';
 import { globeFade, globePlace, globeView, surfaceLine, surfacePath, surfaceRuns } from './globe.ts';
 import { regionAt, strokePathAt } from './outline.ts';
 import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
-import type { GroupNode, LabelSide, StrokeNode } from './types.ts';
+import { SHADOW_REACH, type CastSpec, type GroupNode, type LabelSide, type StrokeNode } from './types.ts';
 import { groundField, type GroundField } from './ground.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
@@ -701,6 +701,13 @@ export interface LabelItem {
   readonly geometry: LabelGeometry;
   readonly layout: TextLayout;
   readonly alpha: number;
+  /**
+   * A counter: what is drawn at this frame, relative to the tip, as the lines of its geometry are, with the line of
+   * its number set for the number it shows now. Left out: the lines of the geometry.
+   */
+  readonly lines?: readonly { readonly text: string; readonly x: number; readonly y: number }[];
+  /** A counter: the number it shows at this frame, as it is written. */
+  readonly number?: string;
 }
 
 export interface ParticlesItem {
@@ -882,10 +889,13 @@ export interface FrameState {
   readonly background?: BackgroundState;
 }
 
-const labelCache = new WeakMap<CompiledShot, Map<string, { layout: TextLayout; geometry: LabelGeometry }>>();
+const labelCache = new WeakMap<CompiledShot, Map<string, { layout: TextLayout; geometry: LabelGeometry; slot?: CountSlot }>>();
 
-/** Layout and geometry of a label in a language (cached; the result depends on nothing else). */
-export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: TextLayout; geometry: LabelGeometry } {
+/**
+ * Layout and geometry of a label in a language (cached; the result depends on nothing else). A counter is laid out
+ * with the widest number it ever shows, so its box holds every value; `slot` says where its number is.
+ */
+export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: TextLayout; geometry: LabelGeometry; slot?: CountSlot } {
   if (n.node.type !== 'label') throw new Error(`"${n.id}" is not a label`);
   let cache = labelCache.get(c);
   if (!cache) {
@@ -896,9 +906,12 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
   let hit = cache.get(key);
   if (!hit) {
     const node = n.node;
-    const words = resolveString(c.spec.strings, lang, node.text);
+    let words = resolveString(c.spec.strings, lang, node.text);
     // With a second ink the marks of the runs are taken out first: the label is laid out as the text without them.
     const marked = node.runInk ? parseRuns(words) : null;
+    // A counter (it has no runs): every value it starts from or is sent to; what lies between them is never wider.
+    const widest = node.count && n.count ? widestCount([n.count.base, ...n.count.segs.map((s) => s.to)], node.count.decimals, lang, node.size, LABEL_PROPORTIONS.weight, node.count.grouping !== false) : null;
+    if (widest !== null) words = words.replace(COUNT_MARK, widest);
     const layout = layoutText(marked ? marked.text : words, {
       size: node.size,
       minSize: node.minSize,
@@ -908,6 +921,7 @@ export function labelLayout(c: CompiledShot, n: CNode, lang: string): { layout: 
     });
     const geometry = labelGeometry(layout, node.side);
     hit = { layout, geometry: marked ? { ...geometry, lines: withRuns(geometry.lines, runSpans(layout, marked)) } : geometry };
+    if (widest !== null) hit.slot = countSlot(layout, widest);
     cache.set(key, hit);
   }
   return hit;
@@ -939,7 +953,7 @@ export function textLayout(c: CompiledShot, n: CNode, lang: string): { layout: T
     let widest: string | null = null;
     if (node.count && n.count) {
       // Every value the counter starts from or is sent to; what lies between them is never wider.
-      widest = widestCount([n.count.base, ...n.count.segs.map((s) => s.to)], node.count.decimals, lang, node.size, node.weight);
+      widest = widestCount([n.count.base, ...n.count.segs.map((s) => s.to)], node.count.decimals, lang, node.size, node.weight, node.count.grouping !== false);
       words = words.replace(COUNT_MARK, widest);
     }
     const layout = layoutText(words, style);
@@ -1304,6 +1318,9 @@ function castShadows(
   // Seen from behind its plane a body is not drawn as it stands, and casts nothing.
   if (stand && !(stand[2] > 0)) return out;
   const whole = alpha[group.index]!;
+  // With cast.ground, the ground of the plane, which the bodies listed after its first relief stand on.
+  const field = stand && (group.node as GroupNode).cast?.ground ? places?.grounds.get(group.plane) : undefined;
+  const after = field ? c.grounds!.get(group.plane)![0]! : 0;
   for (let i = group.index + 1; i <= group.subtreeEnd; i++) {
     const n = c.nodes[i]!;
     const node = n.node;
@@ -1331,6 +1348,15 @@ function castShadows(
     const base = stand ? top / foot.k : top - foot.h * xf.scale;
     const cos = Math.cos(xf.rot) * xf.scale;
     const sin = Math.sin(xf.rot) * xf.scale;
+    // On the ground (cast.ground): the height the body stands at, and the camera's height over it. Its shadow is worked
+    // out at the true places of the plane, under the camera's height over its foot, and then laid on the ground.
+    const ground = field && i > after ? field : undefined;
+    // A raised line is drawn standing on the ground under its place seen from its top: its shadow goes by that ground.
+    const laid = ground && node.type === 'stroke' ? seenFromTop(ground, stand!, 1 / foot.k) : ground;
+    const z = ground ? places!.lifted[i]! : 0;
+    const eye = ground ? stand![2] - z : stand ? stand[2] : 0;
+    // From a point of the top to the place under it: the foot as drawn, or on the ground its true place.
+    const reach = ground ? (top * eye) / stand![2] : top;
     // The place on the ground under a point of the top, and the shadow of a point `over` it (in the units of the body) or of its foot.
     let gx = 0;
     let gy = 0;
@@ -1338,24 +1364,33 @@ function castShadows(
       const px = xf.x + x * cos - y * sin;
       const py = xf.y + x * sin + y * cos;
       if (stand) {
-        gx = stand[0] + (px - stand[0]) * top;
-        gy = stand[1] + (py - stand[1]) * top;
+        gx = stand[0] + (px - stand[0]) * reach;
+        gy = stand[1] + (py - stand[1]) * reach;
       } else {
         gx = px;
         gy = py + top;
       }
     };
     // The length of the shadow of the top, of the foot, and of one more unit of the body over the top.
-    const high = stand ? stand[2] * (1 - top) : top;
-    const low = stand ? stand[2] * (1 - base) : base;
-    const unit = stand ? xf.scale * top : xf.scale;
+    const high = stand ? eye * (1 - top) : top;
+    const low = stand ? eye * (1 - base) : base;
+    const unit = stand ? xf.scale * reach : xf.scale;
+    // Where the shadow of a point `far` over the foot lands: that far along the fall, or on the ground where it meets it.
+    let sx = 0;
+    let sy = 0;
+    const shift = (x: number, y: number, far: number): void => {
+      const d = ground ? shadowDrop(ground, x, y, z, far, fall) : far;
+      sx = x + fall[0] * d;
+      sy = y + fall[1] * d;
+    };
     const outlines: ArrayLike<number>[] = [];
     let width = 0;
     if (node.type === 'stroke') {
       const table = pathTable(strokePathOf(n, t));
       const upTo = table.length * Math.min(1, Math.max(0, sampleDrawn(n.stroke!, t)));
       if (upTo <= 1e-9) continue;
-      width = strokeWidthAt(n, t, world[i]!.scale * zoom) * unit;
+      // As wide as the line is drawn at its foot.
+      width = strokeWidthAt(n, t, world[i]!.scale * zoom) * (stand ? xf.scale * top : unit);
       // The line as far as it is drawn, sample by sample.
       const line: number[] = [];
       const m = table.cum.length;
@@ -1373,7 +1408,21 @@ function castShadows(
         }
         break;
       }
-      for (let s = 0; s + 3 < line.length; s += 2) sweep(outlines, line[s]!, line[s + 1]!, line[s + 2]!, line[s + 3]!, fall, low, high);
+      if (laid) {
+        // On the ground every sample of the line stands on the ground under it, and its shadow runs from there.
+        const lows: number[] = [];
+        const highs: number[] = [];
+        for (let s = 0; s + 1 < line.length; s += 2) {
+          const x = line[s]!;
+          const y = line[s + 1]!;
+          const under = Math.min(laid.at(x, y), RISE_NEAR * stand![2]);
+          let d = shadowDrop(laid, x, y, under, low, fall);
+          lows.push(x + fall[0] * d, y + fall[1] * d);
+          d = shadowDrop(laid, x, y, under, high, fall);
+          highs.push(x + fall[0] * d, y + fall[1] * d);
+        }
+        for (let s = 0; s + 3 < line.length; s += 2) quad(outlines, lows[s]!, lows[s + 1]!, lows[s + 2]!, lows[s + 3]!, highs[s + 2]!, highs[s + 3]!, highs[s]!, highs[s + 1]!);
+      } else for (let s = 0; s + 3 < line.length; s += 2) sweep(outlines, line[s]!, line[s + 1]!, line[s + 2]!, line[s + 3]!, fall, low, high);
     } else {
       const shape = n.outline || n.form ? shapeOf(n, t) : node.shape;
       if (shape.kind === 'blob' || isRegion(shape)) {
@@ -1412,7 +1461,8 @@ function castShadows(
             for (let s = 0; s < face.points.length; s += 3) {
               const far = high + face.points[s + 2]! * unit;
               onGround(face.points[s]!, face.points[s + 1]!);
-              q.push(gx + fall[0] * far, gy + fall[1] * far);
+              shift(gx, gy, far);
+              q.push(sx, sy);
             }
             for (let s = 0; s < q.length; s += 2) {
               const e = (s + 2) % q.length;
@@ -1427,7 +1477,13 @@ function castShadows(
         }
         if (convex) {
           const points: number[] = [];
-          for (let s = 0; s < 2 * m; s += 2) points.push(ring[s]! + fall[0] * low, ring[s + 1]! + fall[1] * low, ring[s]! + fall[0] * high, ring[s + 1]! + fall[1] * high);
+          for (let s = 0; s < 2 * m; s += 2) {
+            shift(ring[s]!, ring[s + 1]!, low);
+            const lx = sx;
+            const ly = sy;
+            shift(ring[s]!, ring[s + 1]!, high);
+            points.push(lx, ly, sx, sy);
+          }
           for (const q of slopes) points.push(...q);
           outlines.push(hull(points));
         } else {
@@ -1435,8 +1491,9 @@ function castShadows(
           for (const far of [low, high]) {
             const end = new Float64Array(2 * m);
             for (let s = 0; s < 2 * m; s += 2) {
-              end[s] = ring[s]! + fall[0] * far;
-              end[s + 1] = ring[s + 1]! + fall[1] * far;
+              shift(ring[s]!, ring[s + 1]!, far);
+              end[s] = sx;
+              end[s + 1] = sy;
             }
             outlines.push(end);
           }
@@ -1458,11 +1515,13 @@ function castShadows(
             const strip = new Float64Array(4 * (len + 1));
             for (let j = 0; j <= len; j++) {
               const q = 2 * ((first + j) % m);
-              strip[2 * j] = ring[q]! + fall[0] * high;
-              strip[2 * j + 1] = ring[q + 1]! + fall[1] * high;
+              shift(ring[q]!, ring[q + 1]!, high);
+              strip[2 * j] = sx;
+              strip[2 * j + 1] = sy;
               const back = 2 * (2 * len + 1 - j);
-              strip[back] = ring[q]! + fall[0] * low;
-              strip[back + 1] = ring[q + 1]! + fall[1] * low;
+              shift(ring[q]!, ring[q + 1]!, low);
+              strip[back] = sx;
+              strip[back + 1] = sy;
             }
             outlines.push(strip);
             k += len;
@@ -1473,24 +1532,122 @@ function castShadows(
         const points: number[] = [];
         for (const p of ringOf(shape).points) {
           onGround(p[0], p[1]);
-          points.push(gx + fall[0] * low, gy + fall[1] * low, gx + fall[0] * high, gy + fall[1] * high);
+          shift(gx, gy, low);
+          const lx = sx;
+          const ly = sy;
+          shift(gx, gy, high);
+          points.push(lx, ly, sx, sy);
         }
         if (roof) {
           for (const face of roofFaces(shape, roof)) {
             for (let s = 0; s < face.points.length; s += 3) {
-              const z = face.points[s + 2]!;
-              if (z <= 0) continue;
+              const over = face.points[s + 2]!;
+              if (over <= 0) continue;
               onGround(face.points[s]!, face.points[s + 1]!);
-              points.push(gx + fall[0] * (high + z * unit), gy + fall[1] * (high + z * unit));
+              shift(gx, gy, high + over * unit);
+              points.push(sx, sy);
             }
           }
         }
         outlines.push(hull(points));
       }
     }
+    // On the ground the outlines, worked out at the true places of the plane, are laid on it.
+    if (laid) for (let o = 0; o < outlines.length; o++) outlines[o] = drape(outlines[o]!, laid, stand!);
     if (outlines.length > 0) out.push({ outlines, width, alpha: whole > FAINT ? Math.min(1, alpha[i]! / whole) : 1 });
   }
   return out;
+}
+
+/** Where the shadows of a cast fall, as long as the shadow of one unit of height: its dir, or away from the light of the shot. */
+export function castFall(c: CompiledShot, cast: CastSpec): Vec2 {
+  return cast.dir === undefined ? [-c.light[0] * cast.length, -c.light[1] * cast.length] : [Math.cos(cast.dir * DEG) * cast.length, Math.sin(cast.dir * DEG) * cast.length];
+}
+
+/**
+ * How far the shadow of a point falls on the ground of a plane (cast.ground): the point stands `far` over the height
+ * `from`, at the place (x, y) of the plane; its shadow moves `fall` along the plane for each unit it falls, and lands
+ * where it meets the ground. On level ground at `from` that is `far`; where the ground rises toward the shadow, less;
+ * where it falls away, more, at most SHADOW_REACH times `far`. A point under the ground lands where it is.
+ */
+export function shadowDrop(ground: GroundField, x: number, y: number, from: number, far: number, fall: Vec2): number {
+  if (!(far > 0)) return 0;
+  const along = Math.hypot(fall[0], fall[1]);
+  if (!(along > 1e-9)) return far;
+  const top = from + far;
+  const gap = (d: number): number => top - d - ground.at(x + fall[0] * d, y + fall[1] * d);
+  let a = 0;
+  let ga = gap(0);
+  if (ga <= 0) return 0;
+  const most = SHADOW_REACH * far;
+  // Steps of about a cell of the ground's grid along the plane, until the shadow is under the ground.
+  const steps = Math.min(64, Math.max(1, Math.ceil((most * along) / ground.cell)));
+  for (let k = 1; k <= steps; k++) {
+    const b = k === steps ? most : (most * k) / steps;
+    const gb = gap(b);
+    if (gb > 0) {
+      a = b;
+      ga = gb;
+      continue;
+    }
+    // Between the last two places: a few steps of false position, exact where the ground runs straight.
+    let lo = a;
+    let glo = ga;
+    let hi = b;
+    let ghi = gb;
+    for (let r = 0; r < 4; r++) {
+      const d = lo + ((hi - lo) * glo) / (glo - ghi);
+      const g = gap(d);
+      if (Math.abs(g) <= 1e-9 * (1 + Math.abs(top))) return d;
+      if (g > 0) {
+        lo = d;
+        glo = g;
+      } else {
+        hi = d;
+        ghi = g;
+      }
+    }
+    return lo + ((hi - lo) * glo) / (glo - ghi);
+  }
+  return most;
+}
+
+/**
+ * The ground of a plane as a raised line stands on it: a point of its foot at a place of the plane is drawn at the
+ * height of the ground under the place its top is drawn over, `grow` times as far from the point the camera stands over.
+ */
+function seenFromTop(ground: GroundField, stand: Vec3, grow: number): GroundField {
+  return { index: ground.index, low: ground.low, high: ground.high, cell: ground.cell, at: (x, y) => ground.at(stand[0] + (x - stand[0]) * grow, stand[1] + (y - stand[1]) * grow) };
+}
+
+/** An outline of a plane laid on its ground point by point, as a region is: a stretch longer than a cell of the ground's grid cut into pieces that each follow it. */
+function drape(outline: ArrayLike<number>, ground: GroundField, stand: Vec3): Float64Array {
+  const eye = stand[2];
+  const out: number[] = [];
+  const put = (x: number, y: number): void => {
+    const grow = eye / (eye - Math.min(ground.at(x, y), RISE_NEAR * eye));
+    out.push(stand[0] + (x - stand[0]) * grow, stand[1] + (y - stand[1]) * grow);
+  };
+  const m = outline.length >> 1;
+  for (let s = 0; s < m; s++) {
+    const ax = outline[2 * s]!;
+    const ay = outline[2 * s + 1]!;
+    const e = s + 1 === m ? 0 : s + 1;
+    const bx = outline[2 * e]!;
+    const by = outline[2 * e + 1]!;
+    put(ax, ay);
+    const pieces = Math.min(64, Math.floor(Math.hypot(bx - ax, by - ay) / ground.cell));
+    for (let k = 1; k < pieces; k++) put(ax + ((bx - ax) * k) / pieces, ay + ((by - ay) * k) / pieces);
+  }
+  return Float64Array.from(out);
+}
+
+/** Four corners, from a to b and on, wound one way round. */
+function quad(out: ArrayLike<number>[], ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): void {
+  const q = [ax, ay, bx, by, cx, cy, dx, dy];
+  let area = 0;
+  for (let s = 0; s < 8; s += 2) area += q[s]! * q[(s + 3) % 8]! - q[(s + 2) % 8]! * q[s + 1]!;
+  out.push(area < 0 ? [dx, dy, cx, cy, bx, by, ax, ay] : q);
 }
 
 /** What a stretch of the ground from a to b passes over when it is pushed along `fall` from `low` to `high`: four corners, wound one way round. */
@@ -1706,7 +1863,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         case 'group':
           if (node.cast && feet && xf.scale > HIDDEN) {
             // The shadows of its bodies: one picture under everything else of the group, at the opacity and with the blur of the cast.
-            const fall: Vec2 = node.cast.dir === undefined ? [-c.light[0] * node.cast.length, -c.light[1] * node.cast.length] : [Math.cos(node.cast.dir * DEG) * node.cast.length, Math.sin(node.cast.dir * DEG) * node.cast.length];
+            const fall = castFall(c, node.cast);
             const shadows = castShadows(c, n, t, view.zoom, fall, world, places, feet, alpha);
             if (shadows.length > 0 && node.cast.opacity > FAINT) {
               const blur = node.cast.soft * world[index]!.scale;
@@ -1762,7 +1919,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const grown = n.scale ? sampleScale(n.scale, t) : 1;
           if (slot && n.count && node.count) {
             // A counter: the line of the number is set anew for the number it shows now.
-            const number = formatCount(sampleCount(n.count, t), node.count.decimals, lang);
+            const number = formatCount(sampleCount(n.count, t), node.count.decimals, lang, node.count.grouping !== false);
             const y = block.lines[slot.line]!.y;
             const lines = [...block.lines.filter((_, i) => i !== slot.line), ...countRuns(layout, slot, number, node.align).map((r) => ({ ...r, y }))];
             items.push({ kind: 'text', node: n, xf, alpha: a, block, layout, lines, number, grown });
@@ -1813,8 +1970,14 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
         case 'label': {
           if (xf.scale <= HIDDEN) break;
-          const { layout, geometry } = labelLayout(c, n, lang);
-          items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a });
+          const { layout, geometry, slot } = labelLayout(c, n, lang);
+          if (slot && n.count && node.count) {
+            // A counter: the line of its number is set anew for the number it shows now, in the middle of the box.
+            const number = formatCount(sampleCount(n.count, t), node.count.decimals, lang, node.count.grouping !== false);
+            const { x, y } = geometry.lines[slot.line]!;
+            const lines = [...geometry.lines.filter((_, i) => i !== slot.line), ...countRuns(layout, slot, number, 'center').map((r) => ({ text: r.text, x: x + r.x, y }))];
+            items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a, lines, number });
+          } else items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a });
           break;
         }
         case 'emitter': {

@@ -156,7 +156,7 @@ test('counter: what it refuses, that it is opt-in, and what the review and the e
   assert.ok(IntentError);
   bad(() => text({ ...N, count: { from: 0, decimals: 1.5 } }), /count\.decimals must be a whole number/);
   bad(() => text({ ...N, count: { from: 0, places: 2 } as never }), /text\("n"\) count: unknown option "places"/);
-  bad(() => make([text({ id: 't', text: 'plain.words', ink: 'light.cream' })], [countTo('t', { at: 1, to: 5 })]), /countTo cannot target text "t"; it applies to a text that is a counter \(give the text the option count\)/);
+  bad(() => make([text({ id: 't', text: 'plain.words', ink: 'light.cream' })], [countTo('t', { at: 1, to: 5 })]), /countTo cannot target text "t"; it applies to a text or a label that is a counter \(give it the option count\)/);
   bad(() => make([circle({ id: 'c', r: 10, fill: 'accent.aqua' })], [countTo('c', { at: 1, to: 5 })]), /countTo cannot target shape "c"/);
   bad(() => make([text({ id: 't', text: 'plain.words', ink: 'light.cream', count: 0 })]), /text "t" is a counter: its string "plain\.words" \[en\] must hold \{n\} once, where the number goes/);
   bad(() => make([text({ ...N, count: 0 })], [countTo('n', { at: 1, to: 50, ratio: true })]), /with ratio the number runs between values above 0, and it starts from 0/);

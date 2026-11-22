@@ -1520,7 +1520,8 @@ export function drawLabel(ctx: CanvasRenderingContext2D, item: LabelItem, paint:
     return;
   }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
-  for (const line of g.lines) {
+  // A counter draws its lines as they are at this frame; any other label, those of its geometry.
+  for (const line of item.lines ?? g.lines) {
     const p = textPath(ctx, line.text, g.size, g.weight);
     if (!p) continue;
     ctx.save();

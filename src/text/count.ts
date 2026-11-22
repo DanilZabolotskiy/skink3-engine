@@ -17,13 +17,15 @@ const formats = new Map<string, Intl.NumberFormat>();
 /**
  * A number as a language writes it: its grouping of digits and its decimal
  * sign, with Latin digits. A tag that is no language (a pseudo-locale) is
- * written as English. Spaces inside the number never break.
+ * written as English. Spaces inside the number never break. With grouping
+ * false the digits stand alone, in every language (a year); the decimal sign
+ * is still the language's own.
  */
-export function formatCount(value: number, decimals: number, lang: string): string {
-  const key = `${lang}|${decimals}`;
+export function formatCount(value: number, decimals: number, lang: string, grouping = true): string {
+  const key = grouping ? `${lang}|${decimals}` : `${lang}|${decimals}|g0`;
   let f = formats.get(key);
   if (!f) {
-    const options = { numberingSystem: 'latn', minimumFractionDigits: decimals, maximumFractionDigits: decimals } as const;
+    const options = { numberingSystem: 'latn', minimumFractionDigits: decimals, maximumFractionDigits: decimals, ...(grouping ? {} : { useGrouping: false }) } as const;
     try {
       f = new Intl.NumberFormat(lang, options);
     } catch {
@@ -54,12 +56,12 @@ export function digitCell(size: number, weight: number): { digit: string; width:
 }
 
 /** The value of a counter that takes the most room, written with the widest digit in every place. */
-export function widestCount(values: readonly number[], decimals: number, lang: string, size: number, weight: number): string {
+export function widestCount(values: readonly number[], decimals: number, lang: string, size: number, weight: number, grouping = true): string {
   const { digit } = digitCell(size, weight);
   let best = '';
   let bestWidth = -1;
   for (const v of values) {
-    const text = formatCount(v, decimals, lang).replace(/\d/g, digit);
+    const text = formatCount(v, decimals, lang, grouping).replace(/\d/g, digit);
     const w = measureText(text, size, weight);
     if (w > bestWidth) {
       bestWidth = w;

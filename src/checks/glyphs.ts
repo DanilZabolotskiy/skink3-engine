@@ -39,9 +39,9 @@ export function checkGlyphs(c: CompiledShot, langs: readonly string[]): GlyphIss
       let shown = marksOnly ? parseRuns(text).text : text;
       // A counter also shows its number, written the way the language writes numbers: its digits, its signs.
       for (const n of c.nodes) {
-        if (n.node.type !== 'text' || n.node.text !== key || !n.node.count || !n.count) continue;
+        if ((n.node.type !== 'text' && n.node.type !== 'label') || n.node.text !== key || !n.node.count || !n.count) continue;
         shown += '0123456789';
-        for (const value of [n.count.base, ...n.count.segs.map((s) => s.to)]) shown += formatCount(value, n.node.count.decimals, lang);
+        for (const value of [n.count.base, ...n.count.segs.map((s) => s.to)]) shown += formatCount(value, n.node.count.decimals, lang, n.node.count.grouping !== false);
       }
       const chars = missingGlyphs(shown);
       if (chars.length === 0) continue;

@@ -21,8 +21,8 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette references; text: keys of `strings`, in every language; random: `Rng`. A mistake or unknown option is refused with the fix.
-- A palette brings `rules` (held by `check`), `tones`, variants.
+- Colours: palette references; text: `strings` keys, in every language; random: `Rng`. Mistakes are refused with the fix.
+- A palette has `rules` (held by `check`), `tones`, variants.
 
 ## Shot, camera, layers
 
@@ -56,10 +56,10 @@ region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], 
 group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen)
-label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + runInk: '2.0 · [Aug 2026]': runs in that ink
+label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + count; runInk: '2.0 · [Aug 2026]': runs in that ink
 text({ id: 'title', text: 'label.dot', ink: 'light.cream', /**/ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // + box: a colour, count, runInk
 circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast; + step, rows, shape: 'arch', sill, inset, color (walls too)
-group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; shadows (+ opacity, length, dir, soft, over: 'flat'), plain under min px
+group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; shadows (+ opacity, length, dir, soft, over: 'flat', ground: true), plain under min px
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 });
 globe({ id: 'earth', r: 300, fill: 'dark.indigo', layers: [{ rings: [globeBlob({ at: [10, 40], r: 8 })], fill: 'mid.mist' }], light: { night: 'deep.night' }, /**/ view: [0, 0], spin: 0, shade: 0.25 }); // rings: [lon, lat]; spin: deg/s east, or keys; + lights, air
 globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed: 1 }); // a cloud
@@ -68,7 +68,7 @@ globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed:
 - Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`). All but `region` are convex.
 - `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
 - `globe`: layer `drift` (deg/s), `soft`; `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride the turn, hide behind it, head along `rotation`; a `[lon, lat]` `stroke` lies on it.
-- `label`: tail at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; a shape's child lies on it; in a `parallax: 0` layer, the frame's.
+- `label`: tail at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; as a shape's child, on it; in a `parallax: 0` layer, the frame's.
 
 ## Springs and rigid bodies
 
@@ -96,7 +96,7 @@ popIn('c', { at: 0.3, /**/ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /**/ dur: 0.35 });
 bump('c', { at: 2, /**/ amount: 0.14 }); // a kick of the size, 0.7 s
 squash('buddy', { at: 5, /**/ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
-countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // a text with count: 0 and "{n}" in its string; + ratio: true
+countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text or label, "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /**/ dur: 1.5, profile: 'ease' }); // 0 empty, 1 full
 riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8, profile: 'ease' });
 hazeTo('air', { at: 2, to: 6, /**/ dur: 1.5, profile: 'ease' });
@@ -112,8 +112,7 @@ blink('pupil', { at: 3 });
 stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
 ```
 
-- Negative `at` (to -600): under way at frame 0.
-- No key is tied to a word: take `at` from word times; `arrive`, `land`, `at + dur` are exact.
+- Negative `at` (to -600): under way at frame 0. Take `at` from word times; `arrive`, `land`, `at + dur` are exact.
 - `profile`: `'settle'` (`moveTo`): back away, shoot past, settle. `'ease'`: rest to rest. `'steady'`: one speed. `'in'`, `'out'`: one eased end (`ramp`: share of `dur`, 0.3).
 
 ## Effects
@@ -125,7 +124,7 @@ rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 
 ```
 
 - An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing: 'spark'` shrinks away. Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (a tail).
-- `cover`: hides the glow drawn before it. `backdrop`: labels may lie on it. `clipTo`: only inside that shape, fading at a `soft` edge; a coast: `clipMask` on it. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
+- `cover`: hides the glow drawn before it. `backdrop`: labels may cover it. `clipTo`: only inside that shape, fading at a `soft` edge; a coast: `clipMask` on it. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
 
 ## Sound
 
@@ -157,7 +156,7 @@ queue   render slots
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir --priority high|low
 ```
 
-Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps. `--crop`: units, top-left. `--alone`: frames as drawn alone (~1 s each).
+Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame, overlaps. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
 
 ## Reading the reviews
 
@@ -171,7 +170,7 @@ Commands bake as needed. `check` fails on a broken palette rule, a missing strin
 - `jitter`, `unsettled`: trembling at rest, a pile moving at the end; more `friction`, `angularDamping`; pour earlier. `unseen-hit`: off an undrawn body. `not-finite`: extreme velocity, size or spring `f`.
 - `low-contrast` (with `contrast`): a node or its `run` blends in: recolour it.
 
-Not reported: what is hidden, off the frame, behind a `cover`, outside its clip. Mark what is meant:
+Not reported: hidden, off the frame, behind a `cover`, outside its clip. Mark what is meant:
 
 ```ts
 shot({ ...scene, contrast: { nodes: ['dot'], lightness: 18, colour: 24 } }); // off unless given; it blends below both: L*, a*b* (colourDistance(a, b)); + edge, seconds

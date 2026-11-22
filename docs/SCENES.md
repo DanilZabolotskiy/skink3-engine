@@ -706,15 +706,22 @@ Three options of a group are for the bodies in it (shapes and strokes with a `ri
 group({ id: 'town', sort: 'depth', cast: { color: 'deep.abyss', opacity: 0.4, length: 0.8, soft: 1.5 }, detail: { min: 11 }, children: [...houses, hall, tower, wall] })
 ```
 
-**`cast: { color, opacity?, dir?, length?, soft?, over? }`: shadows.** Every body inside the group, however deep, throws a shadow on the ground the group lies on.
+**`cast: { color, opacity?, dir?, length?, soft?, over?, ground? }`: shadows.** Every body inside the group, however deep, throws a shadow on the ground the group lies on.
 
 - `color` is a palette colour (the engine has none of its own) and `opacity` (0.35) the strength of the shadows. `length` (0.7, up to 8) is how long a shadow is, in units to each unit of the height of its body. `dir` is where the shadows fall, in degrees (0 to the right, 90 down), in the layer or, for a group in a plane, in that plane: there a shadow stays where it fell while the camera goes round. Left out, they fall away from the light of the shot. `soft` (0, up to 200 units) blurs them.
 - A shadow is as long as its body is high at each frame: it grows with `riseTo`. A roof makes it longer, by the shadow of its ridge or its point. A wall casts along its line, as far as it is drawn. A body that stands on another casts from the height it stands at.
 - **The shadows of a group are one picture,** drawn before everything else of the group: where two shadows meet they are no darker, and the picture as a whole has the opacity and the blur. A body that fades takes its shadow with it.
 - **`over: 'flat'`: the shadows lie over the ground the group holds.** Without it they are drawn before every child, so a flat child of the group (a yard, a square, a field, a road lying in it) covers them. With it the children with no `rise` anywhere in them are drawn first, as listed, then the shadows, then the raised children (far to near with `sort`): a shadow falls across the square and still passes under the bodies. Left out, a group draws as it always did.
+- **`ground: true`: the shadows lie on the ground of the plane.** For a group in a plane with a ground (a relief, see A perspective layer, a ground). Without it each shadow lies level at the height of the foot of its body: on a slope it floats off the hillside or sinks into it, and the shadow of a long wall over a hill lies at one height. With it the shadow of each point of a body runs from where that point stands until it meets the ground: shorter where the ground rises toward the light, longer where it falls away (at most twice as long as on level ground, `SHADOW_REACH`), and the outline of the shadows is laid on the ground point by point, as a region in the plane is. The shadow of a raised line (a wall) starts at its foot all along it. On level ground it lies where the level shadow lies. The group must lie in a plane with a ground, and its bodies must be listed after the relief (they stand on it); a body listed before the plane's first relief keeps a level shadow. Left out, the shadows lie as they always did.
+
+```ts
+group({ id: 'land', plane: 'floor', ground: 'hills', children: [relief({ id: 'hills', ... }),
+  group({ id: 'town', sort: 'depth', cast: { color: 'deep.abyss', ground: true }, children: [...houses, wall] })] })
+```
+
 - **They lie on the ground only:** on nothing that stands on it, so no body is shaded by its neighbour, and a shadow passes under a body that stands in it. A shape that lies flat casts nothing. A group inside with a `cast` of its own draws the shadows of its own bodies.
 - Seen from behind its plane a group casts nothing. `cast.dir` moves the shadows only: the tones of roofs and sides follow the light of the shot.
-- The motion review judges the end of the shadow of a body whose height is keyed, on the channel `shadow`: with a `length` over 1 it travels farther than the body rises (see Motion review).
+- The motion review judges the end of the shadow of a body whose height is keyed, on the channel `shadow`: with a `length` over 1 it travels farther than the body rises; with `ground: true`, as far as the ground makes it, farther down a slope (see Motion review).
 
 **`sort: 'depth'`: the draw order.** The children of the group are drawn far to near for the camera of each frame, in whatever order they are listed.
 
@@ -878,7 +885,7 @@ cameraTo({ at: 1, zoom: 40, dur: 4 }),
 - In a plane of a perspective layer the width is held as the plane is seen at the place of the stroke; along a line that runs into the distance the perspective still narrows it.
 - The motion review reads the zoom on the camera: such a line has no width of its own that changes.
 
-### `label({ id, text, target, fill, ink, runInk?, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, sound? })`
+### `label({ id, text, target, fill, ink, runInk?, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, count?, sound? })`
 
 A rounded rectangle with a pointer tail aimed at `target`.
 
@@ -896,6 +903,7 @@ A rounded rectangle with a pointer tail aimed at `target`.
 | `maxLines` | `3` | |
 | `opacity` | `1` | 0..1 at the start |
 | `follow` | none | spring: the label trails its target |
+| `count` | none | makes the label a counter, as `count` makes a text one: a number, or `{ from, decimals?, grouping? }` (see A counter) |
 | `sound` | none | key of the label's voice (see Sound) |
 
 The layout wraps the string, balances the lines, and shrinks the font if needed. A string that still does not fit is reported by the text-fit check as overflow; it is never cut. Labels are listed directly in a layer, usually last so they are on top.
@@ -942,7 +950,7 @@ Free-standing text: a title, a caption, a source line in a corner, a quotation, 
 | `weight` | `800` | weight of the letters, 200 (light) to 1000 (black) |
 | `align` | `'center'` | where `at` is in the block, sideways, and how the lines are set: `'center'`: its middle; `'left'`: the lines start at `at`; `'right'`: they end there. Up and down the block is centred on `at` |
 | `box` | none | palette reference: a rounded box of that colour behind the lines, with the padding and the corners of a label |
-| `count` | none | makes the text a counter: a number, or `{ from, decimals }` (see A counter) |
+| `count` | none | makes the text a counter: a number, or `{ from, decimals?, grouping? }` (see A counter) |
 | `clipTo` | none | id of a shape of the same layer: the text is drawn only inside it |
 | `sound` | none | key of the text's voice (see Sound) |
 
@@ -965,20 +973,22 @@ rect({ id: 'card', at: [560, 300], w: 240, h: 150, fill: 'dark.indigo', children
 
 #### A counter
 
-A text with `count` is a counter: a number that runs between values over time. Its string says where the number goes with `{n}`; the words round it are the language's.
+A text or a label with `count` is a counter: a number that runs between values over time. Its string says where the number goes with `{n}`; the words round it are the language's.
 
 ```ts
-strings: { en: { 'count.way': '{n} km' }, de: { 'count.way': '{n} km' }, fr: { 'count.way': '{n} km' } },
+strings: { en: { 'count.way': '{n} km', 'count.year': 'built {n}' }, de: { 'count.way': '{n} km', 'count.year': 'erbaut {n}' } },
 text({ id: 'way', text: 'count.way', ink: 'accent.amber', at: [900, -455], align: 'right', size: 40, count: 0 }),
+label({ id: 'year', text: 'count.year', target: 'tower', fill: 'light.cream', ink: 'deep.night', count: { from: 1100, grouping: false } }),
 // timeline
 countTo('way', { at: 1, to: 1280, dur: 3 }),                           // it runs to 1280 in three seconds, from rest to rest
 countTo('way', { at: 7, to: 1281, dur: 0.1 }),                         // a tick
 countTo('grains', { at: 2, to: 2e9, dur: 4, profile: 'steady', ratio: true }),   // digit after digit at an even pace
+countTo('year', { at: 2, to: 1309, dur: 2 }),                          // the label's year: 1309 in every language
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
-| `count` of `text` | none | a number: where the counter starts. Or `{ from, decimals }`: `decimals` (0, up to 6) are the places it shows after the decimal sign |
+| `count` of `text` or `label` | none | a number: where the counter starts. Or `{ from, decimals?, grouping? }`: `decimals` (0, up to 6) are the places it shows after the decimal sign; `grouping: false` writes the digits alone, with no sign between their groups |
 | `countTo(id, { at, to, ... })` | | runs the number to `to` |
 | `dur` | `1` | seconds the run takes; a short one is a tick |
 | `profile`, `ramp` | `'ease'`, `0.3` | how the pace is spread: `'ease'` from rest to rest, `'steady'`, `'in'`, `'out'` |
@@ -986,10 +996,12 @@ countTo('grains', { at: 2, to: 2e9, dur: 4, profile: 'steady', ratio: true }),  
 
 - **Keys chain:** each `countTo` starts from the number reached at its moment.
 - **The number is written the way the language writes numbers:** the grouping of its digits and its decimal sign follow the language of the render (`1,280` in English, `1.280` in German, a no-break space in French), with Latin digits. A language tag that is no language, such as a pseudo-locale, is written as English.
+- **`grouping: false`: the digits alone,** with no sign between their groups, in every language: a year (`1309`, never `1,309` or `1.309`), a number on a plate, a code. The decimal sign stays the language's (`2,5` in German). Left out, the digits are grouped.
 - **The string must hold `{n}` once, in every language.** A unit, a sign or a word before or after it belongs to the string: `'{n} km'`, `'Total: {n}'`.
 - **Its digits stand in cells of one width,** so a running number does not tremble. The text is set anew only when the number gains or loses a digit.
 - **The layout is made for the widest value** the counter starts from or is sent to: the font size, the lines and the box do not change while it runs, and the text-fit checks hold the counter at that value from the first frame on.
 - Everything else is a `text`: place, alignment, a box, the intents of a placed node.
+- **A label that counts** is a label: its box points its tail at its target and follows it. The box is laid out for the widest value, so it neither grows nor shrinks while the number runs, and the number stands where `{n}` is in its line. The label's string must hold `{n}` once, in every language. Like a text that counts, it takes no `runInk`.
 - A `countTo` makes no event. The motion review counts a running number as life in the frame.
 - Digits do not roll like an odometer: a digit is replaced by the next.
 
@@ -1056,7 +1068,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `fillTo(shapeId, { at, to, ... })` | shape | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key) |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
-| `countTo(textId, { at, to, ... })` | a text with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
+| `countTo(id, { at, to, ... })` | a text or a label with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
 | `cameraTo({ at, ... })` | the camera | `dur` (1.2), `zoom`, `to`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera at a moment: to a zoom, to a place, or both; keys chain (see Camera keys) |
 | `zoomTo({ at, to, ... })` | the camera | `dur` (3), `profile` (`'ease'`), `ramp` (0.3) | changes the zoom of the camera at a moment and nothing else: its drift and its path run on under the key; keys chain (see Zoom keys) |
 | `backgroundTo({ at, ... })` | the background | `dur` (2), `inner`, `outer`, `center`, `radius`, `atmosphere`, `vignette`, `profile` (`'ease'`), `ramp` (0.3) | changes the gradient of the shot, the colour far layers fade toward and the vignette at a moment; keys chain (see A background that changes) |
@@ -1512,7 +1524,7 @@ group({ id: 'map', plane: 'floor', ground: 'hills', fog: { color: 'light.haze', 
 
 - **A height, once.** The height of the ground is the relief's own, at its `vertical`: the hills are drawn, and things stand, at the same exaggeration. A path with heights adds its heights to the ground's; give a travel the flat path, and it rides the ground.
 - **A finer relief over a coarser one:** `ground: ['hills', 'city']`, the finer listed after the coarser in the group. Each is drawn raised by its own heights; where the finer lies, things stand on it, blended into the coarser over its `feather`. Blend the finer grid's heights into the coarser one's toward its edges (a map library's `blendGrid`), so the two meet in height as well as in shade.
-- **What it does not do.** The ground hides the plane behind its hills, but not the things that stand on it: a ship behind a hill is drawn over the hill. A body stands on the ground at its place and does not lean with the slope; a body larger than a cell of the grid sits level on it. A stroke with heights of its own (a path with heights) keeps them and is not laid on the ground. Nothing but a relief listed directly in the group can be its ground, and only a group with `plane` takes one.
+- **What it does not do.** The ground hides the plane behind its hills, but not the things that stand on it: a ship behind a hill is drawn over the hill. A body stands on the ground at its place and does not lean with the slope; a body larger than a cell of the grid sits level on it. The shadows of a group's bodies lie level at the foot of each body unless its `cast` says `ground: true` (see Bodies in a group). A stroke with heights of its own (a path with heights) keeps them and is not laid on the ground. Nothing but a relief listed directly in the group can be its ground, and only a group with `plane` takes one.
 - **Its cost.** Each pixel of a raised relief walks a ray from the camera down to the ground: a field over the whole frame costs about 0.1 s more a frame at 1080p than a flat one. Left out, a plane is drawn as it always was.
 
 **Bodies taller than the camera is high: `tall`.** A body in a plane (a shape with a `rise`) is held under the camera: it is drawn at most 0.9 of the camera's height over the plane, its roof included, so a tower on a map seen from low down is cut short. `tall: true` on the group with `plane` draws such a body whole: the part of it above the camera's height is seen from below, the underside of its roof where it shows, and what would come round behind the camera is left out. Its shadow is that of the body as high as it is held. Bodies placed on the top of a tall body, and strokes with a rise, are still held. Without `tall` a body is drawn as it always was.
@@ -1763,7 +1775,7 @@ Things to know when you write a scene:
 - Keep a small thing slow: under half of its own size per frame.
 - What is wholly behind a `cover`, or wholly outside the shape it is clipped to, is not judged: put a start or a stop that should not be seen behind one, instead of marking it as intended.
 - A hop leaves and lands at speed without a finding; a `'steady'` move or travel is a flow only if it enters and leaves the picture, or starts and ends out of sight.
-- The shadow of a body whose height is keyed, in a group with `cast`, is judged on the channel `shadow`: the travel of its end, which is `cast.length` times the change of the height.
+- The shadow of a body whose height is keyed, in a group with `cast`, is judged on the channel `shadow`: the travel of its end, which is `cast.length` times the change of the height; with `cast.ground`, times how much longer the ground makes the shadow of its top (more down a slope, less up one).
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).

@@ -344,10 +344,21 @@ export interface CastSpec {
    * a yard), which are drawn first, as listed, and under its raised members. Left out: under all of them.
    */
   readonly over?: 'flat';
+  /**
+   * true: in a plane with a ground, the shadows lie on that ground. The shadow of each point of a body runs from where
+   * it stands until it meets the ground (shorter where the ground rises toward the light, longer where it falls away,
+   * at most SHADOW_REACH times as long as on level ground), and the outline of the shadows is laid on the ground point
+   * by point, as a region of the plane is; the shadow of a raised line starts at its foot all along it. Left out:
+   * each shadow lies level, at the height of the foot of its body.
+   */
+  readonly ground?: true;
 }
 
 /** The longest shadow a body may cast, in units to each unit of its height. */
 export const CAST_MAX_LENGTH = 8;
+
+/** With cast.ground, a shadow that runs down a slope is at most this many times as long as on level ground. */
+export const SHADOW_REACH = 2;
 
 export interface GroupNode extends NodeBase {
   readonly type: 'group';
@@ -536,7 +547,7 @@ export interface TextNode extends NodeBase {
    * that starts at `from` and runs where countTo sends it, written with
    * `decimals` places after the decimal sign, the way the language writes numbers.
    */
-  readonly count?: { readonly from: number; readonly decimals: number };
+  readonly count?: CountSpec;
   /** 0..1 at the start. */
   readonly opacity: number;
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
@@ -574,10 +585,28 @@ export interface LabelNode {
   readonly opacity: number;
   readonly follow: SpringSpec | null;
   /**
+   * Makes the label a counter, as a text with count is: its string holds "{n}", the place of the number countTo
+   * runs; the box is made for the widest value it ever shows, and the tail keeps pointing at its target.
+   */
+  readonly count?: CountSpec;
+  /**
    * Key of the node's voice in the bank of sounds: what its intents and its
    * contacts sound like. It never changes the picture or the bake.
    */
   readonly sound?: string;
+}
+
+/** The number of a counter: a text or a label whose string holds "{n}". */
+export interface CountSpec {
+  /** Where the number starts; countTo runs it from there. */
+  readonly from: number;
+  /** Places after the decimal sign. */
+  readonly decimals: number;
+  /**
+   * false: the digits stand alone, with no sign between their groups, in every language (a year: 1309, not 1,309;
+   * the decimal sign stays the language's own). Left out: the number is grouped the way the language groups it.
+   */
+  readonly grouping?: false;
 }
 
 /** A simple eye: a light disc with a pupil that looks at a node, and blinks. */
