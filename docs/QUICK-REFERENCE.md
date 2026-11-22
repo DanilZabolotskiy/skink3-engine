@@ -143,7 +143,7 @@ Only what is seen sounds.
 npx skink3 <command> <scene.ts> [options]
 check   [--bank bank.json]
 bake    [--force]
-still   --frame n[,n] | --time s[,s] [--hash]
+still   --frame n[,n] | --time s[,s] [--hash] [--alone]
 strip   --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
 render  [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
@@ -153,11 +153,11 @@ trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space s
 graph   --node id | --camera [--from f] [--to f] | [--time s,s]
 events  as JSON
 sfx     a WAV --bank bank.json [--sheet [--cols 4] [--tile 480]]
-queue   render slots: SKINK3_RENDER_SLOTS (4; 0: off)
-common  --lang tag (first table) --width px (1920) --cpu --out file (./out/<shot>/) --cache dir (./cache) --priority high|low
+queue   render slots
+common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir --priority high|low
 ```
 
-Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps. `--crop`: units, top-left.
+Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame or overlaps. `--crop`: units, top-left. `--alone`: frames as drawn alone (~1 s each).
 
 ## Reading the reviews
 

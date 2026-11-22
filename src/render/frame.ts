@@ -42,6 +42,14 @@ export interface RenderOptions {
   readonly lang: string;
   /** Draw on the GPU (falls back to the CPU when no GPU is available). */
   readonly gpu: boolean;
+  /**
+   * Draw the frame as a still of it alone draws it, whatever this process drew before it (`frameRaw` and `framePng`;
+   * off by default). On the GPU the drawing library keeps the triangles of a curved outline for about a second and
+   * draws that outline again with them, also at another scale: a frame drawn soon after a frame of another zoom may
+   * differ from its still by a few pixels of such an edge. With `alone` a frame drawn after another first lets the GPU
+   * rest from it for `GPU_FORGETS_MS`, so every frame after the first is slower by that much.
+   */
+  readonly alone?: boolean;
 }
 
 /** Height in pixels for a width, always even. */
@@ -57,6 +65,13 @@ export const MAX_SOFT_PX = 400;
 
 /** Samples per pixel used when exporting from the GPU. */
 export const GPU_MSAA = 4;
+
+/**
+ * How long a frame drawn `alone` waits after the frame of this process drawn on the GPU before it, in ms. The drawing
+ * library drops what it keeps of the paths of earlier frames once nothing has used it for about a second, and offers no
+ * way to drop it sooner: after 950 ms of rest a frame came out as its still, after 900 ms not always.
+ */
+export const GPU_FORGETS_MS = 1250;
 
 /** How strongly an item feeds the halo: its glow times its opacity down the tree. */
 function glowStrength(item: LeafItem): number {
@@ -618,8 +633,8 @@ let frameInHand: Promise<unknown> = Promise.resolve();
  * canvases of the one before are freed. On the GPU a frame is not the same frame while the canvases of another are
  * alive: a heavy frame (many layers, several of them blurred) is drawn with other edges, by a few levels, when the
  * canvases of the frame before still exist, also when that frame was read back before this one was drawn. So frames
- * are made one at a time, whoever asks for them and however many are asked for at once: a frame is the same in a
- * still, in a sheet, and at any place of a chunk of a render.
+ * are made one at a time, whoever asks for them and however many are asked for at once. What the library keeps of the
+ * paths of the frames before is another matter: see `RenderOptions.alone`.
  */
 function oneFrameAtATime<T>(job: () => Promise<T>): Promise<T> {
   const run = frameInHand.then(job, job);
@@ -635,28 +650,43 @@ export function readRaw(drawn: DrawnFrame, gpu: boolean): Promise<Buffer> {
   return drawn.canvas.toBuffer('raw', { colorType: 'rgba', msaa: gpu ? GPU_MSAA : false });
 }
 
-/** One frame as raw RGBA bytes (width * height * 4). On the GPU it waits for the render slot of the process, if any. */
+/** Whether `frameRaw` or `framePng` has drawn a frame of this process on the GPU. */
+let drewOnGpu = false;
+
+/** Before a frame drawn `alone` on the GPU after another: lets the GPU rest from the frames before for `GPU_FORGETS_MS`. */
+async function restFromEarlierFrames(opts: RenderOptions): Promise<void> {
+  if (opts.alone && opts.gpu && drewOnGpu) await new Promise((done) => setTimeout(done, GPU_FORGETS_MS));
+}
+
+/**
+ * One frame as raw RGBA bytes (width * height * 4). On the GPU it waits for the render slot of the process, if any,
+ * and with `alone` it is the frame of a still of it alone, whatever this process drew before.
+ */
 export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
     if (opts.gpu) await waitForGpu();
+    await restFromEarlierFrames(opts);
     const drawn = drawFrame(c, bake, frame, opts);
     try {
       return await readRaw(drawn, opts.gpu);
     } finally {
       drawn.dispose();
+      if (opts.gpu) drewOnGpu = true;
     }
   });
 }
 
-/** One frame as PNG bytes. On the GPU it waits for the render slot of the process, if any. */
+/** One frame as PNG bytes. On the GPU it waits for the render slot of the process, if any; `alone` as for `frameRaw`. */
 export function framePng(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
     if (opts.gpu) await waitForGpu();
+    await restFromEarlierFrames(opts);
     const drawn = drawFrame(c, bake, frame, opts);
     try {
       return await drawn.canvas.toBuffer('png', { msaa: opts.gpu ? GPU_MSAA : false });
     } finally {
       drawn.dispose();
+      if (opts.gpu) drewOnGpu = true;
     }
   });
 }

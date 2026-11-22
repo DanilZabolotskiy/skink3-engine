@@ -2131,9 +2131,9 @@ skink3 <command> <scene module> [options]
 
 check   the palette's own rules, string tables, glyphs and text fit in every language; the reviews in short   [--bank <bank.json>]
 bake    simulate physics, springs and particles; write the cache        [--force]
-still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash]
-strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
-sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
+still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash] [--alone]
+strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h] [--alone]
+sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h] [--alone]
 render  an mp4                 [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
 motion  the motion review      [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/motion.json
 physics the physics review     [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/physics.json
@@ -2153,6 +2153,7 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
+- `--alone` (`still`, `strip`, `sheet`): every frame is the frame a still of it alone draws, whatever the process drew before it. Without it, on the GPU, a frame drawn soon after a frame of another zoom may come out with a few pixels of a curved edge otherwise: the drawing library keeps the triangles of a curved outline for about a second and draws that outline again with them, also at another scale. With it, each frame after the first waits until the GPU has rested that long (`GPU_FORGETS_MS`, 1.25 s), so a still of 21 frames takes about 25 s longer. A still of one frame is alone anyway. Every other command refuses it; a render draws its frames in a row (see "The render queue").
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, no further chunk is started, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.
 - Every command that draws on the GPU waits for a render slot of the machine first: see "The render queue" below.
@@ -2165,7 +2166,7 @@ Every process that draws frames on the GPU, wherever it was started from (any ch
 - `SKINK3_SLOT_DIR`: the directory of the slots, shared by every process of the user; by default `%LOCALAPPDATA%\skink3\render-slots` on Windows and `~/.cache/skink3/render-slots` elsewhere (`$XDG_CACHE_HOME` if set). Every process that should share the limit must see the same directory and the same number.
 - **Who goes first.** Two kinds of work wait in two lines, each in its order of arrival: quick work (`still`, `strip`, `sheet`, the pictures of the reviews, a `render` up to 1920 wide) before long work (a `render` wider than 1920, or anything given `--priority low` or `SKINK3_RENDER_PRIORITY=low`). `--priority high` puts long work in the quick line. Long work that has waited five minutes counts as quick work from the moment it arrived, so it is served in the end however much quick work keeps coming.
 - **A render takes slots as they come free.** `render --workers n` keeps at most n workers, and never more than there are slots, alive at once, and splits its frames into chunks of at most `--chunk` frames: 900 at 1920 wide, as many pixels at any other width (225 at 3840), and always a multiple of the workers that run at once, so a render alone keeps them busy to its end. Each worker draws one chunk, gives its slot back, and the next chunk waits for a slot like any other process; a worker that waits holds no GPU memory. `--chunk 0`: one chunk per worker, the split of earlier versions. The header line of `render` says how many workers run at once, over how many chunks, and the priority.
-- **Pixels do not change.** A frame is the same whichever process draws it, in any chunk or alone, with the queue on or off: `--hashes` writes the same file for any `--workers`, `--chunk` and `SKINK3_RENDER_SLOTS`. What the split moves is where the encoded file has a key frame: each chunk starts with one.
+- **The queue changes no pixel.** It decides when a process draws, never what. The split into chunks can change a few: a chunk draws its frames in a row, and on the GPU a frame drawn soon after frames of another zoom may differ by a few pixels of a curved edge (see `--alone` under "Command line"), so a frame of a render may move by as much with where its chunk starts. `--hashes` writes the same file for the same `--workers`, `--chunk` and number of slots, and the first frame of every chunk is its still alone. Each chunk starts with a key frame of the encoded file.
 - **Crashes leave nothing behind.** A slot names its process and is refreshed every few seconds while the process runs. A slot whose process has ended, by Ctrl+C, a kill or a crash, or that nobody has refreshed for two minutes, is free at once. On Ctrl+C a process gives its slot back before it exits.
 - `--cpu` takes no slot, and a command that never draws a frame (`check`, `bake`, `events`, a command that stops on an error first) never waits.
 - `skink3 queue` (no scene module) prints the slots, who holds each (process, priority, how long, what it draws) and who waits, in the order they will be served.
@@ -2185,7 +2186,7 @@ Run `npm ci` in the engine checkout too. The dependency must stay a link (npm's 
 
 ## Programmatic use
 
-Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel` (with `renderPlan` and `chunkFrames`, how it splits a render), `loadShot`, for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`, and for the physics review `reviewPhysics`, `formatPhysicsReport`, `physicsPictures`, `renderCloseUp`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function.
+Everything the command line does is exported: `compileShot`, `bakeShot`, `ensureBake`, `evaluate`, `runChecks`, `frameRaw`, `framePng`, `renderSheet`, `renderParallel` (with `renderPlan` and `chunkFrames`, how it splits a render), `loadShot`, for the motion review `sampleMotion`, `reviewMotion`, `formatMotionReport`, `renderTrail`, `renderGraph`, `motionPictures`, and for the physics review `reviewPhysics`, `formatPhysicsReport`, `physicsPictures`, `renderCloseUp`. `evaluate(compiled, bake, frame, lang)` returns the display list of a frame and is a pure function. `alone: true` in the options of `frameRaw`, `framePng` and `renderSheet` is `--alone`.
 
 What a test or a tool of a production usually reads:
 

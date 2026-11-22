@@ -57,9 +57,9 @@ Common options
   --cache <dir>       bake cache directory (default ./cache)
   --priority high|low the turn in the render queue (default high; low for a render wider than 1920)
 
-still   --frame <n[,n...]> | --time <s[,s...]>   [--hash]
-strip   --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
-sheet   [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h]
+still   --frame <n[,n...]> | --time <s[,s...]>   [--hash] [--alone]
+strip   --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h] [--alone]
+sheet   [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h] [--alone]
 render  [--workers <n>] [--chunk <frames>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [--hashes] [--force]
 bake    [--force]
 check   [--bank <bank.json>]        with a bank, a sound key it does not know fails the checks; --lang limits the text checks
@@ -72,7 +72,10 @@ sfx     --bank <bank.json>          a WAV of 48 kHz, stereo, as long as the shot
         [--sheet [--cols 4] [--tile 480]]   also the sound sheet, out/<shot>/sfx_sheet.png: which event each sound belongs to
 
 --crop is in stage units (1920 x 1080, origin top-left). --hash and --hashes
-print or write the SHA-256 of each frame's raw RGBA pixels. --pictures writes
+print or write the SHA-256 of each frame's raw RGBA pixels. --alone draws every
+frame as a still of that frame alone draws it, whatever was drawn before it,
+about a second slower a frame: without it, on the GPU, a frame drawn soon after a
+frame of another zoom may differ by a few pixels of a curved edge. --pictures writes
 pictures of the worst few subjects of the report: a trail and a graph for
 motion; a close-up, a trail or a graph, by the kind of finding, for physics.
 --sheet (of sfx) writes the sound sheet of the track: a tile for every sound,
@@ -200,6 +203,7 @@ async function run(argv: readonly string[]): Promise<number> {
       sheet: { type: 'boolean', default: false },
       priority: { type: 'string' },
       chunk: { type: 'string' },
+      alone: { type: 'boolean', default: false },
     },
   });
   const str = (name: string): string | undefined => {
@@ -207,6 +211,9 @@ async function run(argv: readonly string[]): Promise<number> {
     return typeof v === 'string' ? v : undefined;
   };
   const flag = (name: string): boolean => (values as Record<string, unknown>)[name] === true;
+  if (flag('alone') && command !== 'still' && command !== 'strip' && command !== 'sheet') {
+    fail(`${command}: --alone is an option of still, strip and sheet${command === 'render' ? ' (a render draws its frames in a row)' : ''}`);
+  }
 
   // The one command without a scene: the render queue of the machine.
   if (command === 'queue') {
@@ -297,7 +304,7 @@ async function run(argv: readonly string[]): Promise<number> {
       if (frames.length > 1 && str('out')) fail('still: --out works with a single frame');
       for (const f of frames) {
         checkFrame(c, f);
-        const raw = await frameRaw(c, bake, f, { width: common.width, lang: common.lang, gpu: common.gpu });
+        const raw = await frameRaw(c, bake, f, { width: common.width, lang: common.lang, gpu: common.gpu, alone: flag('alone') });
         const file = outFile(`still_${String(f).padStart(5, '0')}_${common.lang}.png`);
         write(file, await rawToPng(raw, common.width, height));
         const sum = flag('hash') ? `  sha256 ${createHash('sha256').update(raw).digest('hex')}` : '';
@@ -322,6 +329,7 @@ async function run(argv: readonly string[]): Promise<number> {
         tileWidth: int('tile', str('tile'), 480, 64, 3840),
         crop: crop(str('crop')),
         gpu: common.gpu,
+        alone: flag('alone'),
         captions: true,
         relative: true,
       });
@@ -349,6 +357,7 @@ async function run(argv: readonly string[]): Promise<number> {
         tileWidth: int('tile', str('tile'), 480, 64, 3840),
         crop: crop(str('crop')),
         gpu: common.gpu,
+        alone: flag('alone'),
         captions: true,
         relative: false,
       });

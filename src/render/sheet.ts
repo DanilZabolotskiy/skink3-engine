@@ -32,6 +32,8 @@ export interface SheetOptions {
   /** Part of the stage to show, in stage units from the top-left corner: [x, y, w, h]. */
   readonly crop: readonly [number, number, number, number] | null;
   readonly gpu: boolean;
+  /** Draw every tile as a still of its frame alone draws it (see `RenderOptions.alone`): slower, by about a second a tile. */
+  readonly alone?: boolean;
   /** Write frame number, time and language on each tile. */
   readonly captions: boolean;
   /** Prefix captions with "+n" frames from the first tile (motion strips). */
@@ -63,7 +65,7 @@ export async function renderSheet(c: CompiledShot, bake: Bake, tiles: readonly S
   const first = tiles[0]!.frame;
   for (let i = 0; i < tiles.length; i++) {
     const tile = tiles[i]!;
-    const raw = await frameRaw(c, bake, tile.frame, { width: renderW, lang: tile.lang, gpu: opts.gpu });
+    const raw = await frameRaw(c, bake, tile.frame, { width: renderW, lang: tile.lang, gpu: opts.gpu, alone: opts.alone ?? false });
     const x = (i % cols) * tileW;
     const y = Math.floor(i / cols) * tileH;
     ctx.drawImage(new ImageData(raw, renderW, renderH), crop[0] * k, crop[1] * k, crop[2] * k, crop[3] * k, x, y, tileW, tileH);

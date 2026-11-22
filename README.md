@@ -58,7 +58,7 @@ In this genre, every movement on screen is usually keyframed by hand by a team o
 
 ## Principles
 
-1. **Deterministic.** Frame *n* is a pure function of the scene, the bake cache and *n*. Everything stateful (physics, particles, springs) is baked beforehand with fixed seeds. Any frame can be rendered alone, chunks render in parallel, a frame of a chunk is the frame of its still wherever the chunk starts, and a re-render matches pixel for pixel.
+1. **Deterministic.** Frame *n* is a pure function of the scene, the bake cache and *n*. Everything stateful (physics, particles, springs) is baked beforehand with fixed seeds. Any frame can be rendered alone, chunks render in parallel, and a re-render matches pixel for pixel. On the GPU a frame drawn soon after frames of another zoom may differ from its still by a few pixels of a curved edge, because the drawing library reuses what it kept of their paths; `--alone` draws every frame of a still, a strip or a sheet as it is alone.
 2. **Simple forms, flawless motion.** Drawing must be perfect, so motion must be bug-free. The engine avoids objects whose motion viewers know precisely and would instantly judge as wrong. Humanoid limbs are rounded sticks with no hands, fingers or feet, and there are no human limb mechanics (stepping, grasping, gestures). The API has no such parts, so they cannot be drawn by accident. See [docs/PRINCIPLES.md](docs/PRINCIPLES.md).
 3. **Text is data.** Scenes never contain on-screen text, only keys into per-language string tables. Labels and free-standing texts size and wrap themselves to the string, and a pre-render check reports overflow and overlaps in every language.
 4. **Measured look.** Motion norms are numbers (camera drift, static-frame share, frame rate) checked by `tools/metrics` on renders.
@@ -133,7 +133,7 @@ Scene modules import from the package name (`import { shot, circle } from 'skink
 | Frames 0, 450, 899 alone vs inside the full render | identical raw RGBA hashes |
 | 1 worker vs 8 workers | identical hashes for all 900 frames |
 
-The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit.
+The GPU path is bit-exact on one machine and driver; it is not expected to match the CPU path or another GPU bit for bit. The frames of that scene keep their zoom: where the zoom of a curved edge changes within a chunk, a frame of the chunk may differ from its still by a few pixels, with where the chunk starts.
 
 The renders in the table ran before the render queue; with it, a render draws with at most four workers at once unless `SKINK3_RENDER_SLOTS` says otherwise. Measured with the queue, then of three slots, on November 21, 2026, on the same machine while other renders kept its GPU busy:
 
