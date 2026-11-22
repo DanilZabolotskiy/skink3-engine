@@ -12,6 +12,7 @@ import {
   oval,
   parcels,
   patches,
+  relief,
   scatter,
   smoothLine,
   trees,
@@ -21,7 +22,8 @@ import {
   type Vec2,
   type Vec3,
 } from '../src/index.ts';
-import { dark, differing, draw, make, refused } from './fixtures/bodies.ts';
+import type { CastItem } from '../src/scene/evaluate.ts';
+import { dark, differing, draw, items, make, refused } from './fixtures/bodies.ts';
 
 // The dressings of a map: water, woods, trees, the ground's flecks, fields, houses, a road of logs and a locator, and
 // the geometry that places them. They draw only what the scene gives, in its colours, and the same options always
@@ -224,4 +226,35 @@ test('map dressings: the same options give the same nodes, and they compile and 
   let lit = 0;
   for (let i = 0; i < raw.length; i += 4) if (!dark([raw[i]!, raw[i + 1]!, raw[i + 2]!])) lit++;
   assert.ok(lit > 10_000, `${lit} pixels drawn`);
+});
+
+test('woods, trees and houses: ground lays their shadows on the ground of the plane, on request', async () => {
+  const town = (extra: object = {}): SceneNode => houses({ id: 'town', within: [[-300, -200], [300, -200], [300, 200], [-300, 200]], step: 40, seed: 2, roofs: ['accent.coral'], side: 'dark.plum', rise: 20, shadow: 'deep.abyss', ...extra });
+  const row = (extra: object = {}): SceneNode => trees({ id: 'row', bounds: [-300, -200, 300, 200], step: 50, r: 10, seed: 4, crowns: ['mid.jade'], shadow: 'deep.abyss', ...extra });
+  const wood = (extra: object = {}): SceneNode[] => woods({ id: 'wood', within: [SQUARE], step: 60, r: 14, seed: 1, crowns: ['mid.jade'], shadow: 'deep.abyss', ...extra });
+  const castOf = (n: SceneNode): Record<string, unknown> => (n as unknown as { cast: Record<string, unknown> }).cast;
+  // Opt-in: left out or false, the cast is the one it was, with no more keys; true adds cast.ground and changes nothing else.
+  for (const [plain, off, on] of [[town(), town({ ground: false }), town({ ground: true })], [row(), row({ ground: false }), row({ ground: true })], [wood().at(-1)!, wood({ ground: false }).at(-1)!, wood({ ground: true }).at(-1)!]] as const) {
+    assert.deepEqual(Object.keys(castOf(plain)), ['color', 'opacity', 'length', 'soft']);
+    assert.equal(JSON.stringify(off), JSON.stringify(plain));
+    assert.equal(castOf(on).ground, true);
+    assert.equal(JSON.stringify({ ...on, cast: { ...castOf(on), ground: undefined } }), JSON.stringify(plain), 'the same bodies');
+  }
+  // What it refuses: no shadow to lay, a value that is not true or false, and a plane with no ground to lay them on.
+  assert.ok(refused(() => town({ shadow: undefined, ground: true }), /houses\("town"\): ground lays the shadows on the ground of the plane, and there are none: give shadow/));
+  assert.ok(refused(() => row({ ground: 'yes' }), /trees\("row"\): ground must be true or false/));
+  assert.ok(refused(() => wood({ shadow: undefined, ground: true }), /woods\("wood"\): ground lays the shadows/));
+  const SEEN = { perspective: { aim: [0, 0, 0] as Vec3, distance: 1600, tilt: 60 } };
+  assert.ok(refused(() => compileShot(make([group({ id: 'floor', plane: 'floor', children: [town({ ground: true })] })], [], SEEN)), /group "town" lays its shadows on the ground \(cast\.ground\), and it lies in no plane with a ground/));
+  // On a ramp the shadows lie on the ground: they are drawn elsewhere than the level ones.
+  const N = 17;
+  const ramp = relief({ id: 'ground', w: 1600, h: 1600, heights: { cols: N, rows: N, values: Array.from({ length: N * N }, (_, i) => 200 + 0.2 * ((i % N) / (N - 1) - 0.5) * 1600) }, dark: 'deep.abyss', bright: 'light.snow', tints: [[0, 'mid.jade'], [400, 'light.cream']] });
+  const on = (dressing: SceneNode) => make([group({ id: 'floor', plane: 'floor', ground: 'ground', children: [ramp, dressing] })], [], SEEN);
+  const shadowsOf = async (dressing: SceneNode): Promise<number[]> => (await items(on(dressing))).flatMap((i) => (i.kind === 'cast' ? (i as unknown as CastItem).shadows.flatMap((sh) => sh.outlines.flatMap((o) => Array.from(o))) : []));
+  for (const [level, ground] of [[town(), town({ ground: true })], [row(), row({ ground: true })]] as const) {
+    const [a, b] = [await shadowsOf(level), await shadowsOf(ground)];
+    assert.ok(a.length > 0 && b.length > 0);
+    assert.notDeepEqual(a, b);
+    assert.ok(differing(await draw(on(level)), await draw(on(ground))) > 100);
+  }
 });

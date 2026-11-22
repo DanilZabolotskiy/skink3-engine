@@ -333,9 +333,18 @@ export function water(o: WaterOptions): SceneNode[] {
 
 // ---------------------------------------------------------------- woods, trees, the ground, fields, houses
 
-/** The shadows of a group of bodies, when the scene gives their colour. */
-const shadows = (color: ColorRef | undefined, opacity: number, soft: number): { cast?: { color: ColorRef; opacity: number; length: number; soft: number } } =>
-  color === undefined ? {} : { cast: { color, opacity, length: 0.9, soft } };
+/** The shadows of a group of bodies, when the scene gives their colour; laid on the ground of the plane when `ground` says so. */
+function shadows(
+  where: string,
+  color: ColorRef | undefined,
+  opacity: number,
+  soft: number,
+  ground: unknown,
+): { cast?: { color: ColorRef; opacity: number; length: number; soft: number; ground?: true } } {
+  if (ground !== undefined && typeof ground !== 'boolean') fail(where, `ground must be true or false (true: the shadows lie on the ground of the plane), got ${JSON.stringify(ground)}`);
+  if (ground === true && color === undefined) fail(where, 'ground lays the shadows on the ground of the plane, and there are none: give shadow, their colour, too');
+  return color === undefined ? {} : { cast: { color, opacity, length: 0.9, soft, ...(ground === true ? { ground: true as const } : {}) } };
+}
 
 export interface WoodsOptions {
   id: string;
@@ -352,6 +361,12 @@ export interface WoodsOptions {
   under?: ColorRef;
   /** The colour of the short shadows the crowns cast; none without it. */
   shadow?: ColorRef;
+  /**
+   * true: with `shadow`, the shadows lie on the ground of the plane (a group's `cast.ground`): on a hillside they
+   * follow the slope from the foot of each body. The dressing must then stand in a plane with a ground, listed after
+   * its relief. Left out: each shadow lies level, at the height of the foot of its body.
+   */
+  ground?: boolean;
   bounds?: Box;
   /** A share of the step (0.45). */
   jitter?: number;
@@ -360,7 +375,7 @@ export interface WoodsOptions {
 /** Woods: a soft shade on the ground under them and many small round crowns over it, each a low dome, drawn far to near. */
 export function woods(o: WoodsOptions): SceneNode[] {
   const where = `woods("${o?.id}")`;
-  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'r', 'seed', 'crowns', 'under', 'shadow', 'bounds', 'jitter']);
+  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'r', 'seed', 'crowns', 'under', 'shadow', 'ground', 'bounds', 'jitter']);
   const within = rings(where, 'within', o.within);
   const avoid = o.avoid === undefined ? [] : rings(where, 'avoid', o.avoid);
   const step = num(where, 'step', o.step, 1e-3, 1e6);
@@ -368,6 +383,7 @@ export function woods(o: WoodsOptions): SceneNode[] {
   const crowns = colours(where, 'crowns', o.crowns);
   const jitter = o.jitter === undefined ? 0.45 : num(where, 'jitter', o.jitter, 0, 1);
   const bounds = o.bounds === undefined ? undefined : boxOf(where, 'bounds', o.bounds);
+  const cast = shadows(where, o.shadow, 0.45, 1.5, o.ground);
   const root = new Rng(seedOf(where, o.seed), 'woods');
   const size = root.stream('crowns');
   const places = within.flatMap((ring, k) => lattice(where, { within: ring, avoid, step, aspect: 1, turn: 0, jitter, rng: root.stream(`grid${k}`), ...(bounds ? { bounds } : {}) }));
@@ -377,7 +393,7 @@ export function woods(o: WoodsOptions): SceneNode[] {
   });
   return [
     ...(o.under === undefined ? [] : [group({ id: `${o.id}-under`, soft: r * 1.4, opacity: 0.7, children: within.map((ring, i) => region({ id: `${o.id}-under${i}`, points: [...ring], smooth: 0, fill: o.under!, lit: false })) })]),
-    group({ id: `${o.id}-crowns`, sort: 'depth', ...shadows(o.shadow, 0.45, 1.5), children }),
+    group({ id: `${o.id}-crowns`, sort: 'depth', ...cast, children }),
   ];
 }
 
@@ -393,13 +409,20 @@ export interface TreesOptions {
   /** Where a tree stands, of the places of the lattice: a bank, a hedge, a patch (`patches`); `random()` is a seeded number in 0..1. All of them by default. */
   keep?: (p: Vec2, random: () => number) => boolean;
   shadow?: ColorRef;
+  /**
+   * true: with `shadow`, the shadows lie on the ground of the plane (a group's `cast.ground`): on a hillside they
+   * follow the slope from the foot of each body. The dressing must then stand in a plane with a ground, listed after
+   * its relief. Left out: each shadow lies level, at the height of the foot of its body.
+   */
+  ground?: boolean;
 }
 
 /** Trees alone or in short rows, as on an illustrated map: round crowns, each a low dome, where `keep` says, drawn far to near. */
 export function trees(o: TreesOptions): SceneNode {
   const where = `trees("${o?.id}")`;
-  checkKeys(where, o, ['id', 'bounds', 'avoid', 'step', 'r', 'seed', 'crowns', 'keep', 'shadow']);
+  checkKeys(where, o, ['id', 'bounds', 'avoid', 'step', 'r', 'seed', 'crowns', 'keep', 'shadow', 'ground']);
   const bounds = boxOf(where, 'bounds', o.bounds);
+  const cast = shadows(where, o.shadow, 0.45, 1.5, o.ground);
   const r = num(where, 'r', o.r, 0.1, 1e4);
   const crowns = colours(where, 'crowns', o.crowns);
   const keep = fn<(p: Vec2, random: () => number) => boolean>(where, 'keep', o.keep);
@@ -413,7 +436,7 @@ export function trees(o: TreesOptions): SceneNode {
   return group({
     id: o.id,
     sort: 'depth',
-    ...shadows(o.shadow, 0.45, 1.5),
+    ...cast,
     children: places.map((p, i) => {
       const rr = tenth(r * (0.75 + size.next() * 0.5));
       return circle({ id: `${o.id}-${i}`, at: p, r: rr, fill: crowns[Math.floor(size.next() * crowns.length)]!, lit: false, rise: rr * 0.4, roof: { kind: 'dome', height: rr * 0.6 } });
@@ -542,6 +565,12 @@ export interface HousesOptions {
   keep?: (p: Vec2) => boolean;
   shadow?: ColorRef;
   /**
+   * true: with `shadow`, the shadows lie on the ground of the plane (a group's `cast.ground`): on a hillside they
+   * follow the slope from the foot of each body. The dressing must then stand in a plane with a ground, listed after
+   * its relief. Left out: each shadow lies level, at the height of the foot of its body.
+   */
+  ground?: boolean;
+  /**
    * The roofs: `kind` 'hip' (four slopes), 'gable' (two slopes and a ridge along the longer side) or 'mixed' (each
    * house one of the two, about half each); `pitch`, how high a roof stands as a share of its house's shorter side
    * (0.45 makes a steep roof that reads from far); `contrast`, how far its lit and its shaded slopes lie from its
@@ -553,7 +582,8 @@ export interface HousesOptions {
 /** A town as a dense fabric of small houses, each a low block under a hipped roof, on a turned lattice with streets, drawn far to near. */
 export function houses(o: HousesOptions): SceneNode {
   const where = `houses("${o?.id}")`;
-  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'turn', 'seed', 'roofs', 'side', 'rise', 'street', 'bounds', 'jitter', 'keep', 'shadow', 'roof']);
+  checkKeys(where, o, ['id', 'within', 'avoid', 'step', 'turn', 'seed', 'roofs', 'side', 'rise', 'street', 'bounds', 'jitter', 'keep', 'shadow', 'ground', 'roof']);
+  const cast = shadows(where, o.shadow, 0.4, 1.2, o.ground);
   const step = num(where, 'step', o.step, 1e-3, 1e6);
   const turn = o.turn === undefined ? 0 : num(where, 'turn', o.turn, -3600, 3600);
   const roofs = colours(where, 'roofs', o.roofs);
@@ -594,7 +624,7 @@ export function houses(o: HousesOptions): SceneNode {
       const up = tenth(rise * (0.75 + look.next() * 0.6));
       return rect({ id: `${o.id}-${i}`, at, w, h, radius: 0, rotation: tenth(turn + (look.next() * 2 - 1) * 5), fill: roofs[Math.floor(look.next() * roofs.length)]!, side: o.side, lit: false, rise: up, roof: roofOf(up, w, h) });
     });
-  return group({ id: o.id, sort: 'depth', ...shadows(o.shadow, 0.4, 1.2), children });
+  return group({ id: o.id, sort: 'depth', ...cast, children });
 }
 
 // ---------------------------------------------------------------- a road of logs, a locator
