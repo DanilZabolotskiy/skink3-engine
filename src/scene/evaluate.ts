@@ -32,7 +32,7 @@ import {
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import { isRegion, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
-import { hull, ringOf, roofFaces, sideRing, spanOf, wallOpenings, type Upright } from '../shape/solid.ts';
+import { hull, ringOf, roofFaces, sideRing, spanOf, wallOpenings, type RoofFace, type Upright } from '../shape/solid.ts';
 import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
@@ -1292,6 +1292,89 @@ function worthOf(c: CompiledShot, n: CNode, t: number, foot: Foot | undefined, u
 /** Below this height, in its units, a body casts no shadow worth drawing. */
 const CAST_FLAT = 1e-3;
 
+interface RoofSamples {
+  readonly points: Float64Array;
+  readonly order: Uint32Array;
+}
+
+const samplesByRoof = new WeakMap<readonly RoofFace[], RoofSamples>();
+
+/** Shared vertices of a roof only need one terrain ray each. Its original point order is kept for the hull. */
+function roofSamples(faces: readonly RoofFace[]): RoofSamples {
+  const saved = samplesByRoof.get(faces);
+  if (saved) return saved;
+  const points: number[] = [];
+  const order: number[] = [];
+  const vertex = new Map<string, number>();
+  const exact = (v: number): number | string => Object.is(v, -0) ? '-0' : v;
+  for (const face of faces) {
+    for (let s = 0; s < face.points.length; s += 3) {
+      const z = face.points[s + 2]!;
+      if (z <= 0) continue;
+      const x = face.points[s]!;
+      const y = face.points[s + 1]!;
+      const key = `${exact(x)},${exact(y)},${exact(z)}`;
+      let index = vertex.get(key);
+      if (index === undefined) {
+        index = points.length / 3;
+        vertex.set(key, index);
+        points.push(x, y, z);
+      }
+      order.push(index);
+    }
+  }
+  const made = { points: Float64Array.from(points), order: Uint32Array.from(order) };
+  samplesByRoof.set(faces, made);
+  return made;
+}
+
+interface SavedShadow {
+  readonly key: readonly number[];
+  readonly outlines: CastShadow['outlines'];
+  readonly bytes: number;
+}
+
+interface GroundShadowCache {
+  readonly field: WeakRef<GroundField>;
+  readonly stand: Vec3;
+  readonly bodies: Map<number, SavedShadow>;
+  bytes: number;
+}
+
+// Render workers draw one shot. Keep a bounded cache for the most recent shot in tools that draw more than one.
+const SHADOW_CACHE_LIMIT = 24 * 1024 * 1024;
+let shadowShot: WeakRef<CompiledShot> | undefined;
+let shadowGroups = new WeakMap<CNode, GroundShadowCache>();
+let shadowBytes = 0;
+
+/** Only keep projected outlines while the ground and the position of the eye over it stay exactly the same. */
+function groundShadowCache(c: CompiledShot, group: CNode, field: GroundField, stand: Vec3): GroundShadowCache | undefined {
+  if (shadowShot?.deref() !== c) {
+    shadowShot = new WeakRef(c);
+    shadowGroups = new WeakMap();
+    shadowBytes = 0;
+  }
+  const saved = shadowGroups.get(group);
+  if (saved?.field.deref() === field && stand.every((v, i) => Object.is(v, saved.stand[i]))) return saved;
+  if (saved) shadowBytes -= saved.bytes;
+  shadowGroups.set(group, { field: new WeakRef(field), stand, bodies: new Map(), bytes: 0 });
+  return undefined;
+}
+
+function rememberShadow(cache: GroundShadowCache, index: number, key: readonly number[], outlines: CastShadow['outlines']): void {
+  const old = cache.bodies.get(index);
+  if (old) {
+    cache.bodies.delete(index);
+    cache.bytes -= old.bytes;
+    shadowBytes -= old.bytes;
+  }
+  const bytes = 256 + outlines.reduce((total, o) => total + o.length * 8, 0);
+  if (shadowBytes + bytes > SHADOW_CACHE_LIMIT) return;
+  cache.bodies.set(index, { key, outlines, bytes });
+  cache.bytes += bytes;
+  shadowBytes += bytes;
+}
+
 /**
  * The shadows the bodies inside a group cast on the ground under it at a
  * frame, in the space the group is drawn in (its plane, or its layer). A
@@ -1321,6 +1404,7 @@ function castShadows(
   // With cast.ground, the ground of the plane, which the bodies listed after its first relief stand on.
   const field = stand && (group.node as GroupNode).cast?.ground ? places?.grounds.get(group.plane) : undefined;
   const after = field ? c.grounds!.get(group.plane)![0]! : 0;
+  const cache = field && stand ? groundShadowCache(c, group, field, stand) : undefined;
   for (let i = group.index + 1; i <= group.subtreeEnd; i++) {
     const n = c.nodes[i]!;
     const node = n.node;
@@ -1375,6 +1459,17 @@ function castShadows(
     const high = stand ? eye * (1 - top) : top;
     const low = stand ? eye * (1 - base) : base;
     const unit = stand ? xf.scale * reach : xf.scale;
+    const opacity = whole > FAINT ? Math.min(1, alpha[i]! / whole) : 1;
+    // Convex shapes with fixed outlines do not use screen scale to sample their rings. Other bodies keep the
+    // frame's sampling, including a stroke's width and draw progress, or the detail of a region's outline.
+    const memo = cache && ground && node.type === 'shape' && !n.outline && !n.form &&
+      node.shape.kind !== 'blob' && !isRegion(node.shape) ? cache : undefined;
+    const key = memo ? [xf.x, xf.y, cos, sin, reach, high, low, unit, z] : undefined;
+    const saved = memo?.bodies.get(i);
+    if (saved && key!.every((v, j) => Object.is(v, saved.key[j]))) {
+      out.push({ outlines: saved.outlines, width: 0, alpha: opacity });
+      continue;
+    }
     // Where the shadow of a point `far` over the foot lands: that far along the fall, or on the ground where it meets it.
     let sx = 0;
     let sy = 0;
@@ -1539,13 +1634,25 @@ function castShadows(
           points.push(lx, ly, sx, sy);
         }
         if (roof) {
-          for (const face of roofFaces(shape, roof)) {
-            for (let s = 0; s < face.points.length; s += 3) {
-              const over = face.points[s + 2]!;
-              if (over <= 0) continue;
-              onGround(face.points[s]!, face.points[s + 1]!);
-              shift(gx, gy, high + over * unit);
-              points.push(sx, sy);
+          const faces = roofFaces(shape, roof);
+          if (ground) {
+            const samples = roofSamples(faces);
+            const projected: number[] = [];
+            for (let s = 0; s < samples.points.length; s += 3) {
+              onGround(samples.points[s]!, samples.points[s + 1]!);
+              shift(gx, gy, high + samples.points[s + 2]! * unit);
+              projected.push(sx, sy);
+            }
+            for (const s of samples.order) points.push(projected[2 * s]!, projected[2 * s + 1]!);
+          } else {
+            for (const face of faces) {
+              for (let s = 0; s < face.points.length; s += 3) {
+                const over = face.points[s + 2]!;
+                if (over <= 0) continue;
+                onGround(face.points[s]!, face.points[s + 1]!);
+                shift(gx, gy, high + over * unit);
+                points.push(sx, sy);
+              }
             }
           }
         }
@@ -1554,7 +1661,10 @@ function castShadows(
     }
     // On the ground the outlines, worked out at the true places of the plane, are laid on it.
     if (laid) for (let o = 0; o < outlines.length; o++) outlines[o] = drape(outlines[o]!, laid, stand!);
-    if (outlines.length > 0) out.push({ outlines, width, alpha: whole > FAINT ? Math.min(1, alpha[i]! / whole) : 1 });
+    if (outlines.length > 0) {
+      if (memo && key) rememberShadow(memo, i, key, outlines);
+      out.push({ outlines, width, alpha: opacity });
+    }
   }
   return out;
 }

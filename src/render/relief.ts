@@ -14,7 +14,7 @@
 // the layer sees them. Each pixel is then a ray from the camera through the plane, walked down from the highest the
 // ground reaches until it meets the ground; the shade and the tint are those of the point it meets.
 
-import { Canvas, ImageData, type CanvasRenderingContext2D } from 'skia-canvas';
+import { Canvas, ImageData, type CanvasRenderingContext2D, type DOMMatrix } from 'skia-canvas';
 import { parseHex } from '../look/color.ts';
 import type { ShapeItem } from '../scene/evaluate.ts';
 import { curveWeights as weights, fadeAt } from '../scene/ground.ts';
@@ -29,6 +29,75 @@ interface Shading {
 }
 
 const shadings = new WeakMap<ReliefSpec, Shading>();
+
+interface ReliefRaster {
+  readonly image: ImageData;
+  readonly x: number;
+  readonly y: number;
+  readonly clip: boolean;
+}
+
+interface RasterEntry {
+  readonly key: readonly (number | string)[];
+  seen: boolean;
+  raster?: ReliefRaster;
+}
+
+// Two full 4K fields, plus room for modest pass padding. Entries hold pixels only, since a live native canvas can
+// affect GPU readback in later frames. The LRU also keeps no strong reference to a compiled node or its height grid.
+const RASTER_LIMIT = 80 * 1024 * 1024;
+const RASTER_COUNT = 32;
+const rasterByNode = new WeakMap<ShapeItem['node'], RasterEntry>();
+const recentRasters = new Set<RasterEntry>();
+let rasterBytes = 0;
+
+function rasterEntry(node: ShapeItem['node'], key: RasterEntry['key']): RasterEntry {
+  const hit = rasterByNode.get(node);
+  if (hit && hit.key.length === key.length && key.every((v, i) => Object.is(v, hit.key[i]))) return hit;
+  if (hit?.raster) dropRaster(hit);
+  const entry = { key, seen: false };
+  rasterByNode.set(node, entry);
+  return entry;
+}
+
+function dropRaster(entry: RasterEntry): void {
+  rasterBytes -= entry.raster!.image.data.byteLength;
+  delete entry.raster;
+  recentRasters.delete(entry);
+}
+
+function rememberRaster(entry: RasterEntry, raster: ReliefRaster): void {
+  // A field whose view changes every frame never retains its preceding frame's pixels.
+  if (!entry.seen) {
+    entry.seen = true;
+    return;
+  }
+  const size = raster.image.data.byteLength;
+  if (size > RASTER_LIMIT) return;
+  while (rasterBytes + size > RASTER_LIMIT || recentRasters.size >= RASTER_COUNT) dropRaster(recentRasters.values().next().value!);
+  entry.raster = raster;
+  recentRasters.add(entry);
+  rasterBytes += size;
+}
+
+/** Composites the raster through the supplied context, including its current clip and blend state. */
+function paintRaster(raw: CanvasRenderingContext2D, m: DOMMatrix, x: number, y: number, w: number, h: number, raster: ReliefRaster): void {
+  const picture = new Canvas(raster.image.width, raster.image.height);
+  try {
+    picture.getContext('2d').putImageData(raster.image, 0, 0);
+    raw.save();
+    // The outline of a flat field keeps its edge smooth where it shows.
+    raw.setTransform(m);
+    raw.beginPath();
+    raw.rect(x, y, w, h);
+    if (raster.clip) raw.clip();
+    raw.setTransform(1, 0, 0, 1, 0, 0);
+    raw.drawCanvas(picture, raster.x, raster.y);
+    raw.restore();
+  } finally {
+    picture.dispose();
+  }
+}
 
 /**
  * The shading of a field: the normal of the ground at each point of the grid (central differences, in units of the
@@ -339,8 +408,22 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const height = raw.canvas.height;
 
   const { cols, rows, heights } = spec;
-  // A raised ground: where the camera stands over it and how high (in the field's own units), and the heights it spans.
   const raise = item.raise;
+  const [a, b, c, d, e, f, g, hh, i] = [m.m11, m.m12, m.m21, m.m22, m.m41, m.m42, m.m14, m.m24, m.m44];
+  const colors = item.node.colors;
+  const darkHex = tone(colors['relief.dark']!);
+  const brightHex = tone(colors['relief.bright']!);
+  const tintHexes = spec.tints?.map((_, k) => tone(colors[`relief.tint${k}`]!)) ?? [];
+  const key = [width, height, a, b, c, d, e, f, g, hh, i, xf.rot, ...(raise ?? []), darkHex, brightHex, ...tintHexes];
+  const entry = rasterEntry(item.node, key);
+  if (entry.raster) {
+    recentRasters.delete(entry);
+    recentRasters.add(entry);
+    paintRaster(raw, m, x0, y0, fw, fh, entry.raster);
+    return;
+  }
+
+  // A raised ground: where the camera stands over it and how high (in the field's own units), and the heights it spans.
   let zLo = 0;
   let zHi = 0;
   if (raise) {
@@ -401,7 +484,6 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   if (bw <= 0 || bh <= 0) return;
 
   // From a pixel back into the field: the inverse of the 3 x 3 of m.
-  const [a, b, c, d, e, f, g, hh, i] = [m.m11, m.m12, m.m21, m.m22, m.m41, m.m42, m.m14, m.m24, m.m44];
   const det = a * (d * i - f * hh) - c * (b * i - f * g) + e * (b * hh - d * g);
   if (!Number.isFinite(det) || Math.abs(det) < 1e-18) return;
   const ia = (d * i - f * hh) / det;
@@ -417,10 +499,9 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   // The light in the field's own space: it comes from where the scene says on the map, the field turned with it.
   const from = (spec.from * Math.PI) / 180 - xf.rot;
   const { shade } = shadingOf(spec, fw, fh, from, (spec.high * Math.PI) / 180);
-  const colors = item.node.colors;
-  const dark = rgbOf(tone(colors['relief.dark']!));
-  const bright = rgbOf(tone(colors['relief.bright']!));
-  const stops = spec.tints?.map((t, k) => ({ at: t[0], rgb: rgbOf(tone(colors[`relief.tint${k}`]!)) })) ?? null;
+  const dark = rgbOf(darkHex);
+  const bright = rgbOf(brightHex);
+  const stops = spec.tints?.map((t, k) => ({ at: t[0], rgb: rgbOf(tintHexes[k]!) })) ?? null;
   const amount = spec.amount;
   const sx = (cols - 1) / fw;
   const sy = (rows - 1) / fh;
@@ -519,19 +600,7 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
       }
     }
   }
-  const picture = new Canvas(bw, bh);
-  try {
-    picture.getContext('2d').putImageData(new ImageData(data, bw, bh), 0, 0);
-    raw.save();
-    // The outline of the field keeps its edge smooth where it shows.
-    raw.setTransform(m);
-    raw.beginPath();
-    raw.rect(x0, y0, fw, fh);
-    if (!behind && !ray) raw.clip();
-    raw.setTransform(1, 0, 0, 1, 0, 0);
-    raw.drawCanvas(picture, bx0, by0);
-    raw.restore();
-  } finally {
-    picture.dispose();
-  }
+  const made = { image: new ImageData(data, bw, bh), x: bx0, y: by0, clip: !behind && !ray };
+  paintRaster(raw, m, x0, y0, fw, fh, made);
+  rememberRaster(entry, made);
 }

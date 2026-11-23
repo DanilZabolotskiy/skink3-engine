@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { circle, compileShot, group, rect, region, relief, reliefHeight, stroke, travel, type LayerSpec, type ShapeItem, type StrokeItem, type Vec2, type Vec3 } from '../src/index.ts';
+import { backgroundTo, bakeShot, circle, compileShot, fadeTo, frameRaw, group, perspectiveTo, rect, region, relief, reliefHeight, stroke, travel, type LayerSpec, type ShapeItem, type StrokeItem, type Vec2, type Vec3 } from '../src/index.ts';
+import { curveWeights, gridHeight } from '../src/scene/ground.ts';
 import { at, differing, draw, items, make, refused, type Rgb } from './fixtures/bodies.ts';
 
 // The ground of a plane: a relief that a group in a plane names as its ground is drawn raised, and what the group
@@ -23,6 +24,36 @@ const floor = (children: LayerSpec['nodes'], grounded: boolean, extra: object = 
   group({ id: 'floor', plane: 'floor', children, ...(grounded ? { ground: 'hill' } : {}), ...extra });
 
 const dot = (id: string, p: Vec2): ReturnType<typeof circle> => circle({ id, at: p, r: 12, fill: 'accent.coral', lit: false });
+
+test('ground: the bicubic sampler preserves each height at and beyond the grid edges', () => {
+  const wx = new Float64Array(4);
+  const wy = new Float64Array(4);
+  for (const size of [2, 5]) {
+    const values = Array.from({ length: size * size }, (_, i) => i % 5 === 0 ? -0 : Math.sin(i) * 120);
+    const { relief: spec } = relief({ id: 'sample', w: 50, h: 50, heights: { cols: size, rows: size, values }, dark: 'deep.abyss', bright: 'light.snow' });
+    assert.ok(spec);
+    const locations = [-1, -0, 0, 0.2, 0.5, 0.9, 1, size - 1.1, size - 1, size + 1];
+    for (const gx of locations) for (const gy of locations) {
+      const x = Math.max(0, Math.min(size - 1, gx));
+      const y = Math.max(0, Math.min(size - 1, gy));
+      const c = Math.min(size - 2, Math.floor(x));
+      const r = Math.min(size - 2, Math.floor(y));
+      curveWeights(x - c, wx);
+      curveWeights(y - r, wy);
+      let expected = 0;
+      for (let j = 0; j < 4; j++) {
+        let row = 0;
+        for (let k = 0; k < 4; k++) {
+          const column = Math.max(0, Math.min(size - 1, c - 1 + k));
+          const line = Math.max(0, Math.min(size - 1, r - 1 + j));
+          row += wx[k]! * spec.heights[line * size + column]!;
+        }
+        expected += wy[j]! * row;
+      }
+      assert.equal(gridHeight(spec, gx, gy, wx, wy), expected, `${size}×${size} at ${gx}, ${gy}`);
+    }
+  }
+});
 
 test('ground: the height of a relief at a place, read along the curves it is drawn with', () => {
   const height = reliefHeight(hill({ vertical: 1.5 }));
@@ -93,6 +124,22 @@ test('ground: drawn raised, the same frame twice is the same, and a hill hides t
   let higher = 0;
   for (let y = -300; y < 0; y += 10) if (sum(at(raised, 0, y)) > sum(at(flat, 0, y)) + 20) higher++;
   assert.ok(higher > 3, `${higher} places where the lit top shows`);
+});
+
+test('relief: cached pixels keep the same colors and placement across opacity, view and target changes', async () => {
+  const spec = make([floor([hill({ feather: 110 })], true)], [
+    fadeTo('hill', { at: 0.2, to: 0.65, dur: 0.5 }),
+    perspectiveTo('stage', { at: 1, aim: [180, -80, 0], dur: 0.3 }),
+    backgroundTo({ at: 2, atmosphere: 'accent.coral', dur: 0.3 }),
+  ], { ...seen(35), tint: 0.5 });
+  const compiled = compileShot(spec);
+  const bake = await bakeShot(compiled);
+  const drawAt = (c: typeof compiled, frame: number, width: number) => frameRaw(c, bake, frame, { width, lang: 'en', gpu: false });
+  for (const [frame, width] of [[0, 240], [1, 240], [30, 240], [82, 240], [83, 240], [145, 240], [146, 240], [146, 320], [0, 240]] as const) {
+    const actual = await drawAt(compiled, frame, width);
+    const cold = await drawAt(compileShot(spec), frame, width);
+    assert.ok(actual.equals(cold), `frame ${frame} at width ${width}`);
+  }
 });
 
 test('ground: a finer relief over a coarser one: things stand on the finer where it lies', async () => {

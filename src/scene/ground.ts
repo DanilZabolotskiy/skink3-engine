@@ -57,11 +57,20 @@ export function gridHeight(spec: ReliefSpec, gx: number, gy: number, wx: Float64
   const r0 = Math.min(rows - 2, Math.floor(y));
   curveWeights(x - c0, wx);
   curveWeights(y - r0, wy);
+  const left = Math.max(0, c0 - 1);
+  const right = Math.min(cols - 1, c0 + 2);
+  const w0 = wx[0]!;
+  const w1 = wx[1]!;
+  const w2 = wx[2]!;
+  const w3 = wx[3]!;
   let z = 0;
   for (let j = 0; j < 4; j++) {
     const r = Math.max(0, Math.min(rows - 1, r0 - 1 + j)) * cols;
     let rz = 0;
-    for (let k = 0; k < 4; k++) rz += wx[k]! * heights[r + Math.max(0, Math.min(cols - 1, c0 - 1 + k))]!;
+    rz += w0 * heights[r + left]!;
+    rz += w1 * heights[r + c0]!;
+    rz += w2 * heights[r + c0 + 1]!;
+    rz += w3 * heights[r + right]!;
     z += wy[j]! * rz;
   }
   return z;
@@ -75,16 +84,31 @@ export function fadeAt(x: number, y: number, x0: number, y0: number, x1: number,
   return d * d * (3 - 2 * d);
 }
 
+const spans = new WeakMap<ReliefSpec, readonly [number, number]>();
+
 /** The lowest and the highest height of a grid. */
-function span(spec: ReliefSpec): [number, number] {
+function span(spec: ReliefSpec): readonly [number, number] {
+  const saved = spans.get(spec);
+  if (saved) return saved;
   let lo = Infinity;
   let hi = -Infinity;
   for (const v of spec.heights) {
     if (v < lo) lo = v;
     if (v > hi) hi = v;
   }
-  return [lo, hi];
+  const bounds = [lo, hi] as const;
+  spans.set(spec, bounds);
+  return bounds;
 }
+
+interface GroundPlacement {
+  readonly points: readonly Vec2[];
+  readonly xf: Xf;
+  readonly under: GroundField | undefined;
+  readonly field: GroundField;
+}
+
+const placements = new WeakMap<ReliefSpec, GroundPlacement>();
 
 /**
  * The ground a relief makes of its plane, where the relief lies at `xf` (its place, turn and size in the plane). Over
@@ -92,6 +116,10 @@ function span(spec: ReliefSpec): [number, number] {
  * over its feather.
  */
 export function groundField(index: number, spec: ReliefSpec, points: readonly Vec2[], xf: Xf, under?: GroundField): GroundField {
+  const saved = placements.get(spec);
+  if (saved?.field.index === index && saved.points === points && saved.under === under &&
+      Object.is(saved.xf.x, xf.x) && Object.is(saved.xf.y, xf.y) &&
+      Object.is(saved.xf.rot, xf.rot) && Object.is(saved.xf.scale, xf.scale)) return saved.field;
   const [x0, y0, x1, y1] = reliefRect(points);
   const sx = (spec.cols - 1) / (x1 - x0);
   const sy = (spec.rows - 1) / (y1 - y0);
@@ -102,7 +130,7 @@ export function groundField(index: number, spec: ReliefSpec, points: readonly Ve
   const wy = new Float64Array(4);
   const [lo, hi] = span(spec);
   const feather = spec.feather ?? 0;
-  return {
+  const field: GroundField = {
     index,
     at(x: number, y: number): number {
       // From the plane into the relief's own units, then into points of its grid.
@@ -119,6 +147,8 @@ export function groundField(index: number, spec: ReliefSpec, points: readonly Ve
     high: Math.max(lo * k, hi * k, under?.high ?? -Infinity),
     cell: Math.min(Math.min(1 / sx, 1 / sy) * xf.scale, under?.cell ?? Infinity),
   };
+  placements.set(spec, { points, xf, under, field });
+  return field;
 }
 
 /**

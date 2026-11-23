@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bakeShot, compileShot, evaluate, group, rect, relief, reviewMotion, riseTo, stroke, type Key, type LayerSpec, type ShotSpec, type Vec2, type Vec3 } from '../src/index.ts';
+import { bakeShot, circle, compileShot, evaluate, fadeTo, flatItems, group, moveTo, perspectiveTo, rect, relief, reviewMotion, riseTo, stroke, type Key, type LayerSpec, type ShotSpec, type Vec2, type Vec3 } from '../src/index.ts';
 import { computeWorld, newPlaces, posesFromBake, shadowDrop, type CastItem, type Item, type Places, type StrokeItem } from '../src/scene/evaluate.ts';
 import type { GroundField } from '../src/scene/ground.ts';
 import { SHADOW_REACH } from '../src/scene/types.ts';
@@ -198,6 +198,29 @@ test('cast.ground: it is opt-in: a cast without it is the data it was, and on le
   const [x0, x1] = [Math.min(...level.map((p) => p[0])), Math.max(...level.map((p) => p[0]))];
   const [y0, y1] = [Math.min(...level.map((p) => p[1])), Math.max(...level.map((p) => p[1]))];
   assert.ok(laid.every((p) => p[0] > x0 - 1e-6 && p[0] < x1 + 1e-6 && p[1] > y0 - 1e-6 && p[1] < y1 + 1e-6), 'and nothing of it lies outside');
+});
+
+test('cast.ground: a fixed outline follows opacity and is recomputed as the eye or body moves', async () => {
+  const tree = circle({ id: 'tree', at: [170, -100], r: 40, fill: 'mid.jade', rise: 20, roof: { kind: 'dome', height: 33 } });
+  const spec = scene(hill(), { ...plain, ground: true }, [tree], [
+    fadeTo('tree', { at: 0.2, to: 0.4, dur: 0.4 }),
+    perspectiveTo('stage', { at: 1, aim: [120, 0, 0], dur: 0.4 }),
+    moveTo('tree', { at: 2, to: [-160, 100], dur: 0.4 }),
+  ]);
+  const compiled = compileShot(spec);
+  const bake = await bakeShot(compiled);
+  const atFrame = (c: typeof compiled, frame: number) => {
+    const item = flatItems(evaluate(c, bake, frame, 'en').layers[0]!.items).find((i) => i.kind === 'cast');
+    assert.ok(item?.kind === 'cast');
+    return item.shadows[0]!;
+  };
+  const frames = [0, 1, 2, 36, 86, 87, 88, 145, 146, 36, 37];
+  const warmed = frames.map((frame) => atFrame(compiled, frame));
+  assert.deepEqual(warmed, frames.map((frame) => atFrame(compileShot(spec), frame)));
+  assert.deepEqual(warmed[2]!.outlines, warmed[3]!.outlines);
+  assert.notEqual(warmed[2]!.alpha, warmed[3]!.alpha);
+  assert.notDeepEqual(warmed[3]!.outlines, warmed[6]!.outlines);
+  assert.notDeepEqual(warmed[6]!.outlines, warmed[8]!.outlines);
 });
 
 test('cast.ground: the motion review judges the end of the shadow as the ground makes it, down a slope farther than on level ground', async () => {
