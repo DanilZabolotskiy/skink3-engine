@@ -1,8 +1,9 @@
 // Parallel rendering: the frame range is split into contiguous chunks, each
 // rendered by its own process into its own encoder, and the chunks are joined.
-// Frames are pure, so the split changes nothing about the pixels. A worker on
-// the GPU takes a render slot of the machine before it draws (queue.ts), and a
-// render keeps no more workers alive than there are slots.
+// Frames are pure, so the split changes nothing about the pixels. A worker takes
+// a CPU place of the machine before it loads its scene, and a GPU place for each
+// frame it draws on the GPU (queue.ts); a render keeps no more workers alive than
+// there are CPU places.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -12,8 +13,10 @@ import { fileURLToPath } from 'node:url';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { concatChunks, openEncoder, type Encoder } from './encode.ts';
-import { drawFrame, heightFor, readRaw, type DrawnFrame } from './frame.ts';
-import { queueConfig, renderPriority, waitForGpu, type Priority, type Waiting } from './queue.ts';
+import { evaluate } from '../scene/evaluate.ts';
+import { drawState, heightFor, readRaw, readsBackWhileDrawn, type DrawnFrame } from './frame.ts';
+import { masterGpuGrant } from './master-gpu.ts';
+import { queueConfig, takeGpuPlace, type Waiting } from './queue.ts';
 
 export interface RenderJob {
   /** Absolute path of the scene module. */
@@ -34,18 +37,18 @@ export interface RenderJob {
   readonly hashes: boolean;
   /** Called now and then with the number of frames finished so far. */
   readonly onProgress?: (done: number, total: number, seconds: number) => void;
-  /** The most frames of a chunk, after which a worker gives its render slot back; 0: one chunk per worker. Default: `chunkFrames(width)`. */
+  /** The most frames of a chunk, after which a worker gives its CPU place back; 0: one chunk per worker. Default: `chunkFrames(width)`. */
   readonly chunk?: number;
-  /** The priority of the workers in the render queue. Default: `renderPriority(width)`, low above the width of a preview. */
-  readonly priority?: Priority;
-  /** Called once, when a worker has to wait for a render slot. */
+  /** Old callers may pass a priority. Heavy workers now enter the same FIFO. */
+  readonly priority?: 'high' | 'low';
+  /** Called once, when a worker has to wait for a CPU place or for memory. */
   readonly onWait?: (waiting: Waiting) => void;
 }
 
 /** The pixels of the longest chunk: 900 frames at 1920 x 1080, 225 at 3840 x 2160. */
 export const CHUNK_PIXELS = 900 * 1920 * 1080;
 
-/** The most frames of a chunk at a width: as many pixels at any width, so that a slot is held about as long. */
+/** The most frames of a chunk at a width: as many pixels at any width, so that a CPU place is held about as long. */
 export function chunkFrames(width: number): number {
   return Math.max(1, Math.round(CHUNK_PIXELS / (width * heightFor(width))));
 }
@@ -53,7 +56,7 @@ export function chunkFrames(width: number): number {
 export interface RenderPlan {
   /** The workers asked for, at most one a frame. */
   readonly workers: number;
-  /** The workers alive at once: as many as asked for, or as many as the render queue has slots, if fewer. */
+  /** The workers alive at once: as many as asked for, or as many as the machine has CPU places, if fewer. */
   readonly atOnce: number;
   /** Contiguous ranges of frames (from, one past the last), in order; each is drawn by a process of its own. */
   readonly chunks: readonly { readonly from: number; readonly to: number }[];
@@ -61,9 +64,9 @@ export interface RenderPlan {
 
 /**
  * How a render is split. With a chunk length, into a multiple of the workers that draw at once, each chunk of at most
- * that many frames, so that a render alone keeps every slot busy to its end and none is held for long; with 0, into
- * one chunk per worker. The split changes no frame: a frame is the same in any chunk and alone. It decides only which
- * process draws which frames, and where the encoded file has its key frames (each chunk starts with one).
+ * that many frames, so that a render alone keeps every worker busy to its end and no CPU place is held for long; with
+ * 0, into one chunk per worker. The split changes no frame: a frame is the same in any chunk and alone. It decides only
+ * which process draws which frames, and where the encoded file has its key frames (each chunk starts with one).
  */
 export function renderPlan(from: number, to: number, workers: number, opts: { readonly slots: number; readonly chunk: number }): RenderPlan {
   const total = to - from;
@@ -75,9 +78,13 @@ export function renderPlan(from: number, to: number, workers: number, opts: { re
   return { workers: asked, atOnce, chunks };
 }
 
-/** The plan of a job as `renderParallel` makes it: the render queue counts only on the GPU. */
+/** The old chunk boundaries are part of the GPU output. Adjust concurrency independently of those boundaries. */
 export function planOf(job: Pick<RenderJob, 'from' | 'to' | 'workers' | 'width' | 'gpu' | 'chunk'>): RenderPlan {
-  return renderPlan(job.from, job.to, job.workers, { slots: job.gpu ? queueConfig().slots : 0, chunk: job.chunk ?? chunkFrames(job.width) });
+  const config = queueConfig();
+  const plan = renderPlan(job.from, job.to, job.workers, { slots: job.gpu ? config.legacyGpu : 0, chunk: job.chunk ?? chunkFrames(job.width) });
+  const reservation = job.gpu ? masterGpuGrant()?.workers ?? 0 : 0;
+  const atOnce = Math.min(plan.workers, plan.chunks.length, config.cpu || Infinity, reservation || Infinity);
+  return { ...plan, atOnce };
 }
 
 export interface RenderResult {
@@ -93,7 +100,7 @@ const CLI_ENTRY = fileURLToPath(new URL('../../bin/skink3.mjs', import.meta.url)
 /** A worker tells its parent how far it is after this many frames. */
 const REPORT_EVERY = 5;
 
-/** A frame whose pixels are being read back, and the canvases it was drawn on. */
+/** A frame whose pixels are being read back and the canvases it was drawn on. */
 interface Reading {
   readonly frame: number;
   readonly drawn: DrawnFrame;
@@ -111,6 +118,8 @@ export async function renderChunk(
     lang: string;
     width: number;
     gpu: boolean;
+    /** The worker has already joined a GPU reservation that covers every frame in its chunk. */
+    gpuReserved?: boolean;
     encoder: Encoder;
     hashesFile: string | null;
     /** Called with the number of frames written since the previous call. */
@@ -119,23 +128,26 @@ export async function renderChunk(
     failAtFrame?: number;
   },
 ): Promise<void> {
-  // A render slot of the machine first, if the process holds one for its frames on the GPU (the command line does).
-  if (opts.gpu) await waitForGpu();
   const height = heightFor(opts.width);
   const sink = openEncoder(opts.out, opts.width, height, opts.encoder);
   const lines: string[] = [];
   let unreported = 0;
   const ropts = { width: opts.width, lang: opts.lang, gpu: opts.gpu };
+  const needsPlace = opts.gpu && opts.gpuReserved !== true;
   // The frame whose pixels are being read back, and the frame recorded meanwhile.
   let reading: Reading | null = null;
+  let before: Reading | null = null;
   let recorded: DrawnFrame | null = null;
-  /** Starts reading back a recorded frame. Its failure is reported when it is awaited, in turn. */
-  const start = (frame: number, drawn: DrawnFrame): Reading => {
-    const raw = readRaw(drawn, opts.gpu);
+  // The GPU place of the recorded frame, until its read-back holds it.
+  let unattached: (() => void) | null = null;
+  /** Return an ordinary GPU place when readback settles. The canvas lifetime is unchanged. */
+  const start = (frame: number, drawn: DrawnFrame, giveBack: (() => void) | null): Reading => {
+    const reading = readRaw(drawn, opts.gpu);
+    const raw = giveBack ? reading.finally(giveBack) : reading;
     raw.catch(() => undefined);
     return { frame, drawn, raw };
   };
-  /** The pixels of a frame being read back; its canvases are freed as soon as they are in. */
+  /** The pixels of a frame being read back; its canvases are freed as soon as they are in, and then its GPU place. */
   const finish = async (r: Reading): Promise<Buffer> => {
     try {
       return await r.raw;
@@ -157,15 +169,27 @@ export async function renderChunk(
     // before are freed, and the one before is then hashed and handed to the encoder. On the GPU a frame read back while
     // the canvases of another frame are alive can have other pixels, so that a frame would depend on its place in the
     // chunk; a frame that is only recorded holds nothing there and changes nothing of the frame being read back.
+    // Ordinary draws take a lease at readback (or when a haze first needs the GPU). A master worker
+    // takes no frame leases: it has already joined the assembly's reservation.
     for (let f = opts.from; f < opts.to; f++) {
       if (f === opts.failAtFrame) throw new Error(`injected failure at frame ${f}`);
-      recorded = drawFrame(c, bake, f, ropts);
-      const before = reading;
+      const state = evaluate(c, bake, f, ropts.lang);
+      const hazy = needsPlace && readsBackWhileDrawn(state);
+      before = reading;
       reading = null;
-      const raw = before ? await finish(before) : null;
-      reading = start(f, recorded);
+      let done: { frame: number; raw: Buffer } | null = null;
+      if (hazy) unattached = await takeGpuPlace();
+      recorded = drawState(c, state, ropts);
+      if (before) {
+        const r: Reading = before;
+        before = null;
+        done = { frame: r.frame, raw: await finish(r) };
+      }
+      if (needsPlace) unattached ??= await takeGpuPlace();
+      reading = start(f, recorded, unattached);
       recorded = null;
-      if (before && raw) await put(before.frame, raw);
+      unattached = null;
+      if (done) await put(done.frame, done.raw);
     }
     if (reading) {
       const last: Reading = reading;
@@ -176,9 +200,9 @@ export async function renderChunk(
   } catch (error) {
     // Do not leave an encoder behind that waits for frames that will never come.
     sink.abort();
-    const left = reading as Reading | null;
-    if (left) await finish(left).catch(() => undefined);
+    for (const left of [before as Reading | null, reading as Reading | null]) if (left) await finish(left).catch(() => undefined);
     (recorded as DrawnFrame | null)?.dispose();
+    (unattached as (() => void) | null)?.();
     throw error;
   }
   if (unreported > 0) opts.onFrames?.(unreported);
@@ -187,16 +211,17 @@ export async function renderChunk(
 
 /**
  * Splits a job into chunks (`renderPlan`), draws them in worker processes, as
- * many at once as the plan allows, and joins them. On the GPU each worker waits
- * for a render slot of the machine before it draws. If one worker fails, the
- * others are stopped at once, no chunk is started any more, the partial files
- * are removed, and the error names the frame range of the worker that failed.
+ * many at once as the plan allows, and joins them. Each worker waits for a CPU
+ * place of the machine before it loads the scene, and for a GPU place for each
+ * frame it draws on the GPU; the workers of one render count as one render in
+ * the queue. If one worker fails, the others are stopped at once, no chunk is
+ * started any more, the partial files are removed, and the error names the frame
+ * range of the worker that failed.
  */
 export async function renderParallel(job: RenderJob): Promise<RenderResult> {
   const total = job.to - job.from;
   if (total <= 0) throw new Error('nothing to render: the frame range is empty');
   const plan = planOf(job);
-  const priority = job.priority ?? renderPriority(job.width);
   const dir = dirname(job.out);
   mkdirSync(dir, { recursive: true });
   const stem = basename(job.out).replace(/\.[^.]+$/, '');
@@ -247,7 +272,6 @@ export async function renderParallel(job: RenderJob): Promise<RenderResult> {
         '--bake', job.bakeFile,
         '--from', String(chunk.from), '--to', String(chunk.to),
         '--out', chunk.file, '--lang', job.lang, '--width', String(job.width), '--encoder', job.encoder,
-        '--priority', priority,
       ];
       if (!job.gpu) args.push('--cpu');
       if (chunk.hashes) args.push('--hashes-file', chunk.hashes);

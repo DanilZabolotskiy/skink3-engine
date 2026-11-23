@@ -152,8 +152,8 @@ trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space s
 graph   --node id | --camera [--from f] [--to f] | [--time s,s]
 events  as JSON
 sfx     a WAV --bank bank.json [--sheet [--cols 4] [--tile 480]]
-queue   render slots
-common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir --priority high|low
+queue   pool status
+common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
 Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame, overlaps. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
