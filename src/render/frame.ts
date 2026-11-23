@@ -4,13 +4,13 @@
 //
 // No texture, no grain: flat fills and gradients only.
 
-import { Canvas, type CanvasRenderingContext2D } from 'skia-canvas';
+import { Canvas, type CanvasRenderingContext2D, type DOMMatrix } from 'skia-canvas';
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemFill, itemShape, type ClipItem, type FrameState, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -138,6 +138,70 @@ function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingCont
   return { canvas, ctx };
 }
 
+type DrawingMatrix = Pick<DOMMatrix, 'm11' | 'm12' | 'm14' | 'm21' | 'm22' | 'm24' | 'm41' | 'm42' | 'm44'>;
+
+/**
+ * Is the entire picture of an isolated, faded line outside its own padded canvas? Two open path points and their
+ * spline controls lie along the same segment. Its round stroke lies in the axis-aligned box of the segment,
+ * expanded by half its width. When the whole box is in front of the eye, the four corners bound the projection.
+ * This check deliberately keeps other paths, and ones near the edge of the canvas or the eye.
+ */
+export function fadedStrokeOutside(item: GroupItem, m: DrawingMatrix, width: number, height: number): boolean {
+  if (item.soft !== undefined || item.items.length !== 1) return false;
+  const leaf = item.items[0]!;
+  if (leaf.kind !== 'stroke' || leaf.node !== item.node || leaf.foot || leaf.part || leaf.pulses || leaf.runs) return false;
+  const node = leaf.node.node as StrokeNode;
+  if (node.dash || node.glow > 0) return false;
+  const path = itemPath(leaf);
+  if (path.closed || path.heights || path.points.length !== 2) return false;
+  const xf = leaf.xf;
+  if (xf.rot !== 0 || !(xf.scale > 0)) return false;
+
+  const a = path.points[0]!;
+  const b = path.points[1]!;
+  const stroke = itemWidth(leaf);
+  // The path and matrix are narrowed to floats in Skia. Include roundoff in the local stroke bounds and in the
+  // projection below. Keep extra pixels for antialiasing and decline boxes that approach the projection's singularity.
+  const roundoff = 2 ** -16;
+  const radius = stroke / 2 + roundoff * (1 + stroke + Math.max(Math.abs(a[0]), Math.abs(a[1]), Math.abs(b[0]), Math.abs(b[1])));
+  const loX = Math.min(a[0], b[0]) - radius;
+  const hiX = Math.max(a[0], b[0]) + radius;
+  const loY = Math.min(a[1], b[1]) - radius;
+  const hiY = Math.max(a[1], b[1]) + radius;
+  const { m11, m12, m14, m21, m22, m24, m41, m42, m44 } = m;
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (let i = 0; i < 4; i++) {
+    const x = (i < 2 ? loX : hiX) * xf.scale;
+    const y = (i % 2 === 0 ? loY : hiY) * xf.scale;
+    const u = xf.x + x;
+    const v = xf.y + y;
+    // Bound the magnitude of terms before cancellation, including the stroke's own translation and scale.
+    const absU = Math.abs(xf.x) + Math.abs(x);
+    const absV = Math.abs(xf.y) + Math.abs(y);
+    const w = m14 * u + m24 * v + m44;
+    const errW = roundoff * (1 + Math.abs(m14) * absU + Math.abs(m24) * absV + Math.abs(m44));
+    const safeW = w - errW;
+    if (!(safeW >= 0.125)) return false;
+    const px = (m11 * u + m21 * v + m41) / w;
+    const py = (m12 * u + m22 * v + m42) / w;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+    const errX = roundoff * (1 + Math.abs(m11) * absU + Math.abs(m21) * absV + Math.abs(m41));
+    const errY = roundoff * (1 + Math.abs(m12) * absU + Math.abs(m22) * absV + Math.abs(m42));
+    const padX = (errX + Math.abs(px) * errW) / safeW;
+    const padY = (errY + Math.abs(py) * errW) / safeW;
+    left = Math.min(left, px - padX);
+    top = Math.min(top, py - padY);
+    right = Math.max(right, px + padX);
+    bottom = Math.max(bottom, py + padY);
+  }
+  const margin = 8;
+  return right < -margin || bottom < -margin || left > width + margin || top > height + margin;
+}
+
 /**
  * Draws items in order. A group is drawn into a canvas of its own and that
  * picture is composited at the group's opacity, so a faded node fades as a
@@ -161,6 +225,9 @@ function drawItems(
       case 'text': drawText(ctx, item, paint); break;
       case 'cast': drawCast(ctx, item, paint); break;
       case 'group': {
+        // A faded line outside the actual layer canvas has no pixels to composite, even in its blur padding.
+        const plane = planeCanvasOf(ctx);
+        if (plane && fadedStrokeOutside(item, plane.transform(), target.width + 2 * target.pad, target.height + 2 * target.pad)) break;
         // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
         const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) } : target;
