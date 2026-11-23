@@ -26,15 +26,18 @@ test('a faded straight stroke is only left out when its entire round stroke lies
   const state = evaluate(compiled, await bakeShot(compiled), 0, 'en');
   const groups = new Map(state.layers[0]!.items.filter((item): item is GroupItem => item.kind === 'group').map((item) => [item.node.id, item]));
   const left = groups.get('left')!;
-  const off = (id: string): boolean => fadedStrokeOutside(groups.get(id)!, identity, 100, 100);
+  const matrix = () => identity;
+  const off = (id: string): boolean => fadedStrokeOutside(groups.get(id)!, matrix, 100, 100);
   for (const id of ['left', 'right', 'below', 'above']) assert.ok(off(id), id);
   for (const id of ['across', 'edge', 'wide', 'dashed', 'glowing', 'rotated', 'curved']) assert.ok(!off(id), id);
-  assert.ok(!fadedStrokeOutside({ ...left, soft: 10 }, identity, 100, 100));
-  assert.ok(!fadedStrokeOutside(groups.get('right')!, identity, 140, 100), 'the right stroke lies in the padding');
-  assert.ok(!fadedStrokeOutside(left, { ...identity, m41: 90 }, 100, 100), 'the active transform moves the left stroke on screen');
-  assert.ok(fadedStrokeOutside(left, { ...identity, m14: -0.01 }, 100, 100), 'a safe perspective still leaves it outside');
-  assert.ok(!fadedStrokeOutside(left, { ...identity, m14: 0.013 }, 100, 100), 'the stroke crosses the eye plane');
-  assert.ok(!fadedStrokeOutside(left, { ...identity, m44: 0.125 }, 100, 100), 'roundoff could reach the near-eye guard');
+  const unused = () => assert.fail('an ineligible stroke should not read the canvas transform');
+  assert.ok(!fadedStrokeOutside({ ...left, soft: 10 }, unused, 100, 100));
+  assert.ok(!fadedStrokeOutside(groups.get('dashed')!, unused, 100, 100));
+  assert.ok(!fadedStrokeOutside(groups.get('right')!, matrix, 140, 100), 'the right stroke lies in the padding');
+  assert.ok(!fadedStrokeOutside(left, () => ({ ...identity, m41: 90 }), 100, 100), 'the active transform moves the left stroke on screen');
+  assert.ok(fadedStrokeOutside(left, () => ({ ...identity, m14: -0.01 }), 100, 100), 'a safe perspective still leaves it outside');
+  assert.ok(!fadedStrokeOutside(left, () => ({ ...identity, m14: 0.013 }), 100, 100), 'the stroke crosses the eye plane');
+  assert.ok(!fadedStrokeOutside(left, () => ({ ...identity, m44: 0.125 }), 100, 100), 'roundoff could reach the near-eye guard');
 });
 
 test('an offscreen faded stroke is invisible while a stroke in the blur padding still paints the frame', async () => {

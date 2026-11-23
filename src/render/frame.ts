@@ -146,7 +146,7 @@ type DrawingMatrix = Pick<DOMMatrix, 'm11' | 'm12' | 'm14' | 'm21' | 'm22' | 'm2
  * expanded by half its width. When the whole box is in front of the eye, the four corners bound the projection.
  * This check deliberately keeps other paths, and ones near the edge of the canvas or the eye.
  */
-export function fadedStrokeOutside(item: GroupItem, m: DrawingMatrix, width: number, height: number): boolean {
+export function fadedStrokeOutside(item: GroupItem, transform: () => DrawingMatrix, width: number, height: number): boolean {
   if (item.soft !== undefined || item.items.length !== 1) return false;
   const leaf = item.items[0]!;
   if (leaf.kind !== 'stroke' || leaf.node !== item.node || leaf.foot || leaf.part || leaf.pulses || leaf.runs) return false;
@@ -168,7 +168,7 @@ export function fadedStrokeOutside(item: GroupItem, m: DrawingMatrix, width: num
   const hiX = Math.max(a[0], b[0]) + radius;
   const loY = Math.min(a[1], b[1]) - radius;
   const hiY = Math.max(a[1], b[1]) + radius;
-  const { m11, m12, m14, m21, m22, m24, m41, m42, m44 } = m;
+  const { m11, m12, m14, m21, m22, m24, m41, m42, m44 } = transform();
 
   let left = Infinity;
   let top = Infinity;
@@ -227,7 +227,7 @@ function drawItems(
       case 'group': {
         // A faded line outside the actual layer canvas has no pixels to composite, even in its blur padding.
         const plane = planeCanvasOf(ctx);
-        if (plane && fadedStrokeOutside(item, plane.transform(), target.width + 2 * target.pad, target.height + 2 * target.pad)) break;
+        if (plane && fadedStrokeOutside(item, plane.transform, target.width + 2 * target.pad, target.height + 2 * target.pad)) break;
         // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
         const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) } : target;
