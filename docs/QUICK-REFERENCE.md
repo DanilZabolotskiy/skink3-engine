@@ -156,7 +156,7 @@ queue   pool status
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
-Commands bake as needed. `check` fails on a broken palette rule, a missing string or glyph, text that overflows, leaves the frame, overlaps. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
+`--group` shares render admission. Commands bake as needed. `check` detects palette, string, glyph and text layout issues. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
 
 ## Reading the reviews
 

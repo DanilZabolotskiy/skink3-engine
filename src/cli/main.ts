@@ -18,10 +18,11 @@ import { ensureBake } from '../physics/bake.ts';
 import { bakeHash, readBake } from '../physics/cache.ts';
 import { ffmpegAvailable, type Encoder } from '../render/encode.ts';
 import { frameRaw, heightFor, rendererInfo } from '../render/frame.ts';
-import { joinMasterGpuJob, masterGpuGrant } from '../render/master-gpu.ts';
+import { renderGroup } from '../render/group.ts';
+import { GIB, renderMemory } from '../render/memory.ts';
 import { chunkFrames, planOf, renderChunk, renderParallel } from '../render/parallel.ts';
-import { acquireCpuPlace, MAX_LIGHT_FRAMES, queueConfig, queueState, useGpuPlaces, waitingLine, type CpuPlace, type QueueEntry, type Waiting } from '../render/queue.ts';
-import { rawToPng, renderSheet, type SheetTile } from '../render/sheet.ts';
+import { acquireRenderLease, GpuMemoryUnavailableError, GROUP_WORKERS, MAX_LIGHT_FRAMES, queueConfig, queueState, waitingLine, type RenderLease, type QueueEntry, type Waiting } from '../render/queue.ts';
+import { rawToPng, renderSheet, sheetGeometry, type SheetTile } from '../render/sheet.ts';
 import { P } from '../review/physics-thresholds.ts';
 import { formatPhysicsReport, physicsReportJson } from '../review/physics-report.ts';
 import { reviewPhysics } from '../review/physics.ts';
@@ -48,12 +49,13 @@ Commands
   graph   a speed graph of a node, an emitter or the camera
   events  what happens in the shot, as events: every intent, every contact, every burst
   sfx     the sound track of the shot, from its events and a bank of sounds
-  queue   the render queue of this machine: who holds its CPU and GPU places, who waits (takes no scene module)
+  queue   the render queue of this machine: memory, active workers and waiters (takes no scene module)
 
 Common options
   --lang <tag>        language of the string tables (default: the first table)
   --width <px>        output width, 16:9 (default 1920)
   --cpu               draw on the CPU instead of the GPU
+  --group <name>      share the drawing-worker limit with other commands for this production
   --out <file>        output file (default under ./out/<shot>/)
   --cache <dir>       bake cache directory (default ./cache)
 
@@ -84,15 +86,9 @@ the way of a move, and the sound, the kind of event and the time written on
 it. A shower, the run of a sound that the bank sets apart, is one tile, with
 its count and its length.
 
-Every checkout shares the same render queue (SKINK3_SLOT_DIR). Heavy render
-chunks and drawing commands requesting more than 60 frames share 10 CPU
-places (SKINK3_CPU_PLACES). Short drawing commands share 6 separate places
-(SKINK3_LIGHT_PLACES). Both wait before loading a scene if free RAM is below
-SKINK3_FREE_RAM_GB (default 8 GiB). Render workers enter in arrival order and
-can each take new places up to half of the pool while another job waits.
-The GPU has 6 shared places (SKINK3_GPU_PLACES). Ordinary work takes a GPU
-place for drawing and readback. Assemblers can reserve up to 4 for one
-GPU-busy master (SKINK3_MASTER_GPU_PLACES) across all of its shots.
+Every checkout shares the same render queue (SKINK3_SLOT_DIR). Each group
+can draw with up to four workers across all commands. Admission reserves RAM
+and VRAM before work begins, with configurable free-memory floors.
 The default --chunk at 1920 wide is 900 frames and scales with pixel count.`;
 
 interface Common {
@@ -149,19 +145,15 @@ function write(file: string, data: Uint8Array | string): void {
   writeFileSync(file, data);
 }
 
-/** The CPU place of this process and its GPU places, if it takes them; given back when `main` returns. */
-let held: { readonly cpu: CpuPlace | null; readonly gpu: { release(): void } | null } | null = null;
-
 export async function main(argv: readonly string[]): Promise<number> {
+  let release = (): void => {};
   const orphaned = (): void => process.exit(1);
   if (argv[0] === '_chunk' && typeof process.send === 'function') process.once('disconnect', orphaned);
   try {
-    return await run(argv);
+    return await run(argv, (lease) => { release = () => lease?.release(); });
   } finally {
     process.off('disconnect', orphaned);
-    held?.gpu?.release();
-    held?.cpu?.release();
-    held = null;
+    release();
   }
 }
 
@@ -172,7 +164,7 @@ function sceneName(path: string): string {
   return /^(scene|index|shot)\.[cm]?[jt]s$/.test(name) ? `${basename(dirname(file))}/${name}` : name;
 }
 
-async function run(argv: readonly string[]): Promise<number> {
+async function run(argv: readonly string[], keep: (lease: RenderLease | null) => void): Promise<number> {
   const command = argv[0];
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     console.log(HELP);
@@ -185,6 +177,7 @@ async function run(argv: readonly string[]): Promise<number> {
       lang: { type: 'string' },
       width: { type: 'string' },
       cpu: { type: 'boolean', default: false },
+      group: { type: 'string' },
       out: { type: 'string' },
       cache: { type: 'string' },
       frame: { type: 'string' },
@@ -237,7 +230,6 @@ async function run(argv: readonly string[]): Promise<number> {
   if (!scene) fail(`${command}: give the path of a scene module\n\n${HELP}`);
   // Estimate the requested scene frames without loading the scene or its bake.
   const worker = command === '_chunk' && typeof process.send === 'function';
-  const grant = command === '_chunk' && !flag('cpu') ? masterGpuGrant() : null;
   const stillFrames = (): number[] => str('frame')
     ? intList('frame', str('frame')!)
     : str('time')
@@ -255,6 +247,7 @@ async function run(argv: readonly string[]): Promise<number> {
         return frames * (str('lang')?.split(',').length ?? 1);
       }
       case 'trail': return 1; // Ghosts are vector overlays on a single background frame.
+      case 'graph': return 1;
       case 'motion': return flag('pictures') ? int('top', str('top'), T.pictureSubjects, 1, 50) : 0;
       case 'physics': return flag('pictures') ? 5 * int('top', str('top'), P.pictureSubjects, 1, 50) : 0;
       case 'sfx': return flag('sheet') ? MAX_LIGHT_FRAMES : 0;
@@ -262,20 +255,55 @@ async function run(argv: readonly string[]): Promise<number> {
     }
   };
   const budget = framesRequested();
-  const config = budget > 0 ? queueConfig() : null;
-  let what = '';
-  if (config) {
-    const width = int('width', str('width'), 1920, 64, 7680);
-    const frames = command === '_chunk' && str('from') !== undefined && str('to') !== undefined ? ` frames ${str('from')}..${Number(str('to')) - 1}` : '';
-    what = `${command} ${sceneName(scene)} ${width}x${heightFor(width)}${flag('cpu') ? ' cpu' : ''}${frames}`;
-    const cpu = await acquireCpuPlace(config, {
-      lane: budget <= MAX_LIGHT_FRAMES ? 'light' : 'heavy',
-      what,
-      ...(grant ? { job: `master ${grant.supervisor}` } : worker ? { job: `render ${process.ppid}` } : {}),
-      onWait: worker ? (w: Waiting) => process.send?.({ waiting: { ...w, slots: w.places } }) : (w: Waiting) => console.log(waitingLine(w)),
+  const draws = budget > 0;
+  const group = renderGroup(scene, str('group') ?? process.env['SKINK3_RENDER_GROUP']);
+  const width = int('width', str('width'), 1920, 64, 7680);
+  const gpu = !flag('cpu');
+  const encodes = command === '_chunk' || command === 'render';
+  const encoder = (str('encoder') ?? 'x264') as Encoder;
+  if (encodes && encoder !== 'x264' && encoder !== 'nvenc') fail('--encoder must be x264 or nvenc');
+  let drawWidth = draws ? width : 0;
+  let sheetPixels = 0;
+  if (command === 'sheet' || command === 'strip' || (command === 'sfx' && draws)) {
+    const sound = command === 'sfx';
+    const dimensions = sheetGeometry(budget, {
+      cols: int('cols', str('cols'), sound ? 4 : 6, 1, 40),
+      tileWidth: int('tile', str('tile'), 480, 64, 3840),
+      crop: sound ? null : crop(str('crop')),
     });
-    held = { cpu, gpu: null };
+    drawWidth = dimensions.renderW;
+    sheetPixels = dimensions.cols * dimensions.rows * dimensions.tileW * dimensions.tileH;
   }
+  if (command === 'physics' && draws) drawWidth = 3840;
+  if (command === 'trail') drawWidth = Math.min(1920, width);
+  const frameRange = worker ? ' frames ' + str('from') + '..' + (Number(str('to')) - 1) : '';
+  const what = command + ' ' + sceneName(scene) + (draws ? ' ' + drawWidth + 'x' + heightFor(drawWidth) : '') + frameRange;
+  const loadWork = { scene, bake: str('bake'), width: 0, gpu: false };
+  const workload = {
+    ...loadWork, width: drawWidth, gpu: gpu && command !== 'graph', sheetPixels,
+    ...(command === '_chunk' ? { encoder } : {}),
+  };
+  let memory = renderMemory(workload);
+  let lease: RenderLease | null = null;
+  if (draws || command === 'render') {
+    const config = queueConfig();
+    const acquire = (): Promise<RenderLease | null> => acquireRenderLease(config, {
+      group, what, memory, draws, short: budget <= MAX_LIGHT_FRAMES,
+      onWait: worker ? (w: Waiting) => process.send?.({ waiting: w }) : (w: Waiting) => console.log(waitingLine(w)),
+      onPressure: (message: string) => console.warn(message),
+    });
+    try {
+      lease = await acquire();
+    } catch (error) {
+      if (!(error instanceof GpuMemoryUnavailableError) || (command === '_chunk' && encoder === 'nvenc')) throw error;
+      // An 8-pixel backend probe is sufficient for Skia's established CPU fallback.
+      memory = renderMemory({ ...workload, gpu: false });
+      lease = await acquire();
+      keep(lease);
+      if (rendererInfo(true).renderer === 'GPU') throw error;
+    }
+  }
+  keep(lease);
   const { compiled, file: sceneFile } = await loadShot(scene);
   const langs = languagesOf(compiled.spec.strings);
   const langArg = str('lang');
@@ -283,8 +311,8 @@ async function run(argv: readonly string[]): Promise<number> {
     compiled,
     sceneFile,
     lang: langArg?.split(',')[0] ?? langs[0]!,
-    width: int('width', str('width'), 1920, 64, 7680),
-    gpu: !flag('cpu'),
+    width,
+    gpu,
     cacheDir: resolve(process.cwd(), str('cache') ?? 'cache'),
     outDir: resolve(process.cwd(), 'out', compiled.spec.id),
   };
@@ -297,8 +325,9 @@ async function run(argv: readonly string[]): Promise<number> {
     return o ? resolve(process.cwd(), o) : join(common.outDir, fallback);
   };
   const c = compiled;
-  /** Says to the render queue that the scene of this process is loaded (its bake too): it no longer counts as starting. */
-  const loaded = (): void => held?.cpu?.loaded();
+  const drawRam = memory.ram - renderMemory(loadWork).ram;
+  const loaded = (): void => lease?.verify(drawRam);
+  loaded();
   /** The window of frames of `trail` and `graph`: --from and --to in frames, or --time in seconds. */
   const window = (name: string): { from?: number; to?: number } => {
     const time = str('time');
@@ -313,15 +342,6 @@ async function run(argv: readonly string[]): Promise<number> {
     return w;
   };
 
-  // Every frame drawn on the GPU takes a GPU place of the machine, and gives it back once it is read back.
-  if (config && common.gpu && held && !grant) {
-    let told = false;
-    held = { cpu: held.cpu, gpu: useGpuPlaces(config, what, (busy, places) => {
-      if (worker || told) return;
-      told = true;
-      console.log(`waiting for a GPU place: ${busy} of ${places} busy`);
-    }) };
-  }
   switch (command) {
     case 'check': {
       const { bake } = await ensureBake(c, common.cacheDir);
@@ -356,6 +376,7 @@ async function run(argv: readonly string[]): Promise<number> {
         const raw = await frameRaw(c, bake, f, { width: common.width, lang: common.lang, gpu: common.gpu, alone: flag('alone') });
         const file = outFile(`still_${String(f).padStart(5, '0')}_${common.lang}.png`);
         write(file, await rawToPng(raw, common.width, height));
+        lease?.verify();
         const sum = flag('hash') ? `  sha256 ${createHash('sha256').update(raw).digest('hex')}` : '';
         console.log(`frame ${f}  ${file}${sum}`);
       }
@@ -420,8 +441,6 @@ async function run(argv: readonly string[]): Promise<number> {
 
     case 'render': {
       if (!ffmpegAvailable()) fail('render: ffmpeg was not found (put it on PATH or set FFMPEG)');
-      const encoder = (str('encoder') ?? 'x264') as Encoder;
-      if (encoder !== 'x264' && encoder !== 'nvenc') fail('--encoder must be x264 or nvenc');
       const baked = await ensureBake(c, common.cacheDir);
       // Checks come before any render; a failed check stops it unless forced.
       const report = runChecks(c, baked.bake, [common.lang]);
@@ -436,14 +455,11 @@ async function run(argv: readonly string[]): Promise<number> {
       const workers = int('workers', str('workers'), Math.max(1, Math.min(8, Math.floor(availableParallelism() / 2))), 1, 64);
       const chunk = int('chunk', str('chunk'), chunkFrames(common.width), 0, 1e9);
       const plan = planOf({ from, to, workers, width: common.width, gpu: common.gpu, chunk });
-      const queue = queueConfig();
-      const info = rendererInfo(common.gpu);
-      const master = common.gpu ? masterGpuGrant() : null;
-      const limit = master ? `${master.workers} reserved GPU places` : `${queue.cpu} CPU places`;
-      const atOnce = `${plan.atOnce} worker(s)${plan.atOnce < plan.workers ? ` at once (${plan.workers} asked, ${limit})` : ''}`;
-      const places = (n: number): string => (n > 0 ? String(n) : 'unlimited');
-      const queued = master ? `, master GPU reservation of ${master.workers}` : queue.cpu > 0 || queue.gpu > 0 ? `, render queue of ${places(queue.cpu)} CPU and ${places(queue.gpu)} GPU places` : ', no render queue';
-      console.log(`render ${c.spec.id} [${common.lang}]: frames ${from}..${to - 1} at ${common.width}x${heightFor(common.width)}, ${FPS} fps, ${atOnce}, ${plan.chunks.length} chunk(s), ${info.renderer}${info.renderer === 'GPU' && info.api ? ` ${info.api}` : ''}, ${encoder}${queued}`);
+      const atOnce = plan.atOnce + ' worker(s)' + (plan.atOnce < plan.workers ? ' at once (' + plan.workers + ' asked)' : '');
+      const backend = common.gpu ? 'GPU preferred' : 'CPU';
+      console.log(`render ${c.spec.id} [${common.lang}]: frames ${from}..${to - 1} at ${common.width}x${heightFor(common.width)}, ${FPS} fps, ${atOnce}, ${plan.chunks.length} chunk(s), ${backend}, ${encoder}, group ${group}`);
+      // The parent is done allocating scene and bake data. Children reserve their own memory.
+      lease?.release();
       console.log(`  bake ${baked.baked ? 'baked' : 'cache hit'} in ${baked.seconds.toFixed(2)} s`);
       // Progress: rewritten in place on a terminal, one line every few seconds otherwise.
       const tty = process.stdout.isTTY === true;
@@ -460,6 +476,7 @@ async function run(argv: readonly string[]): Promise<number> {
         gpu: common.gpu,
         encoder,
         workers,
+        group,
         chunk,
         hashes: flag('hashes'),
         onWait: (w) => {
@@ -630,26 +647,21 @@ full report: ${file}`);
       const bake = readBake(bakePath);
       if (bake.header.sceneHash !== c.sceneHash) fail('_chunk: the bake does not belong to this scene');
       loaded();
-      const master = grant ? await joinMasterGpuJob(grant, () => process.exit(1)) : null;
-      try {
-        await renderChunk(c, bake, {
-          from: int('from', str('from'), 0, 0, c.frames - 1),
-          to: int('to', str('to'), c.frames, 1, c.frames),
-          out: str('out') ?? fail('_chunk: --out is required'),
-          lang: common.lang,
-          width: common.width,
-          gpu: common.gpu,
-          gpuReserved: master !== null,
-          encoder: (str('encoder') ?? 'x264') as Encoder,
-          hashesFile: str('hashes-file') ?? null,
-          onFrames: (frames) => {
-            process.send?.({ frames });
-          },
-          ...(failAt === undefined ? {} : { failAtFrame: Number(failAt) }),
-        });
-      } finally {
-        master?.release();
-      }
+      await renderChunk(c, bake, {
+        from: int('from', str('from'), 0, 0, c.frames - 1),
+        to: int('to', str('to'), c.frames, 1, c.frames),
+        out: str('out') ?? fail('_chunk: --out is required'),
+        lang: common.lang,
+        width: common.width,
+        gpu: common.gpu,
+        lease: lease ?? undefined,
+        encoder,
+        hashesFile: str('hashes-file') ?? null,
+        onFrames: (frames) => {
+          process.send?.({ frames });
+        },
+        ...(failAt === undefined ? {} : { failAtFrame: Number(failAt) }),
+      });
       return 0;
     }
 
@@ -658,23 +670,20 @@ full report: ${file}`);
   }
 }
 
-/** `skink3 queue`: the CPU and GPU places of the machine, who holds them and who waits. */
+/** Prints the machine's queue, including estimates that have already been reserved. */
 function printQueue(): void {
-  const queue = queueConfig();
-  const state = queueState(queue);
-  const ago = (seconds: number): string => `${Math.round(seconds)} s`;
-  const line = (label: string, e: QueueEntry): string => `  ${label}  pid ${String(e.pid).padEnd(6)}  ${ago(e.seconds).padStart(6)}  ${e.what}${e.old ? '  (legacy chunk)' : ''}${e.reservation ? `  (master reservation: ${e.reservation})` : ''}`;
-  const pool = (name: string, label: string, limit: number, p: typeof state.cpu): void => {
-    console.log(`${name}: ${limit || 'unlimited'}, ${p.busy} busy, ${p.waiting.length} waiting`);
-    p.held.forEach((held, i) => console.log(held ? line(`${label} ${i + 1}`, held) : `  ${label} ${i + 1}  free`));
-    p.waiting.forEach((waiting, i) => console.log(line(`wait ${i + 1}`, waiting)));
+  const config = queueConfig();
+  const state = queueState(config);
+  const gib = (bytes: number): string => (bytes / GIB).toFixed(2) + ' GiB';
+  console.log(`render queue (${config.dir}), ${GROUP_WORKERS} drawing workers per group`);
+  console.log(`RAM: ${gib(state.memory.ram.free)} free, ${gib(config.freeRamGb * GIB)} floor, ${gib(Math.max(0, state.available.ram))} available to reserve`);
+  if (state.memory.vram) {
+    console.log(`VRAM: ${gib(state.memory.vram.free)} from ${state.memory.vram.source}, ${gib(config.freeVramGb * GIB)} floor, ${gib(Math.max(0, state.available.vram ?? 0))} available to reserve`);
+  } else {
+    console.log('VRAM: no live reading or configured budget');
+  }
+  const line = (entry: QueueEntry): void => {
+    console.log(`  ${entry.phase}  pid ${entry.pid}  ${gib(entry.memory.ram)} RAM  ${gib(entry.memory.vram)} VRAM  [${entry.group}] ${entry.what}`);
   };
-  console.log(`render queue (${queue.dir}), ${state.freeGb.toFixed(1)} GiB free${queue.freeRamGb > 0 ? `, admission needs ${queue.freeRamGb} GiB` : ''}`);
-  pool('Heavy CPU places', 'cpu', queue.cpu, state.cpu);
-  pool('Light places', 'light', queue.light, state.light);
-  pool('Shared GPU places', 'gpu', queue.gpu, state.gpu);
-  console.log(`Master turn: ${state.master.held ? 'occupied' : 'free'}, ${state.master.waiting.length} waiting`);
-  if (state.master.held) console.log(line('master', state.master.held));
-  state.master.waiting.forEach((waiting, i) => console.log(line(`wait ${i + 1}`, waiting)));
-  state.oldWaiting.forEach((waiting, i) => console.log(line(`legacy wait ${i + 1}`, waiting)));
+  [...state.active, ...state.waiting].forEach(line);
 }

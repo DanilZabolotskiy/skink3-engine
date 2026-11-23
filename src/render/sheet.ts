@@ -40,18 +40,24 @@ export interface SheetOptions {
   readonly relative: boolean;
 }
 
-/** A grid of frames as one image (PNG bytes). */
-export async function renderSheet(c: CompiledShot, bake: Bake, tiles: readonly SheetTile[], opts: SheetOptions): Promise<Buffer> {
-  if (tiles.length === 0) throw new Error('a sheet needs at least one frame');
+/** The frame width and output size used by a sheet, also used to reserve memory before scene load. */
+export function sheetGeometry(count: number, opts: Pick<SheetOptions, 'cols' | 'crop' | 'tileWidth'>) {
   const crop = opts.crop ?? [0, 0, STAGE_W, STAGE_H];
   const tileW = opts.tileWidth;
   const tileH = Math.round((tileW * crop[3]) / crop[2]);
-  const cols = Math.min(opts.cols, tiles.length);
-  const rows = Math.ceil(tiles.length / cols);
+  const cols = Math.min(opts.cols, count);
+  const rows = Math.ceil(count / cols);
   // Render large enough that the crop is not upscaled, and at least twice the tile for clean downscaling.
   const need = (tileW * STAGE_W) / crop[2];
   const wanted = need * 2 <= STAGE_W ? need * 2 : Math.max(need, STAGE_W);
   const renderW = Math.min(STAGE_W * 2, Math.max(480, Math.ceil(wanted / 2) * 2));
+  return { cols, rows, tileW, tileH, renderW, crop };
+}
+
+/** A grid of frames as one image (PNG bytes). */
+export async function renderSheet(c: CompiledShot, bake: Bake, tiles: readonly SheetTile[], opts: SheetOptions): Promise<Buffer> {
+  if (tiles.length === 0) throw new Error('a sheet needs at least one frame');
+  const { cols, rows, tileW, tileH, renderW, crop } = sheetGeometry(tiles.length, opts);
   const renderH = heightFor(renderW);
   const k = renderW / STAGE_W;
 

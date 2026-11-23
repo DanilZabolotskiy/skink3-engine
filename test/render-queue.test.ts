@@ -1,26 +1,34 @@
-// Synthetic holders use private directories and never draw on the production GPU.
+// Synthetic contenders use temporary queue directories and allocate no GPU resources.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ffmpegAvailable } from '../src/render/encode.ts';
+import { renderGroup } from '../src/render/group.ts';
 import { startMasterGpuJob } from '../src/render/master-gpu.ts';
-import { chunkFrames, renderPlan } from '../src/render/parallel.ts';
-import { acquireCpuPlace, queueConfig, queueState, takeGpuPlace, useGpuPlaces, type QueueConfig } from '../src/render/queue.ts';
+import { GIB, renderMemory } from '../src/render/memory.ts';
+import { chunkFrames, planOf, renderPlan } from '../src/render/parallel.ts';
+import { acquireRenderLease, queueConfig, queueState, type QueueMemory, type Waiting } from '../src/render/queue.ts';
 
 const CLI = fileURLToPath(new URL('../bin/skink3.mjs', import.meta.url));
 const HOLDER = fileURLToPath(new URL('./fixtures/queue-holder.ts', import.meta.url));
-const MINIMAL = fileURLToPath(new URL('../examples/minimal/scene.ts', import.meta.url));
-const GiB = 2 ** 30;
+const sceneUrl = new URL('../examples/minimal/scene.ts', import.meta.url);
+const MINIMAL = fileURLToPath(sceneUrl);
+
+const memory = (ram: number, vram: number): QueueMemory => ({
+  ram: { free: ram * GIB, total: 64 * GIB, source: 'test' },
+  vram: { free: vram * GIB, total: 32 * GIB, source: 'test' },
+});
 
 async function until(read: () => boolean, what: string): Promise<void> {
-  const deadline = performance.now() + 10_000;
+  const deadline = performance.now() + 12_000;
   while (!read()) {
     if (performance.now() > deadline) throw new Error('timed out waiting for ' + what);
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    await setTimeout(15);
   }
 }
 
@@ -29,295 +37,273 @@ function exited(child: ChildProcess): Promise<number | null> {
   return new Promise((resolve) => child.once('close', resolve));
 }
 
-function scratch(options: Partial<QueueConfig> = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'skink3-queue-'));
-  const config = { ...queueConfig({}), freeRamGb: 0, dir: join(dir, 'slots'), ...options };
-  const log = join(dir, 'log.txt');
+function scratch(snapshot = memory(24, 24)) {
+  const dir = mkdtempSync(join(tmpdir(), 'skink3-memory-queue-'));
+  const config = { ...queueConfig({}), freeRamGb: 1, freeVramGb: 1, dir: join(dir, 'slots') };
   const children: ChildProcess[] = [];
-  const state = () => queueState(config);
-  const logs = (): string[] => existsSync(log) ? readFileSync(log, 'utf8').trim().split(/\r?\n/) : [];
-  const note = (line: string) => until(() => logs().includes(line), line);
-  const remaining = () => existsSync(config.dir) ? readdirSync(config.dir) : [];
-  const holder = (name: string, mode: string, opts: Record<string, unknown> = {}, env = process.env): ChildProcess => {
-    const child = spawn(process.execPath, [HOLDER, JSON.stringify({ config, log, name, mode, ...opts })], { stdio: ['ignore', 'ignore', 'inherit'], env });
-    children.push(child);
-    return child;
+  const env = { ...process.env, SKINK3_SLOT_DIR: config.dir, SKINK3_FREE_RAM_GB: '0', SKINK3_TEST_FAIL_AT_FRAME: '' };
+  const state = () => queueState(config, () => snapshot);
+  const child = (args: string[], options = env): ChildProcess => {
+    const processChild = spawn(process.execPath, args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: options });
+    processChild.stdout?.resume();
+    processChild.stderr?.on('data', (data: Buffer) => process.stderr.write(data));
+    children.push(processChild);
+    return processChild;
+  };
+  const holder = (name: string, options: { group?: string; ram?: number; vram?: number; short?: boolean; worker?: number } = {}) => {
+    const release = join(dir, 'release-' + name);
+    const proc = child([HOLDER, JSON.stringify({
+      config, snapshot, name, group: options.group ?? name, ram: (options.ram ?? 1) * GIB,
+      vram: (options.vram ?? 0) * GIB, until: release, short: options.short, worker: options.worker,
+    })]);
+    let waiting: Waiting | undefined;
+    let admitted = false;
+    proc.on('message', (message: { waiting?: Waiting; admitted?: string }) => {
+      waiting ??= message.waiting;
+      admitted ||= message.admitted === name;
+    });
+    return {
+      proc, release: () => writeFileSync(release, ''), admitted: () => until(() => admitted, name + ' admission'),
+      waits: async (reason: Waiting['reason']) => {
+        await until(() => waiting !== undefined, name + ' to wait');
+        assert.equal(waiting?.reason, reason);
+      },
+    };
   };
   const done = async (): Promise<void> => {
-    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    for (const proc of children) if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
     await Promise.all(children.map(exited));
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 });
   };
-  return { dir, config, state, logs, note, remaining, holder, done };
+  return { dir, config, env, state, holder, child, done };
 }
 
-test('render queue defaults, overrides and legacy opt-outs', async () => {
+test('config sets memory floors, preserves legacy chunk splitting, and accepts old assemblers', async () => {
   const defaults = queueConfig({});
-  assert.deepEqual([defaults.cpu, defaults.light, defaults.gpu, defaults.masterGpu, defaults.freeRamGb], [10, 6, 6, 4, 8]);
-  const off = queueConfig({ SKINK3_RENDER_SLOTS: '0' });
-  assert.deepEqual([off.cpu, off.light, off.gpu, off.masterGpu, off.freeRamGb], [0, 0, 0, 0, 0]);
-  assert.equal(queueConfig({ SKINK3_RENDER_SLOTS: '5' }).gpu, 5);
-  assert.equal(queueConfig({ SKINK3_MASTER_GPU_PLACES: '30' }).masterGpu, 4);
-  assert.throws(() => queueConfig({ SKINK3_LIGHT_PLACES: '-1' }), /SKINK3_LIGHT_PLACES/);
-  const t = scratch({ masterGpu: 0 });
-  try {
-    assert.equal(await startMasterGpuJob({ workers: 1, what: 'off' }, t.config), null);
-    assert.deepEqual(t.remaining(), []);
-  } finally { await t.done(); }
-});
-
-test('heavy jobs enter in order within their share and light enters independently', async () => {
-  const t = scratch({ cpu: 2, light: 1 });
-  const hold = join(t.dir, 'end');
-  const aGo = join(t.dir, 'a-go');
-  const lightGo = join(t.dir, 'l-go');
-  try {
-    const a = t.holder('a', 'heavy', { job: 'a', until: aGo });
-    await t.note('a got');
-    const a2 = t.holder('a2', 'heavy', { job: 'a', until: hold });
-    await t.note('a2 got');
-    const a3 = t.holder('a3', 'heavy', { job: 'a' });
-    await t.note('a3 waits');
-    const b = t.holder('b', 'heavy', { until: hold });
-    await t.note('b waits');
-    const c = t.holder('c', 'heavy');
-    await t.note('c waits');
-    const l = t.holder('l', 'light', { until: lightGo });
-    await t.note('l got');
-    const l2 = t.holder('l2', 'light');
-    await t.note('l2 waits');
-    writeFileSync(lightGo, '');
-    await t.note('l2 got');
-    writeFileSync(aGo, '');
-    await t.note('b got');
-    assert.ok(!t.logs().includes('a3 got'));
-    assert.ok(!t.logs().includes('c got'));
-    writeFileSync(hold, '');
-    assert.deepEqual(await Promise.all([a, a2, a3, b, c, l, l2].map(exited)), [0, 0, 0, 0, 0, 0, 0]);
-    assert.deepEqual(t.remaining(), []);
-  } finally { await t.done(); }
-});
-
-test('the RAM floor applies to the first process and counts starts across both lanes', async () => {
-  const t = scratch({ freeRamGb: 8 });
-  let free = 7 * GiB;
-  const freeMemory = (): number => free;
-  const abort = new AbortController();
-  try {
-    const pending = acquireCpuPlace(t.config, { what: 'first', pollMs: 10, freeMemory });
-    await until(() => t.state().cpu.waiting.length === 1, 'the first worker below 8 GiB');
-    assert.equal(t.state().cpu.busy, 0);
-    free = 9 * GiB;
-    const first = await pending;
-    assert.ok(first);
-    const secondP = acquireCpuPlace(t.config, { lane: 'light', what: 'second', pollMs: 10, freeMemory });
-    await until(() => t.state().light.waiting.length === 1, 'light behind the RAM reservation');
-    first.loaded();
-    const second = await secondP;
-    assert.ok(second);
-    const canceled = acquireCpuPlace(t.config, { what: 'cancel', pollMs: 10, freeMemory, signal: abort.signal });
-    await until(() => t.state().cpu.waiting.length === 1, 'third waiter');
-    abort.abort();
-    assert.equal(await canceled, null);
-    first.release();
-    second.release();
-    assert.deepEqual(t.remaining(), []);
-  } finally { await t.done(); }
-});
-
-test('killed heavy and GPU holders leave recoverable places', async () => {
-  const t = scratch({ cpu: 1, gpu: 1, masterGpu: 0 });
-  try {
-    for (const lane of ['heavy', 'gpu'] as const) {
-      const dead = t.holder(lane + '-holder', lane, { until: join(t.dir, 'never') });
-      await t.note(lane + '-holder got');
-      dead.kill('SIGKILL');
-      await exited(dead);
-      assert.equal(t.state()[lane === 'heavy' ? 'cpu' : 'gpu'].busy, 0);
-      assert.equal(await exited(t.holder(lane + '-next', lane)), 0);
-      assert.deepEqual(t.remaining(), []);
-    }
-  } finally { await t.done(); }
-});
-
-test('master waits for its first worker, survives shot boundaries, and shares with legacy', async () => {
-  const t = scratch();
-  const old1Go = join(t.dir, 'old1-go');
-  const old2Go = join(t.dir, 'old2-go');
-  const shotGo = join(t.dir, 'shot-go');
-  const old1 = t.holder('old1', 'legacy', { until: old1Go });
-  const old2 = t.holder('old2', 'legacy', { until: old2Go });
-  const master = await startMasterGpuJob({ what: 'film', workers: 4 }, t.config);
-  assert.ok(master);
-  try {
-    await t.note('old1 got');
-    await t.note('old2 got');
-    assert.equal(t.state().gpu.busy, 2);
-    const one = t.holder('shot1', 'master-worker', { until: shotGo }, master.env);
-    await t.note('shot1 got');
-    assert.equal(t.state().gpu.busy, 6);
-    const slots = t.state().gpu.held.filter((p) => p?.reservation === 4);
-    assert.equal(slots.length, 4);
-    const old3 = t.holder('old3', 'legacy', { until: old2Go });
-    await t.note('old3 waits');
-    writeFileSync(old1Go, '');
-    assert.equal(await exited(old1), 0);
-    await t.note('old3 got');
-    assert.equal(t.state().gpu.busy, 6);
-    writeFileSync(shotGo, '');
-    assert.equal(await exited(one), 0);
-    assert.deepEqual(t.state().gpu.held.filter((p) => p?.reservation === 4).map((p) => p?.pid), slots.map((p) => p?.pid));
-    assert.equal(await exited(t.holder('shot2', 'master-worker', {}, master.env)), 0);
-    writeFileSync(old2Go, '');
-    assert.deepEqual(await Promise.all([old2, old3].map(exited)), [0, 0]);
-  } finally {
-    await t.done();
-    await master.release();
-  }
-});
-
-test('a reserved master leaves light GPU room and later masters wait before spawning workers', async () => {
-  const t = scratch();
-  const master = await startMasterGpuJob({ what: 'one', workers: 4 }, t.config);
-  assert.ok(master);
-  const gate = useGpuPlaces(t.config, 'short review');
-  try {
-    assert.equal(await exited(t.holder('worker', 'master-worker', {}, master.env)), 0);
-    const giveBack = await takeGpuPlace();
-    assert.equal(t.state().gpu.busy, 5);
-    giveBack();
-    const next = startMasterGpuJob({ what: 'two', workers: 4 }, t.config);
-    await until(() => t.state().master.waiting.length === 1, 'the second master turn');
-    assert.equal(t.state().cpu.busy, 0);
-    await master.release();
-    const second = await next;
-    assert.ok(second);
-    assert.equal(t.state().gpu.busy, 0);
-    await second.release();
-    gate.release();
-    assert.deepEqual(t.remaining(), []);
-  } finally {
-    gate.release();
-    await master.release();
-    await t.done();
-  }
-});
-
-test('a killed assembler keeps its reservation until the active worker exits, with independent heartbeat', async () => {
-  const t = scratch();
-  const hold = join(t.dir, 'hold');
-  const grantFile = join(t.dir, 'grant');
-  const blockWhen = join(t.dir, 'block');
-  try {
-    const owner = t.holder('owner', 'master-owner', { until: hold, grantFile, blockWhen });
-    await t.note('owner got');
-    const grant = JSON.parse(readFileSync(grantFile, 'utf8')) as string;
-    const env = { ...process.env, SKINK3_MASTER_GPU_GRANT: grant };
-    const worker = t.holder('worker', 'master-worker', { until: hold }, env);
-    await t.note('worker got');
-    const slot = join(t.config.dir, 'slot-5');
-    const mtime = statSync(slot).mtimeMs;
-    writeFileSync(blockWhen, '');
-    await t.note('owner blocking');
-    await until(() => statSync(slot).mtimeMs > mtime, 'heartbeat while the parent is blocked in spawnSync');
-    assert.ok(!t.logs().includes('owner unblocked'));
-    owner.kill('SIGKILL');
-    await exited(owner);
-    assert.equal(t.state().gpu.busy, 4, JSON.stringify({ files: t.remaining(), worker: worker.exitCode, logs: t.logs(), master: t.state().master }));
-    writeFileSync(hold, '');
-    assert.equal(await exited(worker), 0);
-    await until(() => t.remaining().length === 0, 'the orphaned master supervisor to drain');
-  } finally { await t.done(); }
-});
-
-test('report-only check bypasses the queue and a CPU still waits before importing its scene', async () => {
-  const t = scratch({ light: 1 });
-  const hold = join(t.dir, 'hold');
-  const marker = join(t.dir, 'loaded');
-  const scene = join(t.dir, 'scene.ts');
-  const url = new URL('../examples/minimal/scene.ts', import.meta.url).href;
-  writeFileSync(scene, "import { writeFileSync } from 'node:fs'; writeFileSync(" + JSON.stringify(marker) + ", ''); export { default } from " + JSON.stringify(url) + ";");
-  const env = { ...process.env, SKINK3_SLOT_DIR: t.config.dir, SKINK3_FREE_RAM_GB: '0', SKINK3_LIGHT_PLACES: '1' };
-  try {
-    const check = spawnSync(process.execPath, [CLI, 'check', MINIMAL], { cwd: t.dir, env: { ...env, SKINK3_LIGHT_PLACES: 'invalid' }, encoding: 'utf8' });
-    assert.equal(check.status, 0, check.stderr);
-    const h = t.holder('light', 'light', { until: hold });
-    await t.note('light got');
-    const still = spawn(process.execPath, [CLI, 'still', scene, '--cpu', '--frame', '0', '--width', '128', '--hash'], { cwd: t.dir, env, stdio: ['ignore', 'ignore', 'inherit'] });
-    try {
-      await until(() => t.state().light.waiting.length === 1, 'CPU still admission');
-      assert.ok(!existsSync(marker));
-      writeFileSync(hold, '');
-      assert.deepEqual(await Promise.all([h, still].map(exited)), [0, 0]);
-      assert.ok(existsSync(marker));
-    } finally {
-      if (still.exitCode === null && still.signalCode === null) still.kill('SIGKILL');
-      await exited(still);
-    }
-  } finally { await t.done(); }
-});
-
-test('render plan respects the worker cap and contiguous chunk boundaries', () => {
-  const plan = renderPlan(10, 1000, 8, { slots: 3, chunk: 225 });
-  assert.equal(plan.atOnce, 3);
-  assert.equal(plan.chunks[0]?.from, 10);
-  assert.equal(plan.chunks.at(-1)?.to, 1000);
-  assert.equal(plan.chunks.length % 3, 0);
-  for (const [i, part] of plan.chunks.entries()) {
-    assert.ok(part.to - part.from <= 225);
-    if (i > 0) assert.equal(part.from, plan.chunks[i - 1]?.to);
-  }
+  assert.deepEqual([defaults.freeRamGb, defaults.freeVramGb, defaults.legacyGpu], [5, 2, 4]);
+  const settings = queueConfig({
+    SKINK3_FREE_RAM_GB: '4', SKINK3_FREE_VRAM_GB: '1', SKINK3_RENDER_SLOTS: '0',
+    SKINK3_GPU_BUDGET_GB: '15.5', SKINK3_GPU_INDEX: '1', SKINK3_CPU_PLACES: '1',
+  });
+  assert.deepEqual([settings.freeRamGb, settings.freeVramGb, settings.legacyGpu, settings.gpuBudgetGb, settings.gpuIndex], [4, 1, 0, 15.5, 1]);
+  assert.throws(() => queueConfig({ SKINK3_FREE_VRAM_GB: '-1' }), /SKINK3_FREE_VRAM_GB/);
+  assert.equal(await startMasterGpuJob({ workers: 4, what: 'film' }), null);
+  const job = { from: 10, to: 2000, gpu: true, width: 3840, workers: 8 };
+  const plan = planOf(job);
+  const legacy = renderPlan(job.from, job.to, job.workers, { slots: queueConfig().legacyGpu, chunk: chunkFrames(job.width) });
+  assert.equal(plan.atOnce, 4);
+  assert.deepEqual(plan.chunks, legacy.chunks);
   assert.equal(chunkFrames(1920), 900);
   assert.equal(chunkFrames(3840), 225);
 });
 
-test('short CPU render hashes agree with and without heavy admission', { skip: !ffmpegAvailable() }, async () => {
+test('one group admits four mixed drawing workers while other groups use all remaining memory', async () => {
   const t = scratch();
   try {
-    const run = (out: string, places: string, workers: string): string => {
-      const file = join(t.dir, out);
-      const env = { ...process.env, SKINK3_SLOT_DIR: t.config.dir, SKINK3_CPU_PLACES: places, SKINK3_FREE_RAM_GB: '0' };
-      const render = spawnSync(process.execPath, [CLI, 'render', MINIMAL, '--cpu', '--width', '128', '--to', '12', '--workers', workers, '--chunk', '4', '--hashes', '--out', file], { cwd: t.dir, env, encoding: 'utf8' });
-      assert.equal(render.status, 0, render.stderr);
-      return readFileSync(file + '.hashes.txt', 'utf8');
-    };
-    assert.equal(run('one.mp4', '0', '1'), run('two.mp4', '2', '3'));
-    assert.deepEqual(t.remaining(), []);
+    const a = Array.from({ length: 4 }, (_, i) => t.holder('draw-' + i, { group: 'one episode', short: i % 2 === 0, vram: i % 2 }));
+    await Promise.all(a.map((h) => h.admitted()));
+    const next = t.holder('second-language-still', { group: 'one episode', short: true });
+    await next.waits('group');
+    const others = Array.from({ length: 8 }, (_, i) => t.holder('other-' + i, { vram: 1 }));
+    await Promise.all(others.map((h) => h.admitted()));
+    assert.equal(t.state().active.length, 12);
+    a[0]!.release();
+    await next.admitted();
+    assert.equal(t.state().active.filter((entry) => entry.group === 'one episode').length, 4);
   } finally { await t.done(); }
 });
 
-test('two neutral render children reuse one master reservation without frame-level slot mutations', { skip: !ffmpegAvailable() }, async () => {
-  const t = scratch();
-  const env = { ...process.env, SKINK3_SLOT_DIR: t.config.dir, SKINK3_FREE_RAM_GB: '0' };
-  const master = await startMasterGpuJob({ what: 'two short shots', workers: 2 }, t.config);
-  assert.ok(master);
-  const run = async (name: string, grants: NodeJS.ProcessEnv): Promise<string> => {
-    const file = join(t.dir, name + '.mp4');
-    const child = spawn(process.execPath, [CLI, 'render', MINIMAL, '--width', '128', '--to', '8', '--workers', '2', '--chunk', '0', '--hashes', '--out', file], { cwd: t.dir, env: { ...grants, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let messages = '';
-    child.stdout!.on('data', (data: Buffer) => { messages += data.toString(); });
-    child.stderr!.on('data', (data: Buffer) => { messages += data.toString(); });
-    assert.equal(await exited(child), 0, messages);
-    return readFileSync(file + '.hashes.txt', 'utf8');
-  };
+test('simultaneous admissions cannot overbook RAM and VRAM; a CPU worker uses no VRAM', async () => {
+  const t = scratch(memory(10, 7));
   try {
-    const first = await run('first', master.env);
-    assert.equal(t.state().gpu.busy, 2);
-    const changes: string[] = [];
-    const watcher = watch(t.config.dir, (event, file) => {
-      if (event === 'rename' && /^(?:slot-|gpuwait-|tmp-)/.test(file ?? '')) changes.push(file!);
+    const gpu = Array.from({ length: 7 }, (_, i) => t.holder('gpu-' + i, { ram: 2, vram: 2 }));
+    await until(() => t.state().waiting.length === 4 && t.state().active.length === 3, 'three memory reservations');
+    assert.equal(t.state().available.vram, 0);
+    const cpu = t.holder('cpu', { ram: 2, short: true });
+    await cpu.admitted();
+    assert.equal(t.state().active.length, 4);
+    const ram = t.holder('ram', { ram: 2, short: true });
+    await ram.waits('ram');
+    cpu.release();
+    await ram.admitted();
+    const owner = t.state().active.find((e) => e.what.startsWith('gpu-'))!;
+    const killed = gpu.find((h) => h.proc.pid === owner.pid)!;
+    killed.proc.kill('SIGKILL');
+    await exited(killed.proc);
+    ram.release();
+    await until(() => t.state().active.filter((e) => e.what.startsWith('gpu-')).length === 3 && t.state().waiting.length === 3, 'replacement after worker death');
+  } finally { await t.done(); }
+});
+
+test('an orphaned child pins memory until it exits, then the queue reclaims it', async () => {
+  const t = scratch(memory(7, 12));
+  try {
+    const child = t.child(['-e', 'setInterval(() => {}, 100)']);
+    assert.ok(child.pid);
+    const parent = t.holder('parent', { ram: 5, worker: child.pid });
+    await parent.admitted();
+    const next = t.holder('next', { ram: 4 });
+    await next.waits('ram');
+    parent.proc.kill('SIGKILL');
+    await exited(parent.proc);
+    assert.equal(t.state().active[0]?.phase, 'draining');
+    child.kill('SIGKILL');
+    await exited(child);
+    await next.admitted();
+  } finally { await t.done(); }
+});
+
+test('a complete snapshot credits allocations already reflected in measured free memory', async () => {
+  const t = scratch(memory(10, 10));
+  const read = (): QueueMemory => reading;
+  let reading = memory(10, 10);
+  try {
+    const a = await acquireRenderLease(t.config, { group: 'a', what: 'a', memory: { ram: 5 * GIB, vram: 5 * GIB }, sample: read });
+    assert.ok(a);
+    const current = memory(6, 6);
+    const resident = { [process.pid]: 4 * GIB };
+    reading = { ram: { ...current.ram, resident }, vram: { ...current.vram!, resident } };
+    assert.deepEqual(queueState(t.config, read).available, { ram: 4 * GIB, vram: 4 * GIB });
+    const cancel = new AbortController();
+    const second = acquireRenderLease(t.config, {
+      group: 'b', what: 'b', memory: { ram: 5 * GIB, vram: 5 * GIB }, sample: read, pollMs: 10, signal: cancel.signal,
     });
-    try {
-      assert.equal(await run('second', master.env), first);
-      assert.deepEqual(changes, [], 'the second shot uses the existing reservation for every frame');
-    } finally {
-      watcher.close();
-    }
-    await master.release();
-    assert.deepEqual(t.remaining(), []);
-    assert.equal(await run('ordinary', {}), first);
-  } finally {
-    await master.release();
-    await t.done();
-  }
+    assert.equal(queueState(t.config, read).waiting.length, 1);
+    cancel.abort();
+    assert.equal(await second, null);
+    a.release();
+    assert.equal(queueState(t.config, read).waiting.length, 0);
+  } finally { await t.done(); }
+});
+
+test('verification grows an estimate atomically and reports an observed low floor', async () => {
+  const t = scratch();
+  const read = (): QueueMemory => reading;
+  let reading = memory(10, 10);
+  const pressure: string[] = [];
+  try {
+    const lease = await acquireRenderLease(t.config, {
+      group: 'work', what: 'work', memory: { ram: 2 * GIB, vram: 2 * GIB }, sample: read,
+      onPressure: (message) => pressure.push(message),
+    });
+    assert.ok(lease);
+    const resident = { [process.pid]: 2 * GIB };
+    reading = { ...reading, ram: { ...reading.ram, resident } };
+    lease.verify(1 * GIB);
+    assert.equal(queueState(t.config, read).active[0]?.memory.ram, 3 * GIB);
+    reading = memory(8, 0.5);
+    lease.verify();
+    lease.verify();
+    assert.deepEqual(pressure, ['work measured below the free VRAM floor during work']);
+    assert.throws(() => lease.verify(10 * GIB), /exceeded its RAM estimate/);
+    lease.release();
+  } finally { await t.done(); }
+});
+
+test('unavailable GPU memory fails before a reservation can be published', async () => {
+  const t = scratch();
+  const read = (): QueueMemory => ({ ...memory(10, 10), vram: null });
+  try {
+    await assert.rejects(acquireRenderLease(t.config, {
+      group: 'work', what: 'work', memory: { ram: 2 * GIB, vram: 2 * GIB }, sample: read,
+    }), /Cannot read GPU memory/);
+    assert.deepEqual(t.state().active, []);
+    assert.deepEqual(t.state().waiting, []);
+  } finally { await t.done(); }
+});
+
+test('a short request can progress while a larger reservation waits, then yields to the older request', async () => {
+  const t = scratch(memory(9, 9));
+  try {
+    const active = t.holder('active', { ram: 5 });
+    await active.admitted();
+    const old = t.holder('old', { ram: 5 });
+    await old.waits('ram');
+    const first = t.holder('short', { ram: 1, short: true });
+    await first.admitted();
+    first.release();
+    await setTimeout(3_100);
+    const later = t.holder('later', { ram: 1, short: true });
+    await later.waits('turn');
+    active.release();
+    await old.admitted();
+    await later.admitted();
+  } finally { await t.done(); }
+});
+
+test('group config works through multiple checkouts and language paths, before a still imports its scene', async () => {
+  const t = scratch();
+  try {
+    const file = (checkout: string, episode: string, language = '') => {
+      const root = join(t.dir, checkout);
+      const folder = join(root, 'projects', 'documentary', language, 'films', episode, 'shots');
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(root, '.skink3-render.json'), JSON.stringify({
+        namespace: 'examples', groups: [{ path: '^projects/([^/]+)/(?:[^/]+/)?films/([^/]+)/', group: '$1/$2' }],
+      }));
+      return join(folder, 'scene.ts');
+    };
+    const original = file('one', 'film');
+    const translated = file('two', 'film', 'fr');
+    const group = renderGroup(original);
+    assert.equal(renderGroup(translated), group);
+    // A worktree made before the config landed reads the primary checkout's policy.
+    const linked = file('linked', 'film');
+    rmSync(join(t.dir, 'linked', '.skink3-render.json'));
+    const gitDir = join(t.dir, 'one', '.git', 'worktrees', 'linked');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, 'commondir'), '../..');
+    writeFileSync(join(t.dir, 'linked', '.git'), 'gitdir: ' + gitDir);
+    assert.equal(renderGroup(linked), group);
+    assert.notEqual(renderGroup(file('two', 'other')), group);
+    assert.equal(renderGroup(translated, 'explicit'), 'explicit');
+    const marker = join(t.dir, 'imported');
+    writeFileSync(translated, "import { writeFileSync } from 'node:fs'; writeFileSync(" + JSON.stringify(marker)
+      + ", ''); export { default } from " + JSON.stringify(sceneUrl.href) + ";");
+    const workers = Array.from({ length: 4 }, (_, i) => t.holder('existing-' + i, { group }));
+    await Promise.all(workers.map((h) => h.admitted()));
+    const still = t.child([CLI, 'still', translated, '--cpu', '--frame', '0', '--width', '128', '--hash']);
+    await until(() => t.state().waiting.some((entry) => entry.pid === still.pid), 'still queue entry');
+    assert.ok(!existsSync(marker));
+    workers[0]!.release();
+    assert.equal(await exited(still), 0);
+    assert.ok(existsSync(marker));
+  } finally { await t.done(); }
+});
+
+test('larger output and encoder staging raise peak estimates, CPU x264 has zero VRAM', () => {
+  const base = { width: 1920, scene: MINIMAL, gpu: true };
+  const still = renderMemory(base);
+  const video = renderMemory({ ...base, width: 3840, encoder: 'x264' });
+  assert.ok(still.vram > 0 && video.vram > still.vram);
+  assert.ok(video.ram > 4 * GIB);
+  assert.equal(renderMemory({ ...base, gpu: false, encoder: 'x264' }).vram, 0);
+  assert.ok(renderMemory({ ...base, gpu: false, encoder: 'nvenc' }).vram > 0);
+  assert.ok(renderMemory({ ...base, sheetPixels: 5e6 }).ram > still.ram);
+});
+
+test('CPU render hashes agree at different concurrency and failure leaves no reservations or chunks', { skip: !ffmpegAvailable() }, async () => {
+  const t = scratch();
+  try {
+    const run = (name: string, workers: string, fail = false) => {
+      const file = join(t.dir, name + '.mp4');
+      const result = spawnSync(process.execPath, [
+        CLI, 'render', MINIMAL, '--cpu', '--width', '128', '--to', '12', '--workers', workers,
+        '--chunk', '4', '--hashes', '--out', file,
+      ], { cwd: t.dir, env: { ...t.env, SKINK3_TEST_FAIL_AT_FRAME: fail ? '3' : undefined }, encoding: 'utf8' });
+      if (fail) {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /injected failure/);
+        assert.ok(!existsSync(file));
+        assert.equal(readdirSync(t.dir).some((entry) => entry.startsWith(name + '.chunk')), false);
+        return '';
+      }
+      assert.equal(result.status, 0, result.stderr);
+      return readFileSync(file + '.hashes.txt', 'utf8');
+    };
+    assert.equal(run('one', '1'), run('three', '3'));
+    run('broken', '4', true);
+    assert.deepEqual(t.state().active, []);
+    assert.deepEqual(t.state().waiting, []);
+  } finally { await t.done(); }
 });

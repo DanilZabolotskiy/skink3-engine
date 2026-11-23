@@ -32,7 +32,7 @@ export interface FrameSink {
   /** Finishes the file. */
   close(): Promise<void>;
   /** Stops the encoder without finishing the file. */
-  abort(): void;
+  abort(): Promise<void>;
 }
 
 /**
@@ -40,7 +40,7 @@ export interface FrameSink {
  * and writes an H.264 file. Colours are tagged and converted as BT.709, so that
  * players and measuring tools read back the colours that were drawn.
  */
-export function openEncoder(file: string, width: number, height: number, encoder: Encoder): FrameSink {
+export function openEncoder(file: string, width: number, height: number, encoder: Encoder, onChild?: (pid: number) => void): FrameSink {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(FPS), '-i', 'pipe:0',
@@ -64,6 +64,13 @@ export function openEncoder(file: string, width: number, height: number, encoder
     failed = failed ?? new Error(`ffmpeg closed its input: ${e.message}\n${stderr}`);
   });
   const exited = new Promise<number>((resolve) => child.on('close', (code) => resolve(code ?? 1)));
+  try {
+    if (child.pid !== undefined) onChild?.(child.pid);
+  } catch (error) {
+    child.stdin?.destroy();
+    child.kill();
+    throw error;
+  }
   return {
     async write(frame: Buffer): Promise<void> {
       if (failed) throw failed;
@@ -76,9 +83,10 @@ export function openEncoder(file: string, width: number, height: number, encoder
       if (failed) throw failed;
       if (code !== 0) throw new Error(`ffmpeg failed with code ${code}:\n${stderr}`);
     },
-    abort(): void {
+    async abort(): Promise<void> {
       child.stdin?.destroy();
       child.kill();
+      await exited;
     },
   };
 }

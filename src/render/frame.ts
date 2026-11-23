@@ -33,7 +33,6 @@ import {
 } from './draw.ts';
 import { applyHaze } from './haze.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
-import { takeGpuPlace } from './queue.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -625,33 +624,15 @@ export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: Rend
   return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
 }
 
-/**
- * Whether drawing the display list reads part of the frame back from the GPU already (a heat haze moves what the layers
- * behind it have drawn): such a frame needs its GPU place while it is recorded too.
- */
-export function readsBackWhileDrawn(state: FrameState): boolean {
-  return state.layers.some((l) => l.hazes !== undefined && l.hazes.length > 0);
-}
-
-/**
- * Draws a frame and reads it back with `read`, holding a GPU place of the machine (if this process takes them) only
- * while the GPU draws: from the read-back, or from the recording when that reads back already, until the canvases of
- * the frame are freed.
- */
+/** Draws a frame and frees its canvases when readback has finished. */
 async function drawnAndRead<T>(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions, read: (drawn: DrawnFrame) => Promise<T>): Promise<T> {
   const state = evaluate(c, bake, frame, opts.lang);
-  let giveBack = opts.gpu && readsBackWhileDrawn(state) ? await takeGpuPlace() : null;
-  let drawn: DrawnFrame | null = null;
+  const drawn = drawState(c, state, opts);
   try {
-    drawn = drawState(c, state, opts);
-    giveBack ??= opts.gpu ? await takeGpuPlace() : null;
     return await read(drawn);
   } finally {
-    if (drawn) {
-      drawn.dispose();
-      if (opts.gpu) drewOnGpu = true;
-    }
-    giveBack?.();
+    drawn.dispose();
+    if (opts.gpu) drewOnGpu = true;
   }
 }
 
@@ -689,9 +670,7 @@ async function restFromEarlierFrames(opts: RenderOptions): Promise<void> {
 }
 
 /**
- * One frame as raw RGBA bytes (width * height * 4). On the GPU it holds a GPU place of the machine while the frame is
- * drawn there, if the process takes them, and with `alone` it is the frame of a still of it alone, whatever this
- * process drew before.
+ * One frame as raw RGBA bytes (width * height * 4). With `alone`, the GPU has rested from earlier frames.
  */
 export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
@@ -700,7 +679,7 @@ export function frameRaw(c: CompiledShot, bake: Bake, frame: number, opts: Rende
   });
 }
 
-/** One frame as PNG bytes; the GPU place and `alone` as for `frameRaw`. */
+/** One frame as PNG bytes, with `alone` as for `frameRaw`. */
 export function framePng(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): Promise<Buffer> {
   return oneFrameAtATime(async () => {
     await restFromEarlierFrames(opts);

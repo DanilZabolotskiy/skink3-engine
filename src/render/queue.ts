@@ -1,974 +1,472 @@
-// Machine-wide admission for render work. Heavy chunks and short commands have independent process limits.
-// Both reserve RAM before loading a shot, and share the GPU slots already understood by the legacy renderer.
-
+// Shared, atomic RAM and VRAM admission for commands and chunk workers.
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from 'node:fs';
-import { constants as osConstants, freemem, homedir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { freemem, homedir, totalmem } from 'node:os';
+import { join, resolve } from 'node:path';
+import { GIB, type RenderMemory } from './memory.ts';
 
-/** Short drawing commands admitted at once, independent of heavy chunks. */
-export const DEFAULT_LIGHT_PLACES = 6;
-
-/** Upper bound for the short drawing lane, in scene frames. */
+export const GROUP_WORKERS = 4;
+export const DEFAULT_FREE_RAM_GB = 5;
+export const DEFAULT_FREE_VRAM_GB = 2;
 export const MAX_LIGHT_FRAMES = 60;
-
-/**
- * CPU places of a machine when SKINK3_CPU_PLACES is not set: the processes that draw frames at once. Ten since
- * November 23, 2026, on a machine of 8 cores and 16 threads.
- */
-export const DEFAULT_CPU_PLACES = 10;
-
-/** GPU places shared by both lanes and by old GPU renders. */
-export const DEFAULT_GPU_PLACES = 6;
-
-/** Shared GPU capacity a whole-job reservation leaves available for other rendering. */
-export const GPU_PLACES_OUTSIDE_MASTER = 2;
-
-/** Free physical memory, in GB, below which no CPU place is given, when SKINK3_FREE_RAM_GB is not set. */
-export const DEFAULT_FREE_RAM_GB = 8;
-
-/** The memory counted for a process that has its CPU place and has not yet loaded its scene. */
-export const STARTING_GB = 2;
-
-/** A process that has not said within this long that it has loaded its scene counts as loaded. */
-const STARTING_MS = 60_000;
-
-/** How often a process waiting for admission looks for its turn. */
-const ADMISSION_POLL_MS = 200;
-
-/** The longest pause of a process waiting for a GPU place between two looks, in ms; it starts at 1 and doubles. */
-const GPU_POLL_MAX_MS = 8;
-
-/** How often a waiter for a GPU place looks whether a holder has died. */
-const GPU_DEAD_MS = 250;
-
-/** How often a holder and a waiter show that they are alive. */
-const HEARTBEAT_MS = 5_000;
-
-/** A place or a ticket that has not been refreshed for this long is gone, even if a process of its number runs. */
-const STALE_MS = 120_000;
-
-/** A lock is held for milliseconds; one older than this was left by a process that hung or died holding it. */
-const LOCK_STALE_MS = 10_000;
-
-/** Errors of the file system that pass: a file being deleted, or opened by a scanner for a moment. */
-const TRANSIENT = new Set(['EPERM', 'EACCES', 'EBUSY']);
-
-/** The version of the entries this code writes; an entry without it is a slot of the code before the pools. */
-const VERSION = 2;
-
-export type RenderLane = 'heavy' | 'light';
+const ADMISSION_POLL_MS = 175;
+const GPU_SAMPLE_MS = 500;
+const FAIRNESS_MS = 3_000;
 
 export interface QueueConfig {
-  /** Most heavy workers at once. */
-  readonly cpu: number;
-  /** Most short drawing processes at once. */
-  readonly light: number;
-  /** The slot range understood by legacy processes during rollout. */
-  readonly legacyGpu: number;
-  /** Most frames drawn on the GPU at once; 0: no limit. */
-  readonly gpu: number;
-  /** Most GPU places a single master may reserve. */
-  readonly masterGpu: number;
-  /** Free physical memory, in GB, below which no CPU place is given; 0: no guard. */
-  readonly freeRamGb: number;
-  /** The directory every process of the machine shares. */
   readonly dir: string;
+  readonly freeRamGb: number;
+  readonly freeVramGb: number;
+  /** Legacy GPU chunk boundaries use this setting. Admission never uses it. */
+  readonly legacyGpu: number;
+  readonly gpuIndex?: number;
+  /** Explicit device capacity for systems that cannot report live VRAM. */
+  readonly gpuBudgetGb?: number;
 }
 
-/** What a waiter is told, once, when it has to wait for a CPU place. */
-export interface Waiting {
-  readonly lane: RenderLane;
-  /** What it waits for: a CPU place, or free memory. */
-  readonly reason: 'places' | 'memory';
-  /** CPU places taken, and how many there are. */
-  readonly busy: number;
-  readonly places: number;
-  /** Waiters whose turn comes first. */
-  readonly ahead: number;
-  /** Free physical memory, and how much a new place needs, in GB. */
-  readonly freeGb: number;
-  readonly needGb: number;
+export interface MemorySample {
+  readonly free: number;
+  readonly total: number;
+  /** Optional bytes resident in a process, already included in total minus free. */
+  readonly resident?: Readonly<Record<number, number>>;
+  readonly source: string;
+}
+
+export interface QueueMemory {
+  readonly ram: MemorySample;
+  readonly vram: MemorySample | null;
 }
 
 export interface PlaceRequest {
-  /** Short drawing commands use the separate light lane. Defaults to heavy. */
-  readonly lane?: RenderLane;
-  /** What the process draws, for `skink3 queue`. */
+  readonly group: string;
   readonly what: string;
-  /** The render the process belongs to: the workers of one render share it. Default: this process alone. */
-  readonly job?: string;
-  /** Called once if the process has to wait. */
+  readonly memory: RenderMemory;
+  /** Scene preflight reserves RAM independently of the four drawing workers. */
+  readonly draws?: boolean;
+  readonly short?: boolean;
   readonly onWait?: (waiting: Waiting) => void;
-  /** Overrides how often a waiter looks for its turn (tests). */
-  readonly pollMs?: number;
-  /** Gives the wait up: `acquireCpuPlace` then returns null and leaves no ticket. */
+  readonly onPressure?: (message: string) => void;
   readonly signal?: AbortSignal;
-  /** Free physical memory in bytes, now (tests). Default: what the system reports. */
-  readonly freeMemory?: () => number;
+  readonly pollMs?: number;
+  /** An injected reader for simultaneous, controlled admission tests. */
+  readonly sample?: () => QueueMemory;
 }
 
-export interface CpuPlace {
-  readonly index: number;
-  /** Says that the process has loaded its scene: it no longer counts as starting for the memory guard. */
-  loaded(): void;
-  /** Gives the place back. Safe to call more than once. */
+export interface Waiting {
+  readonly reason: 'group' | 'ram' | 'vram' | 'turn';
+  readonly group: string;
+  readonly busy: number;
+  readonly freeRam: number;
+  readonly freeVram: number | null;
+  readonly needRam: number;
+  readonly needVram: number;
+}
+
+export interface RenderLease {
+  /** Reconciles observed use and can grow the reservation before further allocation. */
+  verify(remainingRam?: number): void;
+  /** Holds the reservation if the worker exits before its encoder. */
+  trackChild(pid: number): void;
   release(): void;
 }
 
-/** A place or a ticket, as it is written in its file. */
-interface Entry {
-  readonly pid: number;
+interface RecordEntry {
   readonly token: string;
-  /** When the process asked for its place (a ticket) or took it (a place), in ms since the epoch. */
-  readonly since: number;
+  readonly pid: number;
+  readonly group: string;
   readonly what: string;
-  /** The render it belongs to. */
-  readonly job: string;
-  /** Written by this code; a slot without it belongs to a process of the code before the pools. */
-  readonly v: number;
-  /** A CPU place whose process has loaded its scene. */
-  readonly loaded: boolean;
-  /** GPU places requested or held by one master. */
-  readonly reservation?: number;
+  readonly since: number;
+  readonly draws: boolean;
+  readonly short: boolean;
+  readonly phase: 'waiting' | 'holding' | 'draining';
+  readonly memory: RenderMemory;
+  readonly children: readonly number[];
 }
 
-/** The default directory of the places: in the user's local data, the same for every checkout and every session. */
+export type QueueEntry = RecordEntry;
+export interface QueueState {
+  readonly active: readonly QueueEntry[];
+  readonly waiting: readonly QueueEntry[];
+  readonly memory: QueueMemory;
+  readonly available: { readonly ram: number; readonly vram: number | null };
+}
+
+const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT';
+const transient = (error: unknown): boolean => /^(EPERM|EACCES|EBUSY)$/.test((error as NodeJS.ErrnoException).code ?? '');
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+const pause = (): void => { Atomics.wait(sleeper, 0, 0, 1); };
+
+function alive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function deleteFile(file: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      unlinkSync(file);
+      return;
+    } catch (error) {
+      if (missing(error)) return;
+      if (!transient(error) || attempt === 50) throw error;
+      pause();
+    }
+  }
+}
+
+function list(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
+  }
+}
+
+/** Use unique lock tickets so a dead owner's cleanup cannot unlink a successor's lock. */
+function locked<T>(dir: string, action: () => T): T {
+  const name = 'memory-lock-' + process.pid + '-' + randomBytes(6).toString('hex');
+  const file = join(dir, name);
+  const contenders = (): string[] => list(dir).filter((n) => n.startsWith('memory-lock-') && n !== name);
+  const number = (other: string): number => {
+    const path = join(dir, other);
+    const pid = Number(/^memory-lock-(\d+)-[0-9a-f]+$/.exec(other)?.[1] ?? 0);
+    if (!pid) return -1;
+    if (!alive(pid)) {
+      deleteFile(path);
+      return -1;
+    }
+    try {
+      const match = /^(\d+)\n$/.exec(readFileSync(path, 'utf8'));
+      return match ? Number(match[1]) : 0;
+    } catch (error) {
+      if (missing(error)) return -1;
+      if (transient(error)) return 0;
+      throw error;
+    }
+  };
+  writeFileSync(file, '', { flag: 'wx' });
+  try {
+    const own = 1 + Math.max(0, ...contenders().map(number));
+    writeFileSync(file, own + '\n');
+    for (const other of contenders()) {
+      for (;;) {
+        const n = number(other);
+        if (n < 0 || n > own || (n === own && other > name)) break;
+        pause();
+      }
+    }
+    return action();
+  } finally {
+    deleteFile(file);
+  }
+}
+
+function readJson<T>(file: string, fallback: T): T {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as T;
+  } catch (error) {
+    if (missing(error)) return fallback;
+    throw error;
+  }
+}
+
+function writeJson(file: string, value: unknown): void {
+  const part = file + '.' + process.pid + '.part';
+  writeFileSync(part, JSON.stringify(value));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(part, file);
+      return;
+    } catch (error) {
+      if (!transient(error) || attempt === 50) throw error;
+      pause();
+    }
+  }
+}
+
 export function defaultSlotDir(): string {
   if (process.platform === 'win32') return join(process.env['LOCALAPPDATA'] || join(homedir(), 'AppData', 'Local'), 'skink3', 'render-slots');
   return join(process.env['XDG_CACHE_HOME'] || join(homedir(), '.cache'), 'skink3', 'render-slots');
 }
 
-function wholeNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function setting(env: NodeJS.ProcessEnv, name: string, fallback: number | undefined, integer = false): number | undefined {
   const raw = env[name]?.trim();
-  if (raw === undefined || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number of places, 0 for no limit; got "${raw}"`);
-  return n;
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || (integer && !Number.isSafeInteger(value))) {
+    throw new Error(name + ' must be a nonnegative ' + (integer ? 'integer' : 'number'));
+  }
+  return value;
 }
 
-/** Reads the process limits and the shared slot directory. */
 export function queueConfig(env: NodeJS.ProcessEnv = process.env): QueueConfig {
-  const legacy = wholeNumber(env, 'SKINK3_RENDER_SLOTS', 4);
-  const off = legacy === 0;
-  const rawRam = env['SKINK3_FREE_RAM_GB']?.trim();
-  let freeRamGb = off ? 0 : DEFAULT_FREE_RAM_GB;
-  if (rawRam !== undefined && rawRam !== '') {
-    freeRamGb = Number(rawRam);
-    if (!Number.isFinite(freeRamGb) || freeRamGb < 0) throw new Error(`SKINK3_FREE_RAM_GB must be a number of GB, 0 for no guard; got "${rawRam}"`);
-  }
-  const gpu = wholeNumber(env, 'SKINK3_GPU_PLACES', env['SKINK3_RENDER_SLOTS']?.trim() ? legacy : DEFAULT_GPU_PLACES);
-  const masterHeadroom = Math.max(0, gpu - GPU_PLACES_OUTSIDE_MASTER);
+  const gpuIndex = setting(env, 'SKINK3_GPU_INDEX', undefined, true);
+  const gpuBudgetGb = setting(env, 'SKINK3_GPU_BUDGET_GB', undefined);
   return {
-    cpu: wholeNumber(env, 'SKINK3_CPU_PLACES', off ? 0 : DEFAULT_CPU_PLACES),
-    light: wholeNumber(env, 'SKINK3_LIGHT_PLACES', off ? 0 : DEFAULT_LIGHT_PLACES),
-    gpu,
-    masterGpu: Math.min(masterHeadroom, wholeNumber(env, 'SKINK3_MASTER_GPU_PLACES', 4)),
-    legacyGpu: legacy,
-    freeRamGb,
-    dir: env['SKINK3_SLOT_DIR']?.trim() || defaultSlotDir(),
+    dir: resolve(env['SKINK3_SLOT_DIR']?.trim() || defaultSlotDir()),
+    freeRamGb: setting(env, 'SKINK3_FREE_RAM_GB', DEFAULT_FREE_RAM_GB)!,
+    freeVramGb: setting(env, 'SKINK3_FREE_VRAM_GB', DEFAULT_FREE_VRAM_GB)!,
+    legacyGpu: setting(env, 'SKINK3_RENDER_SLOTS', 4, true)!,
+    ...(gpuIndex === undefined ? {} : { gpuIndex }),
+    ...(gpuBudgetGb === undefined ? {} : { gpuBudgetGb }),
   };
 }
 
-/** The most CPU places one render holds while another render waits: half of them, at least one. */
-export function renderShare(places: number): number {
-  return Math.max(1, Math.floor(places / 2));
+function gpuSample(config: QueueConfig): MemorySample | null {
+  const file = join(config.dir, 'memory-gpu-' + (config.gpuIndex ?? 'auto') + '.json');
+  const now = Date.now();
+  const cached = readJson<{ at: number; value: MemorySample | null } | null>(file, null);
+  if (cached && now - cached.at >= 0 && now - cached.at < GPU_SAMPLE_MS) return cached.value;
+  const query = spawnSync('nvidia-smi', [
+    '--query-gpu=index,memory.total,memory.free',
+    '--format=csv,noheader,nounits',
+  ], { encoding: 'utf8', timeout: 1_000, windowsHide: true });
+  const rows = query.status === 0 ? query.stdout.trim().split(/\r?\n/) : [];
+  const row = config.gpuIndex === undefined
+    ? (rows.length === 1 ? rows[0] : undefined)
+    : rows.find((line) => Number(line.split(',')[0]) === config.gpuIndex);
+  const fields = row?.split(',').map((field) => Number(field.trim()));
+  const cap = fields?.[1] ?? 0;
+  const free = fields?.[2] ?? -1;
+  const value = cap > 0 && free >= 0 && free <= cap
+    ? { free: free * 2 ** 20, total: cap * 2 ** 20, source: 'nvidia-smi' }
+    : null;
+  writeJson(file, { at: Date.now(), value });
+  return value;
 }
 
-/** The line a process waiting for a CPU place prints. */
-export function waitingLine(w: Waiting): string {
-  if (w.reason === 'memory') return `waiting for memory: ${w.freeGb.toFixed(1)} GiB free, admission requires ${w.needGb.toFixed(1)} GiB`;
-  const pool = w.lane === 'heavy' ? 'heavy CPU' : 'light';
-  return `waiting for a ${pool} place: ${w.busy} of ${w.places} busy${w.ahead > 0 ? `, ${w.ahead} ahead` : ''}`;
+function memoryOf(config: QueueConfig, gpu: boolean, sample?: () => QueueMemory): QueueMemory {
+  if (sample) return sample();
+  const ram: MemorySample = { free: freemem(), total: totalmem(), source: 'OS' };
+  if (!gpu) return { ram, vram: null };
+  const measured = gpuSample(config);
+  if (measured) return { ram, vram: measured };
+  const budget = (config.gpuBudgetGb ?? 0) * GIB;
+  return { ram, vram: budget > 0 ? { free: budget, total: budget, source: 'configured budget' } : null };
 }
 
-const errorCode = (e: unknown): string => String((e as { code?: unknown } | null)?.code ?? '');
-
-const sleeper = new Int32Array(new SharedArrayBuffer(4));
-
-/** Sleeps without returning to the event loop; only for the few milliseconds of a busy lock. */
-function sleepSync(ms: number): void {
-  Atomics.wait(sleeper, 0, 0, ms);
+function sweep(entries: readonly RecordEntry[]): RecordEntry[] {
+  return entries.flatMap((entry) => {
+    if (entry.phase !== 'draining' && alive(entry.pid)) return [entry];
+    const children = entry.children.filter(alive);
+    return children.length > 0 ? [{ ...entry, children, phase: 'draining' as const }] : [];
+  });
 }
 
-/** Whether a process of this number runs (EPERM: it runs, as another user). */
-function processAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  if (pid === process.pid) return true;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return errorCode(e) === 'EPERM';
-  }
+/** All state publications and decisions use the same lock across worktrees. */
+function edit<T>(dir: string, action: (entries: RecordEntry[]) => T): T {
+  return locked(dir, () => {
+    const file = join(dir, 'memory-queue.json');
+    const previous = readJson<RecordEntry[]>(file, []);
+    const entries = sweep(previous);
+    const before = JSON.stringify(previous);
+    const result = action(entries);
+    const after = JSON.stringify(entries);
+    if (before !== after) writeJson(file, entries);
+    return result;
+  });
 }
 
-/** Creates a file that must not exist yet. False when it exists, or the system refuses for a moment. */
-function createExclusive(file: string, data: string): boolean {
-  let fd: number;
-  try {
-    fd = openSync(file, 'wx');
-  } catch (e) {
-    if (errorCode(e) === 'EEXIST' || TRANSIENT.has(errorCode(e))) return false;
-    throw e;
-  }
-  try {
-    writeSync(fd, data);
-  } finally {
-    closeSync(fd);
-  }
-  return true;
+function committed(entry: RecordEntry, kind: keyof RenderMemory, sample: MemorySample): number {
+  // Only credit values from the same snapshot as the free memory figure.
+  const observed = [entry.pid, ...entry.children].reduce((bytes, pid) => bytes + (sample.resident?.[pid] ?? 0), 0);
+  return Math.max(0, entry.memory[kind] - observed);
 }
 
-/** Removes a file; true when it is gone. */
-function removeFile(file: string): boolean {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      unlinkSync(file);
-      return true;
-    } catch (e) {
-      if (errorCode(e) === 'ENOENT') return true;
-      if (!TRANSIENT.has(errorCode(e))) return false;
-      sleepSync(10);
-    }
-  }
-  return false;
+function available(active: readonly RecordEntry[], sample: MemorySample, kind: keyof RenderMemory, floor: number): number {
+  const outstanding = active.reduce((bytes, entry) => bytes + committed(entry, kind, sample), 0);
+  return sample.free - floor - outstanding;
 }
 
-/** Marks a file as refreshed now. */
-function touch(file: string): void {
-  try {
-    const now = Date.now() / 1000;
-    utimesSync(file, now, now);
-  } catch {
-    // Gone: a ticket is written again at the next look; a place taken for gone is not given back twice.
-  }
-}
-
-type Read = { readonly entry: Entry; readonly mtime: number } | 'missing' | 'busy' | 'broken';
-
-/** A place, a slot or a ticket: its entry and when it was last refreshed; 'busy' when the system refuses it for a moment. */
-function readEntry(file: string): Read {
-  let text: string;
-  let mtime: number;
-  try {
-    mtime = statSync(file).mtimeMs;
-    text = readFileSync(file, 'utf8');
-  } catch (e) {
-    return errorCode(e) === 'ENOENT' ? 'missing' : TRANSIENT.has(errorCode(e)) ? 'busy' : 'broken';
-  }
-  try {
-    const e = JSON.parse(text) as Record<string, unknown>;
-    if (typeof e['pid'] !== 'number' || typeof e['token'] !== 'string' || typeof e['since'] !== 'number') return 'broken';
-    const pid = e['pid'];
-    return {
-      entry: {
-        pid,
-        token: e['token'],
-        since: e['since'],
-        what: typeof e['what'] === 'string' ? e['what'] : '',
-        job: typeof e['job'] === 'string' ? e['job'] : `process ${pid}`,
-        v: typeof e['v'] === 'number' ? e['v'] : 1,
-        loaded: e['loaded'] === true,
-        ...(typeof e['reservation'] === 'number' ? { reservation: e['reservation'] } : {}),
-      },
-      mtime,
-    };
-  } catch {
-    // Written whole under a lock, or linked whole into place, so a part of one is what a process left when it died.
-    return 'broken';
-  }
-}
-
-/** An entry is held while its process runs and refreshes it. */
-function live(r: { readonly entry: Entry; readonly mtime: number }, now: number): boolean {
-  return now - r.mtime < STALE_MS && processAlive(r.entry.pid);
-}
-
-/** What a file of this code says: what the code before the pools reads in a slot, and what the pools add. */
-function entryText(e: Entry, kind: 'cpu' | 'gpu' | 'wait'): string {
-  // `priority` keeps a GPU place a valid slot for a process of the code before the pools, which would sweep it otherwise.
-  return JSON.stringify({ ...e, priority: 'high', kind });
-}
-
-const gpuFile = (dir: string, index: number): string => join(dir, `slot-${index}`);
-/** A GPU ticket is named `gpuwait-<since, 13 digits>-<pid>-<random>`: the order of the names is the order of the turns. */
-const GPU_TICKET = /^gpuwait-(\d{13})-(\d+)-[0-9a-f]+$/;
-/** The file a GPU place is linked from: `tmp-<pid>-<random>`. */
-const TMP = /^tmp-(\d+)-[0-9a-f]+$/;
-/** A ticket of the code before the pools: `wait-<pid>-<random>`. */
-const OLD_TICKET = /^wait-(\d+)-[0-9a-f]+$/;
-const MASTER_TICKET = /^master-turn-wait-(\d+)-[0-9a-f]+$/;
-const MASTER_GPU_TICKET = /^master-gpu-wait-(\d+)-[0-9a-f]+$/;
-
-/** Runs `fn` while this process alone holds the lock of that name in the directory. */
-function withLock<T>(dir: string, name: string, fn: () => T): T {
-  const file = join(dir, name);
-  for (let attempt = 0; ; attempt++) {
-    if (createExclusive(file, String(process.pid))) break;
-    // Taken: by a live process for a moment, or left by one that died or hung holding it.
-    let stale = false;
-    try {
-      const age = Date.now() - statSync(file).mtimeMs;
-      const pid = Number(readFileSync(file, 'utf8').trim());
-      stale = age > LOCK_STALE_MS || (pid > 0 && !processAlive(pid));
-    } catch {
-      // Gone or refused for a moment: try again.
-    }
-    if (stale) removeFile(file);
-    else sleepSync(1 + (attempt % 4));
-  }
-  try {
-    return fn();
-  } finally {
-    removeFile(file);
-  }
-}
-
-/** The lock of the code before the pools; this code takes it only to sweep a slot of a dead process. */
-const SLOT_LOCK = 'lock';
-
-const listDir = (dir: string): string[] => {
-  try {
-    return readdirSync(dir);
-  } catch {
-    // No directory yet: nothing is held and nobody waits.
-    return [];
-  }
-};
-
-/** Signals on which a process would end without a handler: places are given back on them too. */
-const SIGNALS = (['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const).filter((s) => osConstants.signals[s] !== undefined);
-
-/** Runs `fn` if the process exits or is ended by a signal before `off` is called. */
-function onExit(fn: () => void): () => void {
-  let on = true;
-  const off = (): void => {
-    if (!on) return;
-    on = false;
-    process.off('exit', fn);
-    for (const s of SIGNALS) process.off(s, onSignal);
+function capacity(config: QueueConfig, active: readonly RecordEntry[], sample: QueueMemory): QueueState['available'] {
+  return {
+    ram: available(active, sample.ram, 'ram', config.freeRamGb * GIB),
+    vram: sample.vram ? available(active, sample.vram, 'vram', config.freeVramGb * GIB) : null,
   };
-  const onSignal = (signal: NodeJS.Signals): void => {
-    off();
-    fn();
-    // A process without a handler of its own would have ended on this signal: end it as it would have.
-    if (process.listenerCount(signal) === 0) process.exit(128 + (osConstants.signals[signal] ?? 0));
-  };
-  process.on('exit', fn);
-  for (const s of SIGNALS) process.on(s, onSignal);
-  return off;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-const newToken = (): string => `${process.pid}-${randomBytes(6).toString('hex')}`;
-
-// --- Process admission -------------------------------------------------------------------------------------------
-
-const GIB = 2 ** 30;
-const LANES = ['heavy', 'light'] as const;
-const legacySlotName = /^slot-(\d+)$/;
-const placeName = /^(heavy|light)-(\d+)$/;
-const admissionTicket = /^(heavy|light)-wait-(\d+)-[0-9a-f]+$/;
-const placeFile = (dir: string, lane: RenderLane, index: number): string => join(dir, `${lane}-${index}`);
-
-interface LaneSurvey {
-  readonly held: Map<number, Entry | null>;
-  readonly waiting: Entry[];
+function drawingCount(active: readonly RecordEntry[], group: string): number {
+  return active.filter((entry) => entry.phase === 'holding' && entry.draws && entry.group === group).length;
 }
 
-interface AdmissionSurvey {
-  readonly heavy: LaneSurvey;
-  readonly light: LaneSurvey;
-  readonly old: Entry[];
-  unknownOld: number;
+function memoryReason(need: RenderMemory, free: QueueState['available']): 'ram' | 'vram' | null {
+  if (need.ram > free.ram) return 'ram';
+  if (need.vram > 0 && (free.vram === null || need.vram > free.vram)) return 'vram';
+  return null;
 }
 
-function byArrival(a: Entry, b: Entry): number {
-  return a.since - b.since || a.pid - b.pid || a.token.localeCompare(b.token);
-}
-
-function surveyAdmission(config: QueueConfig, now: number, sweep = false): AdmissionSurvey {
-  const state: AdmissionSurvey = {
-    heavy: { held: new Map(), waiting: [] },
-    light: { held: new Map(), waiting: [] },
-    old: [],
-    unknownOld: 0,
-  };
-  for (const name of listDir(config.dir)) {
-    const place = placeName.exec(name);
-    const ticket = admissionTicket.exec(name);
-    const oldSlot = legacySlotName.test(name);
-    if (!place && !ticket && !oldSlot) continue;
-    const file = join(config.dir, name);
-    const r = readEntry(file);
-    if (r === 'missing') continue;
-    // Old processes own their slot files. Count a partial write provisionally.
-    if (oldSlot) {
-      if (r === 'busy' || r === 'broken') state.unknownOld++;
-      else if (r.entry.v < VERSION && live(r, now)) state.old.push(r.entry);
-      continue;
-    }
-    const entry = typeof r === 'object' && processAlive(r.entry.pid) ? r.entry : null;
-    // Admission records are created and updated under the admission lock.
-    if (!entry && r !== 'busy' && sweep && removeFile(file)) continue;
-    if (place && (entry || sweep || r === 'busy')) {
-      state[place[1] as RenderLane].held.set(Number(place[2]), entry);
-    } else if (ticket && entry) {
-      state[ticket[1] as RenderLane].waiting.push(entry);
-    }
-  }
-  for (const lane of LANES) state[lane].waiting.sort(byArrival);
-  return state;
-}
-
-/**
- * Both lanes update their RAM reservations together. Each lock contender publishes its own name, chooses a
- * Lamport ticket number, then waits for lower (number, name) pairs. A dead contender cannot block the mutex.
- */
-function withAdmissionLock<T>(dir: string, fn: () => T): T {
-  const prefix = 'admit-';
-  const own = prefix + newToken();
-  const file = join(dir, own);
-  const contenders = (): string[] => listDir(dir).filter((name) => name.startsWith(prefix) && name !== own);
-  const number = (name: string): number => {
-    const other = join(dir, name);
-    if (!processAlive(Number(name.split('-')[1]))) {
-      removeFile(other);
-      return -1;
-    }
-    try {
-      const match = /^(\d+)\n$/.exec(readFileSync(other, 'utf8'));
-      return match ? Number(match[1]) : 0;
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') return -1;
-      if (TRANSIENT.has(errorCode(error))) return 0;
-      throw error;
-    }
-  };
-  // A record without a complete number means the contender is choosing.
-  writeFileSync(file, '');
-  try {
-    const chosen = 1 + Math.max(0, ...contenders().map(number));
-    writeFileSync(file, `${chosen}\n`);
-    for (const name of contenders()) {
-      for (;;) {
-        const n = number(name);
-        if (n < 0 || n > chosen || (n === chosen && name > own)) break;
-        sleepSync(1);
-      }
-    }
-    return fn();
-  } finally {
-    removeFile(file);
+export class GpuMemoryUnavailableError extends Error {
+  constructor() {
+    super('Cannot read GPU memory. Select a device with SKINK3_GPU_INDEX, set SKINK3_GPU_BUDGET_GB, or use CPU drawing with x264.');
   }
 }
 
-function availableRam(state: AdmissionSurvey, now: number, freeBytes: number): number {
-  const starting = LANES.flatMap((lane) => [...state[lane].held.values()])
-    .filter((h) => h && !h.loaded && now - h.since < STARTING_MS).length;
-  return freeBytes / GIB - starting * STARTING_GB;
+function impossible(config: QueueConfig, need: RenderMemory, sample: QueueMemory): void {
+  if (need.ram + config.freeRamGb * GIB > sample.ram.total) {
+    throw new Error('The RAM reservation and free RAM floor exceed installed RAM');
+  }
+  if (need.vram <= 0) return;
+  if (!sample.vram) throw new GpuMemoryUnavailableError();
+  if (need.vram + config.freeVramGb * GIB > sample.vram.total) {
+    throw new Error('The VRAM reservation and free VRAM floor exceed the GPU memory budget');
+  }
 }
 
-/** Older eligible requests have first call on free places. A competing heavy job limits each job's share. */
-function turnOf(config: QueueConfig, state: AdmissionSurvey, lane: RenderLane, me: Entry, freeBytes: number, now: number): { claim: number | null; waiting: Waiting } {
-  const { held, waiting: order } = state[lane];
-  const places = lane === 'heavy' ? config.cpu : config.light;
-  const old = lane === 'heavy' ? state.old : [];
-  const busy = held.size + old.length + (lane === 'heavy' ? state.unknownOld : 0);
-  const jobs = new Set(order.map((e) => e.job));
-  const share = lane === 'heavy' && places > 0 && jobs.size > 1 ? renderShare(places) : Infinity;
-  const counts = new Map<string, number>();
-  for (const e of [...held.values(), ...old]) {
-    if (e) counts.set(e.job, (counts.get(e.job) ?? 0) + 1);
+/** Arrival order with room for fitting short work and a bounded bypass of an older eligible waiter. */
+function nextEntry(active: readonly RecordEntry[], waiting: readonly RecordEntry[], free: QueueState['available'], now: number): RecordEntry | null {
+  const eligible = waiting.filter((entry) => !entry.draws || drawingCount(active, entry.group) < GROUP_WORKERS);
+  const oldest = eligible[0];
+  if (!oldest) return null;
+  if (!memoryReason(oldest.memory, free)) {
+    if (oldest.short || now - oldest.since >= FAIRNESS_MS) return oldest;
+    return eligible.find((entry) => entry.short && !memoryReason(entry.memory, free)) ?? oldest;
   }
-  const waiting: Waiting = { lane, reason: 'places', places, busy, ahead: 0, freeGb: freeBytes / GIB, needGb: config.freeRamGb };
-  const memory = availableRam(state, now, freeBytes);
-  if (config.freeRamGb > 0 && memory < config.freeRamGb) return { claim: null, waiting: { ...waiting, reason: 'memory' } };
-  let ahead = 0;
-  for (const e of order) {
-    const count = counts.get(e.job) ?? 0;
-    if (e.token === me.token) {
-      if (count >= share || (places > 0 && busy + ahead >= places)) break;
-      if (config.freeRamGb > 0 && memory - ahead * STARTING_GB < config.freeRamGb) {
-        return { claim: null, waiting: { ...waiting, reason: 'memory', ahead } };
-      }
-      let index = 0;
-      while (held.has(index)) index++;
-      return { claim: index, waiting };
-    }
-    if (count >= share) continue;
-    counts.set(e.job, count + 1);
-    ahead++;
-  }
-  return { claim: null, waiting: { ...waiting, ahead } };
+  // Once due, reserve the scarce resource for the oldest request. Other jobs can still use a resource it does not need.
+  const reason = memoryReason(oldest.memory, free);
+  return eligible.slice(1).find((entry) => !memoryReason(entry.memory, free)
+    && (now - oldest.since < FAIRNESS_MS || (reason === 'vram' && entry.memory.vram === 0))) ?? null;
 }
 
-/** Takes a heavy or light place before loading the scene. A zero count limit still applies the RAM guard. */
-export async function acquireCpuPlace(config: QueueConfig, request: PlaceRequest): Promise<CpuPlace | null> {
-  const lane = request.lane ?? 'heavy';
-  const limit = lane === 'heavy' ? config.cpu : config.light;
-  if ((limit === 0 && config.freeRamGb === 0) || request.signal?.aborted) return null;
-  const { dir } = config;
-  mkdirSync(dir, { recursive: true });
-  const token = newToken();
-  const ticket = join(dir, `${lane}-wait-${token}`);
-  const freeMemory = request.freeMemory ?? freemem;
-  const dropTicket = (): void => {
-    removeFile(ticket);
+function gb(bytes: number): string {
+  return (Math.max(0, bytes) / GIB).toFixed(2) + ' GiB';
+}
+
+export function waitingLine(waiting: Waiting): string {
+  if (waiting.reason === 'group') return 'waiting for group ' + waiting.group + ' (' + waiting.busy + '/' + GROUP_WORKERS + ' drawing workers)';
+  if (waiting.reason === 'turn') return 'waiting for an earlier render request';
+  const free = waiting.reason === 'ram' ? waiting.freeRam : waiting.freeVram;
+  const need = waiting.reason === 'ram' ? waiting.needRam : waiting.needVram;
+  return 'waiting for ' + waiting.reason.toUpperCase() + ' (' + gb(free ?? 0) + ' available to reserve, ' + gb(need) + ' needed)';
+}
+
+export async function acquireRenderLease(config: QueueConfig, request: PlaceRequest): Promise<RenderLease | null> {
+  if (request.signal?.aborted) return null;
+  if (!request.group.trim() || [request.memory.ram, request.memory.vram].some((n) => !Number.isFinite(n) || n < 0)) {
+    throw new Error('A render reservation needs a group and nonnegative, finite memory estimates');
+  }
+  mkdirSync(config.dir, { recursive: true });
+  const token = process.pid + '-' + randomBytes(8).toString('hex');
+  const cancel = (): void => {
+    edit(config.dir, (entries) => {
+      const i = entries.findIndex((entry) => entry.token === token);
+      if (i >= 0) entries.splice(i, 1);
+    });
   };
-  const offTicket = onExit(dropTicket);
-  let me: Entry | undefined;
+  let admitted = false;
   let told = false;
   try {
-    for (;;) {
-      if (request.signal?.aborted) return null;
-      const turn = withAdmissionLock(dir, () => {
+    while (!request.signal?.aborted) {
+      const result = edit(config.dir, (entries) => {
+        const active = entries.filter((entry) => entry.phase !== 'waiting');
+        const queued = entries.filter((entry) => entry.phase === 'waiting');
+        const sample = memoryOf(config, request.memory.vram > 0 || queued.some((entry) => entry.memory.vram > 0), request.sample);
+        impossible(config, request.memory, sample);
+        const free = capacity(config, active, sample);
+        let own = queued.find((entry) => entry.token === token);
         const now = Date.now();
-        const state = surveyAdmission(config, now, true);
-        if (!me) {
-          // Serialize equal wall-clock milliseconds in registration order.
-          const order = state[lane].waiting;
-          const since = Math.max(now, (order.at(-1)?.since ?? 0) + 1);
-          me = { pid: process.pid, token, since, what: request.what, job: request.job ?? token, v: VERSION, loaded: false };
-          writeFileSync(ticket, entryText(me, 'wait'));
-          order.push(me);
+        if (!own) {
+          own = {
+            token, pid: process.pid, group: request.group, what: request.what,
+            since: Math.max(now, queued.at(-1)?.since ?? 0), draws: request.draws ?? true,
+            short: request.short ?? false, phase: 'waiting', memory: request.memory, children: [],
+          };
+          entries.push(own);
+          queued.push(own);
         }
-        const t = turnOf(config, state, lane, me, freeMemory(), now);
-        if (t.claim === null) return { place: null, waiting: t.waiting };
-        const entry: Entry = { ...me, since: now };
-        const file = placeFile(dir, lane, t.claim);
-        if (!createExclusive(file, entryText(entry, 'cpu'))) return { place: null, waiting: t.waiting };
-        dropTicket();
-        return { place: holdCpuPlace(dir, file, t.claim, entry), waiting: t.waiting };
+        const busy = drawingCount(active, own.group);
+        const wantsTurn = nextEntry(active, queued, free, now)?.token === token;
+        if (wantsTurn) {
+          entries[entries.indexOf(own)] = { ...own, phase: 'holding' };
+          return null;
+        }
+        const reason = own.draws && busy >= GROUP_WORKERS ? 'group' : memoryReason(own.memory, free) ?? 'turn';
+        return { reason, group: own.group, busy, freeRam: free.ram, freeVram: free.vram, needRam: own.memory.ram, needVram: own.memory.vram } satisfies Waiting;
       });
-      if (turn.place) return turn.place;
+      if (result === null) {
+        admitted = true;
+        return hold(config, token, request);
+      }
       if (!told) {
         told = true;
-        request.onWait?.(turn.waiting);
+        request.onWait?.(result);
       }
-      await sleep(request.pollMs ?? ADMISSION_POLL_MS);
-    }
-  } finally {
-    offTicket();
-    dropTicket();
-  }
-}
-
-function holdCpuPlace(dir: string, file: string, index: number, entry: Entry): CpuPlace {
-  let held = true;
-  const release = (): void => {
-    if (!held) return;
-    held = false;
-    off();
-    removeFile(file);
-  };
-  const off = onExit(release);
-  return {
-    index,
-    loaded: () => {
-      if (held) withAdmissionLock(dir, () => writeFileSync(file, entryText({ ...entry, loaded: true }, 'cpu')));
-    },
-    release,
-  };
-}
-
-// --- The GPU pool -------------------------------------------------------------------------------------------------
-
-/** One set of GPU places per drawing process. A second overlapping read in that process shares its place. */
-class GpuGate {
-  private readonly owner: string;
-  private readonly token = newToken();
-  private count = 0;
-  private index: number | null = null;
-  private acquiring: Promise<void> | null = null;
-  private ticket: string | null = null;
-  private stopped = false;
-  private readonly beat: ReturnType<typeof setInterval>;
-  private readonly offExit: () => void;
-
-  private readonly config: QueueConfig;
-  private readonly what: string;
-  private readonly onWait: ((busy: number, places: number) => void) | undefined;
-
-  constructor(config: QueueConfig, what: string, onWait?: (busy: number, places: number) => void) {
-    this.config = config;
-    this.what = what;
-    this.onWait = onWait;
-    mkdirSync(config.dir, { recursive: true });
-    this.owner = join(config.dir, `tmp-${this.token}`);
-    // Every lease links this complete record to a legacy slot name. No metadata writes in the frame fast path.
-    writeFileSync(this.owner, entryText(this.entry(Date.now()), 'gpu'));
-    this.beat = setInterval(() => {
-      // The legacy scheduler checks mtime even for a live PID. Hard links share this timestamp.
-      touch(this.owner);
-      if (this.ticket) touch(this.ticket);
-    }, HEARTBEAT_MS);
-    this.beat.unref();
-    this.offExit = onExit(() => this.close());
-  }
-
-  async take(): Promise<() => void> {
-    if (this.stopped) throw new Error('the GPU gate was closed before drawing');
-    this.count++;
-    try {
-      if (this.index === null) {
-        this.acquiring ??= this.acquire().finally(() => {
-          this.acquiring = null;
-        });
-        await this.acquiring;
-      }
-    } catch (error) {
-      this.drop();
-      throw error;
-    }
-    let given = false;
-    return () => {
-      if (given) return;
-      given = true;
-      this.drop();
-    };
-  }
-
-  /** Cancels waiting and lets a read that already started return its lease. */
-  stop(): void {
-    this.stopped = true;
-    if (this.count === 0) this.close();
-  }
-
-  private entry(since: number): Entry {
-    return { pid: process.pid, token: this.token, since, what: this.what, job: '', v: VERSION, loaded: false };
-  }
-
-  private drop(): void {
-    if (--this.count !== 0) return;
-    this.giveBack();
-    if (this.stopped) this.close();
-  }
-
-  private close(): void {
-    clearInterval(this.beat);
-    this.offExit();
-    this.giveBack();
-    if (this.ticket) removeFile(this.ticket);
-    removeFile(this.owner);
-  }
-
-  private giveBack(): void {
-    if (this.index === null) return;
-    const file = gpuFile(this.config.dir, this.index);
-    // A live owner is never reaped by another new holder. The legacy scheduler also sees this as a live slot.
-    if (!removeFile(file)) throw new Error(`cannot return GPU place ${this.index}: ${file}`);
-    this.index = null;
-  }
-
-  private async acquire(): Promise<void> {
-    const { dir, gpu } = this.config;
-    let names = listDir(dir);
-    // Uncontended frame: one directory read, one atomic link, and one unlink after readback.
-    const ceiling = ordinaryGpuCeiling(this.config, names);
-    if (!names.some((n) => GPU_TICKET.test(n)) && this.claim(names, this.lowest(names, ceiling), ceiling)) return;
-    const since = Date.now();
-    const name = `gpuwait-${String(since).padStart(13, '0')}-${this.token}`;
-    const ticket = join(dir, name);
-    this.ticket = ticket;
-    writeFileSync(ticket, entryText(this.entry(since), 'wait'));
-    let pause = 1;
-    let sweepAt = 0;
-    let told = false;
-    try {
-      for (;;) {
-        if (this.stopped) throw new Error('the GPU gate was closed while waiting');
-        names = listDir(dir);
-        const line = names.filter((n) => {
-          const pid = GPU_TICKET.exec(n)?.[2];
-          return pid !== undefined && processAlive(Number(pid));
-        }).sort();
-        const ahead = line.indexOf(name);
-        const ceiling = ordinaryGpuCeiling(this.config, names);
-        const lowest = this.lowest(names, ceiling);
-        const slots = new Set(names);
-        let free = 0;
-        for (let i = lowest; i < ceiling; i++) if (!slots.has(`slot-${i}`)) free++;
-        if (ahead >= 0 && ahead < free && this.claim(names, lowest, ceiling)) return;
-        if (!told) {
-          told = true;
-          this.onWait?.(names.filter((n) => legacySlotName.test(n)).length, gpu);
-        }
-        if (Date.now() >= sweepAt) {
-          sweepAt = Date.now() + GPU_DEAD_MS;
-          sweepGpu(this.config, names);
-        }
-        await sleep(pause);
-        pause = Math.min(GPU_POLL_MAX_MS, pause * 2);
-      }
-    } finally {
-      removeFile(ticket);
-      this.ticket = null;
-    }
-  }
-
-  /** Leave some slots available to old waiters that can only poll their original range every 200 ms. */
-  private lowest(names: readonly string[], ceiling: number): number {
-    const { dir, legacyGpu } = this.config;
-    const oldWaiting = names.some((n) => {
-      if (!OLD_TICKET.test(n)) return false;
-      const r = readEntry(join(dir, n));
-      return typeof r === 'object' && live(r, Date.now());
-    });
-    return oldWaiting ? Math.min(legacyGpu, ceiling - 1) : 0;
-  }
-
-  private claim(names: readonly string[], lowest: number, ceiling: number): boolean {
-    const { dir, gpu } = this.config;
-    const taken = new Set(names);
-    if (names.filter((n) => legacySlotName.test(n)).length >= gpu) return false;
-    // Prefer slots outside the legacy range, but share all six slots when no legacy process waits.
-    for (let i = ceiling - 1; i >= lowest; i--) {
-      if (taken.has(`slot-${i}`)) continue;
-      try {
-        linkSync(this.owner, gpuFile(dir, i));
-        this.index = i;
-        return true;
-      } catch (error) {
-        if (errorCode(error) !== 'EEXIST' && !TRANSIENT.has(errorCode(error))) throw error;
-      }
-    }
-    return false;
-  }
-}
-
-function ordinaryGpuCeiling(config: QueueConfig, names: readonly string[]): number {
-  for (const name of names) {
-    if (!MASTER_GPU_TICKET.test(name)) continue;
-    const record = readEntry(join(config.dir, name));
-    if (typeof record === 'object' && processAlive(record.entry.pid)) {
-      const availableToOthers = config.gpu - (record.entry.reservation ?? 0);
-      // A long legacy chunk cannot yield at a frame boundary. Keep the other slots available until
-      // there is room for the complete reservation after current ordinary frames finish.
-      const legacy = names.filter((n) => {
-        if (!legacySlotName.test(n)) return false;
-        const slot = readEntry(join(config.dir, n));
-        return slot === 'busy' || slot === 'broken' || (typeof slot === 'object' && slot.entry.v < VERSION && live(slot, Date.now()));
-      }).length;
-      return legacy > availableToOthers ? config.gpu : Math.max(1, availableToOthers);
-    }
-  }
-  return config.gpu;
-}
-
-/** Reap dead slots under the legacy mutex so a legacy sweeper or release cannot unlink a successor. */
-function sweepGpu(config: QueueConfig, names: readonly string[]): void {
-  const { dir } = config;
-  const isDead = (name: string): boolean => {
-    const r = readEntry(join(dir, name));
-    return r === 'broken' || (typeof r === 'object' && (
-      r.entry.v < VERSION ? !live(r, Date.now()) : !processAlive(r.entry.pid)
-    ));
-  };
-  const dead = names.filter((n) => legacySlotName.test(n) && isDead(n));
-  if (dead.length > 0) {
-    withLock(dir, SLOT_LOCK, () => {
-      for (const n of dead) if (isDead(n)) removeFile(join(dir, n));
-    });
-  }
-  for (const name of names) {
-    const pid = GPU_TICKET.exec(name)?.[2] ?? TMP.exec(name)?.[1] ?? MASTER_GPU_TICKET.exec(name)?.[1];
-    if (pid !== undefined && !processAlive(Number(pid))) removeFile(join(dir, name));
-  }
-}
-
-type Release = () => void;
-
-/**
- * A turn excludes other masters before their workers occupy CPU admission. It consumes no GPU places.
- * The separate supervisor process holds the turn even while its assembler is blocked in a synchronous child.
- */
-export async function acquireMasterTurn(config: QueueConfig, what: string, signal: AbortSignal, onWait?: () => void): Promise<Release | null> {
-  mkdirSync(config.dir, { recursive: true });
-  const token = newToken();
-  const turn = join(config.dir, 'master-turn');
-  const ticket = join(config.dir, `master-turn-wait-${token}`);
-  const entry: Entry = { pid: process.pid, token, since: Date.now(), what, job: 'master', v: VERSION, loaded: false };
-  const isLive = (r: Read): r is { entry: Entry; mtime: number } => typeof r === 'object' && processAlive(r.entry.pid);
-  let told = false;
-  withAdmissionLock(config.dir, () => writeFileSync(ticket, entryText(entry, 'wait')));
-  try {
-    while (!signal.aborted) {
-      const acquired = withAdmissionLock(config.dir, () => {
-        const held = readEntry(turn);
-        if (held === 'busy' || isLive(held)) return false;
-        const waiting: Entry[] = [];
-        for (const name of listDir(config.dir)) {
-          if (!MASTER_TICKET.test(name)) continue;
-          const file = join(config.dir, name);
-          const r = readEntry(file);
-          if (isLive(r)) waiting.push(r.entry);
-          else if (r === 'broken' || typeof r === 'object') removeFile(file);
-        }
-        waiting.sort(byArrival);
-        if (waiting[0]?.token !== token) return false;
-        return removeFile(turn) && createExclusive(turn, entryText(entry, 'cpu'));
-      });
-      if (acquired) return () => { removeFile(turn); };
-      if (!told) onWait?.();
-      told = true;
-      await sleep(ADMISSION_POLL_MS);
+      await new Promise<void>((done) => setTimeout(done, request.pollMs ?? ADMISSION_POLL_MS));
     }
     return null;
   } finally {
-    removeFile(ticket);
+    if (!admitted) cancel();
   }
 }
 
-/** Claims the whole master reservation or none. Ordinary and legacy draw workers share these same slot names. */
-export async function acquireMasterGpuPlaces(config: QueueConfig, places: number, what: string, signal: AbortSignal): Promise<Release | null> {
-  const { dir, gpu } = config;
-  const token = newToken();
-  const entry: Entry = { pid: process.pid, token, since: Date.now(), what, job: 'master', v: VERSION, loaded: true, reservation: places };
-  const ticket = join(dir, `master-gpu-wait-${token}`);
-  const owner = join(dir, `tmp-${token}`);
-  writeFileSync(owner, entryText(entry, 'gpu'));
-  writeFileSync(ticket, entryText(entry, 'wait'));
-  const beat = setInterval(() => touch(owner), HEARTBEAT_MS);
-  beat.unref();
-  let acquired = false;
-  const cleanup = (): void => {
-    clearInterval(beat);
-    removeFile(owner);
+function hold(config: QueueConfig, token: string, request: PlaceRequest): RenderLease {
+  let released = false;
+  let pressureReported = false;
+  const update = (action: (entries: RecordEntry[], i: number, own: RecordEntry) => void): void => {
+    edit(config.dir, (entries) => {
+      const i = entries.findIndex((entry) => entry.token === token);
+      if (i >= 0) action(entries, i, entries[i]!);
+    });
   };
-  try {
-    while (!signal.aborted) {
-      const names = listDir(dir);
-      sweepGpu(config, names);
-      const free = Array.from({ length: gpu }, (_, i) => gpu - 1 - i).filter((i) => !names.includes(`slot-${i}`));
-      if (free.length >= places && names.filter((n) => legacySlotName.test(n)).length + places <= gpu) {
-        const held: number[] = [];
-        const release = (): void => {
-          for (const i of held.splice(0)) removeFile(gpuFile(dir, i));
+  return {
+    verify: (remainingRam = 0) => {
+      if (released) return;
+      let pressure: string | undefined;
+      update((entries, i, own) => {
+        const sample = memoryOf(config, own.memory.vram > 0, request.sample);
+        const lowRam = sample.ram.free < config.freeRamGb * GIB;
+        const lowVram = sample.vram && sample.vram.free < config.freeVramGb * GIB;
+        if (!pressureReported && (lowRam || lowVram)) {
+          pressureReported = true;
+          pressure = own.what + ' measured below the free ' + (lowRam ? 'RAM' : 'VRAM') + ' floor during work';
+        }
+        const usedRam = sample.ram.resident ? [own.pid, ...own.children].reduce((sum, pid) => sum + (sample.ram.resident?.[pid] ?? 0), 0) : process.memoryUsage.rss();
+        const usedVram = [own.pid, ...own.children].reduce((sum, pid) => sum + (sample.vram?.resident?.[pid] ?? 0), 0);
+        const ram = Math.max(own.memory.ram, usedRam + remainingRam);
+        const vram = Math.max(own.memory.vram, usedVram);
+        if (ram === own.memory.ram && vram === own.memory.vram) return;
+        const grown = { ...own, memory: { ram, vram } };
+        const extra = {
+          ram: committed(grown, 'ram', sample.ram) - committed(own, 'ram', sample.ram),
+          vram: sample.vram ? committed(grown, 'vram', sample.vram) - committed(own, 'vram', sample.vram) : vram - own.memory.vram,
         };
-        try {
-          for (const i of free) {
-            try {
-              linkSync(owner, gpuFile(dir, i));
-              held.push(i);
-              if (held.length === places) {
-                acquired = true;
-                return () => { release(); cleanup(); };
-              }
-            } catch (error) {
-              if (errorCode(error) !== 'EEXIST' && !TRANSIENT.has(errorCode(error))) throw error;
-            }
-          }
-        } finally {
-          if (!acquired) release();
-        }
+        const free = capacity(config, entries.filter((entry) => entry.phase !== 'waiting'), sample);
+        const reason = memoryReason(extra, { ram: Math.max(0, free.ram), vram: free.vram === null ? null : Math.max(0, free.vram) });
+        if (reason) throw new Error(own.what + ' exceeded its ' + reason.toUpperCase() + ' estimate. Another ' + gb(extra[reason]) + ' is required, with ' + gb(free[reason] ?? 0) + ' available.');
+        entries[i] = grown;
+      });
+      if (pressure) request.onPressure?.(pressure);
+    },
+    trackChild: (pid) => {
+      if (!released && Number.isSafeInteger(pid) && pid > 0) {
+        update((entries, i, own) => { entries[i] = { ...own, children: [...own.children, pid] }; });
       }
-      await sleep(ADMISSION_POLL_MS);
-    }
-    return null;
-  } finally {
-    removeFile(ticket);
-    if (!acquired) cleanup();
-  }
-}
-
-let gate: GpuGate | null = null;
-
-/** Use the shared GPU queue for scene frames drawn by this process until released. */
-export function useGpuPlaces(config: QueueConfig, what: string, onWait?: (busy: number, places: number) => void): { release(): void } {
-  if (config.gpu <= 0) return { release: () => undefined };
-  const own = new GpuGate(config, what, onWait);
-  gate?.stop();
-  gate = own;
-  return {
-    release: (): void => {
-      if (gate === own) gate = null;
-      own.stop();
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      update((entries, i, own) => {
+        const children = own.children.filter(alive);
+        if (children.length > 0) entries[i] = { ...own, children, phase: 'draining' };
+        else entries.splice(i, 1);
+      });
     },
   };
 }
 
-/** Returns a release callback for the GPU draw/readback about to start. */
-export async function takeGpuPlace(): Promise<() => void> {
-  return gate ? gate.take() : () => undefined;
-}
-
-// --- What `skink3 queue` shows ------------------------------------------------------------------------------------
-
-/** A place, a slot or a ticket as `queueState` reports it. */
-export interface QueueEntry {
-  readonly pid: number;
-  /** Seconds since it took its place (a holder) or asked for one (a waiter). */
-  readonly seconds: number;
-  readonly what: string;
-  /** The render it belongs to. */
-  readonly job: string;
-  /** A slot of a process of the code before the pools, which holds it for a whole chunk. */
-  readonly old: boolean;
-  /** Size of a persistent master reservation, if any. */
-  readonly reservation: number;
-}
-
-interface PoolState {
-  readonly held: (QueueEntry | null)[];
-  readonly waiting: QueueEntry[];
-  readonly busy: number;
-}
-
-export interface QueueState {
-  /** Who holds each CPU place (null: free), and who waits for one, in the order of their turns. */
-  readonly cpu: PoolState;
-  /** Short drawing processes and their waiters. */
-  readonly light: PoolState;
-  /** Who holds each GPU place (null: free; the slots of the code before the pools among them), and who waits. */
-  readonly gpu: PoolState;
-  /** Whole-film masters waiting for the master turn. */
-  readonly master: { readonly held: QueueEntry | null; readonly waiting: QueueEntry[] };
-  /** Processes of the code before the pools that wait for a slot. */
-  readonly oldWaiting: QueueEntry[];
-  /** Free physical memory, in GB. */
-  readonly freeGb: number;
-}
-
-/** The queue as it stands. */
-export function queueState(config: QueueConfig): QueueState {
-  const now = Date.now();
-  const shown = (e: Entry, old = e.v < VERSION): QueueEntry => ({ pid: e.pid, seconds: Math.max(0, (now - e.since) / 1000), what: e.what, job: e.job, old, reservation: e.reservation ?? 0 });
-  const entryOf = (file: string): Entry | null => {
-    const r = readEntry(file);
-    if (typeof r !== 'object') return null;
-    return (r.entry.v < VERSION ? live(r, now) : processAlive(r.entry.pid)) ? r.entry : null;
-  };
-  const admitted = surveyAdmission(config, now);
-  const admissionState = (lane: RenderLane, places: number): PoolState => {
-    const s = admitted[lane];
-    const held = Array.from({ length: Math.max(places, ...[...s.held.keys()].map((i) => i + 1)) }, (_, i) => {
-      const entry = s.held.get(i);
-      return entry ? shown(entry) : null;
-    });
-    return { held, waiting: s.waiting.map((e) => shown(e)), busy: s.held.size + (lane === 'heavy' ? admitted.old.length : 0) };
-  };
-  const names = listDir(config.dir);
-  const gpuHeld: (QueueEntry | null)[] = [];
-  for (let i = 0; i < Math.max(config.gpu, ...names.map((n) => Number(legacySlotName.exec(n)?.[1] ?? -1) + 1)); i++) {
-    const e = entryOf(gpuFile(config.dir, i));
-    gpuHeld.push(e ? shown(e) : null);
-  }
-  const waiting = (...patterns: RegExp[]): QueueEntry[] => names
-    .filter((n) => patterns.some((pattern) => pattern.test(n)))
-    .map((n) => entryOf(join(config.dir, n)))
-    .filter((e): e is Entry => e !== null)
-    .sort(byArrival)
-    .map((e) => shown(e));
-  const master = entryOf(join(config.dir, 'master-turn'));
-  return {
-    cpu: admissionState('heavy', config.cpu),
-    light: admissionState('light', config.light),
-    gpu: { held: gpuHeld, waiting: waiting(GPU_TICKET, MASTER_GPU_TICKET), busy: gpuHeld.filter(Boolean).length },
-    master: { held: master ? shown(master) : null, waiting: waiting(MASTER_TICKET) },
-    oldWaiting: waiting(OLD_TICKET),
-    freeGb: freemem() / GIB,
-  };
+export function queueState(config: QueueConfig, sample?: () => QueueMemory): QueueState {
+  mkdirSync(config.dir, { recursive: true });
+  return edit(config.dir, (entries) => {
+    const active = entries.filter((entry) => entry.phase !== 'waiting');
+    const waiting = entries.filter((entry) => entry.phase === 'waiting');
+    const memory = memoryOf(config, true, sample);
+    return { active, waiting, memory, available: capacity(config, active, memory) };
+  });
 }
