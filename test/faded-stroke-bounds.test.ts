@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bakeShot, compileShot, evaluate, stroke } from '../src/index.ts';
+import { bakeShot, compileShot, evaluate, frameRaw, group, stroke } from '../src/index.ts';
 import { fadedStrokeOutside } from '../src/render/frame.ts';
 import type { GroupItem } from '../src/scene/evaluate.ts';
 import { make } from './fixtures/bodies.ts';
@@ -35,4 +35,19 @@ test('a faded straight stroke is only left out when its entire round stroke lies
   assert.ok(fadedStrokeOutside(left, { ...identity, m14: -0.01 }, 100, 100), 'a safe perspective still leaves it outside');
   assert.ok(!fadedStrokeOutside(left, { ...identity, m14: 0.013 }, 100, 100), 'the stroke crosses the eye plane');
   assert.ok(!fadedStrokeOutside(left, { ...identity, m44: 0.125 }, 100, 100), 'roundoff could reach the near-eye guard');
+});
+
+test('an offscreen faded stroke is invisible while a stroke in the blur padding still paints the frame', async () => {
+  const edge = line('edge', [[975, -160], [975, 160]], { width: 12, opacity: 0.8 });
+  const far = line('far', [[1700, -160], [1700, 160]], { width: 12, opacity: 0.8 });
+  const render = async (children: readonly typeof edge[]): Promise<Buffer> => {
+    const compiled = compileShot(make([group({ id: 'floor', plane: 'floor', children })], [], {
+      perspective: { aim: [0, 0, 0], distance: 1600, lens: 1600, tilt: 90 },
+      blur: 40,
+    }));
+    return frameRaw(compiled, await bakeShot(compiled), 0, { width: 192, lang: 'en', gpu: false });
+  };
+  const withEdge = await render([edge]);
+  assert.ok(withEdge.equals(await render([far, edge])));
+  assert.ok(!withEdge.equals(await render([])), 'the stroke outside the unpadded canvas contributes through the blur');
 });
