@@ -21,6 +21,8 @@ import { frameRaw, heightFor, rendererInfo } from '../render/frame.ts';
 import { renderGroup } from '../render/group.ts';
 import { GIB, renderMemory } from '../render/memory.ts';
 import { chunkFrames, planOf, renderChunk, renderParallel } from '../render/parallel.ts';
+import { admissionWaitingLine, queueKind } from '../render/admission.ts';
+import { acquirePlace, placesConfig, placesState, placeWaitingLine, pressureName, type PlaceEntry, type PlaceWaiting } from '../render/places.ts';
 import { acquireRenderLease, GpuMemoryUnavailableError, GROUP_WORKERS, MAX_LIGHT_FRAMES, queueConfig, queueState, waitingLine, type RenderLease, type QueueEntry, type Waiting } from '../render/queue.ts';
 import { rawToPng, renderSheet, sheetGeometry, type SheetTile } from '../render/sheet.ts';
 import { P } from '../review/physics-thresholds.ts';
@@ -49,7 +51,7 @@ Commands
   graph   a speed graph of a node, an emitter or the camera
   events  what happens in the shot, as events: every intent, every contact, every burst
   sfx     the sound track of the shot, from its events and a bank of sounds
-  queue   the render queue of this machine: memory, active workers and waiters (takes no scene module)
+  queue   the render queue of this machine: its memory or its places, holders and waiters (takes no scene module)
 
 Common options
   --lang <tag>        language of the string tables (default: the first table)
@@ -86,9 +88,14 @@ the way of a move, and the sound, the kind of event and the time written on
 it. A shower, the run of a sound that the bank sets apart, is one tile, with
 its count and its length.
 
-Every checkout shares the same render queue (SKINK3_SLOT_DIR). Each group
-can draw with up to four workers across all commands. Admission reserves RAM
-and VRAM before work begins, with configurable free-memory floors.
+Every checkout shares the same render queue (SKINK3_SLOT_DIR). On Windows and
+Linux it is a memory queue: each group can draw with up to four workers across
+all commands, and admission reserves RAM and VRAM before work begins, with
+configurable free-memory floors. On macOS it is a place queue: one place per
+drawing process, at most 4 long ones (render workers and draws of more than 60
+frames, SKINK3_MAC_RENDERS) and 4 short ones (SKINK3_MAC_SHORT) at once, none
+granted while macOS reports memory pressure; render --workers defaults to 1
+there. SKINK3_QUEUE=memory|places overrides the choice.
 The default --chunk at 1920 wide is 900 frames and scales with pixel count.`;
 
 interface Common {
@@ -285,7 +292,15 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
   };
   let memory = renderMemory(workload);
   let lease: RenderLease | null = null;
-  if (draws || command === 'render') {
+  if ((draws || command === 'render') && queueKind() === 'places') {
+    // A place for each drawing process, with no memory estimate. A render's parent draws nothing: its workers take places.
+    if (draws) {
+      lease = await acquirePlace(placesConfig(), {
+        what, group, lane: budget <= MAX_LIGHT_FRAMES ? 'short' : 'long',
+        onWait: worker ? (w: PlaceWaiting) => process.send?.({ waiting: w }) : (w: PlaceWaiting) => console.log(placeWaitingLine(w)),
+      });
+    }
+  } else if (draws || command === 'render') {
     const config = queueConfig();
     const acquire = (): Promise<RenderLease | null> => acquireRenderLease(config, {
       group, what, memory, draws, short: budget <= MAX_LIGHT_FRAMES,
@@ -452,7 +467,8 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
       }
       const from = int('from', str('from'), 0, 0, c.frames - 1);
       const to = int('to', str('to'), c.frames, from + 1, c.frames);
-      const workers = int('workers', str('workers'), Math.max(1, Math.min(8, Math.floor(availableParallelism() / 2))), 1, 64);
+      // The place queue gives each worker a long place, so one render takes one by default.
+      const workers = int('workers', str('workers'), queueKind() === 'places' ? 1 : Math.max(1, Math.min(8, Math.floor(availableParallelism() / 2))), 1, 64);
       const chunk = int('chunk', str('chunk'), chunkFrames(common.width), 0, 1e9);
       const plan = planOf({ from, to, workers, width: common.width, gpu: common.gpu, chunk });
       const atOnce = plan.atOnce + ' worker(s)' + (plan.atOnce < plan.workers ? ' at once (' + plan.workers + ' asked)' : '');
@@ -482,7 +498,7 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
         onWait: (w) => {
           if (tty && shown) process.stdout.write('\n');
           shown = false;
-          console.log(`  ${waitingLine(w)}`);
+          console.log(`  ${admissionWaitingLine(w)}`);
         },
         onProgress: (done, total, seconds) => {
           if (seconds - lastShown < (tty ? 0.25 : 5) && done < total) return;
@@ -672,6 +688,10 @@ full report: ${file}`);
 
 /** Prints the machine's queue, including estimates that have already been reserved. */
 function printQueue(): void {
+  if (queueKind() === 'places') {
+    printPlaces();
+    return;
+  }
   const config = queueConfig();
   const state = queueState(config);
   const gib = (bytes: number): string => (bytes / GIB).toFixed(2) + ' GiB';
@@ -686,4 +706,18 @@ function printQueue(): void {
     console.log(`  ${entry.phase}  pid ${entry.pid}  ${gib(entry.memory.ram)} RAM  ${gib(entry.memory.vram)} VRAM  [${entry.group}] ${entry.what}`);
   };
   [...state.active, ...state.waiting].forEach(line);
+}
+
+/** Prints the place queue: each lane's holders and waiters, and the memory pressure now. */
+function printPlaces(): void {
+  const config = placesConfig();
+  const state = placesState(config);
+  console.log(`render queue (${config.dir}), places: ${config.long} long, ${config.short} short; memory pressure ${pressureName(state.pressure)}`);
+  const line = (entry: PlaceEntry): void => {
+    console.log(`  ${entry.phase}  pid ${entry.pid}  ${entry.group ? `[${entry.group}] ` : ''}${entry.what}`);
+  };
+  for (const [name, lane] of [['long', state.long], ['short', state.short]] as const) {
+    console.log(`${name}: ${lane.active.length}/${lane.limit} held, ${lane.waiting.length} waiting`);
+    [...lane.active, ...lane.waiting].forEach(line);
+  }
 }

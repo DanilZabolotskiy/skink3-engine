@@ -152,11 +152,11 @@ trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space s
 graph   --node id | --camera [--from f] [--to f] | [--time s,s]
 events  as JSON
 sfx     a WAV --bank bank.json [--sheet [--cols 4] [--tile 480]]
-queue   pool status
+queue   render queue status
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
-`--group` shares render admission. Commands bake as needed. `check` detects palette, string, glyph and text layout issues. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
+`--group` shares render admission (not on macOS). Commands bake as needed. `check` detects palette, string, glyph and text layout issues. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
 
 ## Reading the reviews
 

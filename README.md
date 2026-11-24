@@ -41,7 +41,7 @@ Each picture of an example is one frame with neutral content, at 1920×1080, as 
 - **Text and languages.** String tables per language, bundled fonts for Latin, Cyrillic and Greek with a check of every glyph, text that fits itself, runs of a label or a text in a second ink that each language marks in its own string, and subtitles from word timings (.srt, .vtt, .ytt).
 - **Sound.** The sound effects of a shot, built from its events and a bank of sounds that a production brings.
 - **Reviews without watching.** The motion review, the physics review and the contrast review report their findings as text, with trails, graphs and close-ups.
-- **Render.** Drawing processes reserve RAM and VRAM across checkouts. Up to four workers draw for each production group. See [the render queue](docs/SCENES.md#the-render-queue).
+- **Render.** Drawing processes share one queue across checkouts. On Windows and Linux they reserve RAM and VRAM, and up to four workers draw for each production group. On macOS each takes a place: four long and four short at once. See [the render queue](docs/SCENES.md#the-render-queue).
 
 Not built yet: transitions between shots, soft bodies, ropes, flocks and fluids, motion blur, narration, music and the mix of a film's sound. The full list of what a scene cannot do yet closes [docs/SCENES.md](docs/SCENES.md); what each module does is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the roadmap is at the end of this file.
 

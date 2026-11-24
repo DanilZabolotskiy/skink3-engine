@@ -41,7 +41,8 @@ function scratch(snapshot = memory(24, 24)) {
   const dir = mkdtempSync(join(tmpdir(), 'skink3-memory-queue-'));
   const config = { ...queueConfig({}), freeRamGb: 1, freeVramGb: 1, dir: join(dir, 'slots') };
   const children: ChildProcess[] = [];
-  const env = { ...process.env, SKINK3_SLOT_DIR: config.dir, SKINK3_FREE_RAM_GB: '0', SKINK3_TEST_FAIL_AT_FRAME: '' };
+  // The commands these tests start take the memory queue on every system, macOS included.
+  const env = { ...process.env, SKINK3_QUEUE: 'memory', SKINK3_SLOT_DIR: config.dir, SKINK3_FREE_RAM_GB: '0', SKINK3_TEST_FAIL_AT_FRAME: '' };
   const state = () => queueState(config, () => snapshot);
   const child = (args: string[], options = env): ChildProcess => {
     const processChild = spawn(process.execPath, args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: options });

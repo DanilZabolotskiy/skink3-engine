@@ -89,7 +89,9 @@ export { reviewContrast, formatContrastShort, colourDistance, type ContrastRepor
 export { drawFrame, frameRaw, framePng, heightFor, rendererInfo, type RenderOptions } from './render/frame.ts';
 export { renderSheet, rawToPng, type SheetOptions, type SheetTile } from './render/sheet.ts';
 export { renderParallel, renderPlan, chunkFrames, type RenderJob, type RenderPlan, type RenderResult } from './render/parallel.ts';
-export { acquireRenderLease, queueConfig, queueState, GROUP_WORKERS, DEFAULT_FREE_RAM_GB, DEFAULT_FREE_VRAM_GB, MAX_LIGHT_FRAMES, type RenderLease, type PlaceRequest, type QueueConfig, type QueueEntry, type QueueState, type Waiting } from './render/queue.ts';
+export { queueConfig, queueState, GROUP_WORKERS, DEFAULT_FREE_RAM_GB, DEFAULT_FREE_VRAM_GB, MAX_LIGHT_FRAMES, type RenderLease, type PlaceRequest, type QueueConfig, type QueueEntry, type QueueState, type Waiting } from './render/queue.ts';
+export { acquireRenderLease, admissionWaitingLine, queueKind, type AdmissionRequest, type AdmissionWaiting, type QueueKind } from './render/admission.ts';
+export { acquirePlace, placesConfig, placesState, placeWaitingLine, DEFAULT_MAC_RENDERS, DEFAULT_MAC_SHORT, type Lane, type LaneState, type PlaceAsk, type PlaceEntry, type PlacesConfig, type PlacesState, type PlaceWaiting, type PressureLevel } from './render/places.ts';
 export { startMasterGpuJob, type MasterGpuJob, type MasterGpuRequest } from './render/master-gpu.ts';
 export { cameraAt, layerView, type CameraState, type LayerView } from './camera/camera.ts';
 export { layoutText, measureText, type TextLayout, type TextStyle } from './text/layout.ts';

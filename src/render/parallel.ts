@@ -13,7 +13,8 @@ import { concatChunks, openEncoder, type Encoder } from './encode.ts';
 import { evaluate } from '../scene/evaluate.ts';
 import { drawState, heightFor, readRaw, type DrawnFrame } from './frame.ts';
 import { renderGroup } from './group.ts';
-import { GROUP_WORKERS, queueConfig, type RenderLease, type Waiting } from './queue.ts';
+import type { AdmissionWaiting } from './admission.ts';
+import { GROUP_WORKERS, queueConfig, type RenderLease } from './queue.ts';
 
 export interface RenderJob {
   /** Absolute path of the scene module. */
@@ -40,8 +41,8 @@ export interface RenderJob {
   readonly chunk?: number;
   /** Old callers may pass a priority. Heavy workers now enter the same FIFO. */
   readonly priority?: 'high' | 'low';
-  /** Called once when a worker waits for group or memory admission. */
-  readonly onWait?: (waiting: Waiting) => void;
+  /** Called once when a worker waits for admission: for its group or memory, or for a place on macOS. */
+  readonly onWait?: (waiting: AdmissionWaiting) => void;
 }
 
 /** The pixels of the longest chunk: 900 frames at 1920 x 1080, 225 at 3840 x 2160. */
@@ -276,7 +277,7 @@ export async function renderParallel(job: RenderJob): Promise<RenderResult> {
         startMore();
       };
       child.on('message', (message: unknown) => {
-        const m = message as { frames?: unknown; waiting?: Waiting } | null;
+        const m = message as { frames?: unknown; waiting?: AdmissionWaiting } | null;
         if (m?.waiting && !toldWaiting) {
           toldWaiting = true;
           job.onWait?.(m.waiting);

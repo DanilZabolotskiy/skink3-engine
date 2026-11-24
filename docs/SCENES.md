@@ -2159,7 +2159,7 @@ trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time
 graph   a speed graph          --node <id> | --camera   [--from f] [--to f] | [--time s,s]
 events  the events of the shot                                           as JSON in out/<shot>/events.json
 sfx     the sound track        --bank <bank.json> [--sheet [--cols 4] [--tile 480]]   a WAV, and its report as JSON in out/<shot>/sfx.json
-queue   machine-wide CPU, light, GPU and master queues   (takes no scene module)
+queue   the machine's render queue: memory, or places on macOS   (takes no scene module)
 
 common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache <dir>
 ```
@@ -2178,6 +2178,10 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 
 ### The render queue
 
+Every drawing process of the machine passes one queue before it loads its scene. The queue is chosen by the system: Windows and Linux use the memory queue, and macOS uses the place queue. `SKINK3_QUEUE=memory` or `SKINK3_QUEUE=places` overrides the choice, for tests and emergencies. Both keep their state in `SKINK3_SLOT_DIR`, each in a file of its own, under the same lock.
+
+The memory queue (Windows and Linux):
+
 - Each group can draw with four workers across renders, stills, strips, contact sheets and review images. Use `--group` or `SKINK3_RENDER_GROUP` to set its name. Otherwise a checked-in `.skink3-render.json` can assign one group to related scenes, including language versions. Scene paths in an unconfigured project each have their own group.
 - A repository policy has a `namespace` and an ordered `groups` array. Each rule has a `path` regular expression and a `group` template. Captures in the path can be used as `$1`, `$2` and so on. Paths start at the checkout root and use forward slashes. The first matching rule applies. Equivalent worktrees share the same group when they use the same namespace and rule. A linked Git worktree without a local policy can use its primary checkout's policy.
 - Workers reserve estimated peak RAM and VRAM in one machine-wide transaction before scene loading. An encoder's buffers, frame readback, and review sheets contribute to the estimates. The default floors are 5 GiB available physical RAM and 2 GiB available VRAM. Set `SKINK3_FREE_RAM_GB` and `SKINK3_FREE_VRAM_GB` to change them. Windows committed virtual memory and pagefile headroom are separate measurements outside this guard. The reservation holds through the last draw and encoder exit.
@@ -2185,6 +2189,15 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - Admission deducts outstanding reservations from observed available memory. It charges a reservation in full when the sample cannot attribute existing use to it. Other applications can allocate memory after sampling. A worker reports an observed floor breach and can finish work covered by its lease. Further work requiring the scarce resource waits until admission fits. If a worker needs to enlarge its estimate and no capacity remains, it fails and the render removes its partial chunks. Short work can use spare capacity while an older request waits. Once the older request has waited three seconds, it gets priority on the resource it needs.
 - `skink3 queue` shows free memory, outstanding reservations, active and waiting workers, and their groups. All checkouts share `SKINK3_SLOT_DIR`, which defaults to `%LOCALAPPDATA%\skink3\render-slots` on Windows or `~/.cache/skink3/render-slots` on other systems, using `XDG_CACHE_HOME` when set. Keep the same budget and floors for checkouts sharing the queue. Finish draws on the previous slot-based engine before switching to this one.
 - `--chunk` sets a chunk's maximum length (900 frames at 1920 wide and 225 at 3840). `--chunk 0` requests one chunk per worker. The scheduler preserves GPU and CPU chunk boundaries. The legacy `SKINK3_RENDER_SLOTS` setting still influences GPU chunk boundaries. Chunk boundaries can affect a few curved-edge pixels in GPU output, and each chunk starts with a key frame.
+
+The place queue (macOS). A Mac's CPU and GPU share one memory, the shared GPU limits drawing long before memory does, and the count of free pages leaves out the memory macOS reclaims at once. So this queue counts drawing processes, not memory:
+
+- Each drawing process takes one place in one of two lanes. The long lane holds a render's chunk workers and drawing commands of more than 60 frames; `SKINK3_MAC_RENDERS` sets its size (default 4). The short lane holds drawing commands of at most 60 frames: stills, strips, sheets, the pictures of `motion` and `physics`, the sound sheet, trails and graphs; `SKINK3_MAC_SHORT` sets its size (default 4). Each lane is first come, first served, so short work never waits behind long work. A render's parent process draws nothing and takes no place; each of its workers takes a long place. Commands that draw nothing pass at once.
+- There are no memory estimates and no VRAM budget: the GPU draws through Metal. `--group` and `SKINK3_RENDER_GROUP` still name the work in `skink3 queue`, but they limit nothing.
+- No new place is granted while macOS reports memory pressure above normal (`kern.memorystatus_vm_pressure_level` above 1). The request waits and says so; it never fails for it. The level is read at most every 500 ms for all processes. A level that cannot be read admits as normal pressure does.
+- A place whose process has died is freed. If it registered an encoder, the place is held until that encoder exits too.
+- `render --workers` defaults to 1, one long place per render. A larger `--workers` still works, with each worker taking a long place. Chunk boundaries follow `--workers` and `--chunk` as on the other systems.
+- `skink3 queue` shows the size of each lane, its holders and its waiting requests, with their commands, and the memory pressure.
 
 Example repository policy:
 
@@ -2237,7 +2250,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 
 For a perspective layer, `c.spatial` says that the shot has one and `c.layers[i].persp` is the track of its camera. `eyeOf(perspAt(track, seconds))` is the camera at a moment; `project(eye, [x, y, z])` gives where a point of the space is drawn on the layer (`x`, `y`), how large one unit is there (`k`; 0: not drawn) and how far it is (`far`). `planeMap(eye, origin, axes)` and `planePoint(map, [u, v])` do the same for a point of a plane. `computeWorld(c, frame, poses, places)` with `places = newPlaces(c)` also fills in where the nodes lie in the space (`places.point`, three numbers per node index) and in their planes (`places.flat`, `places.planes`), and `drawOrder(c, layer, seconds, places)` gives the node indices of a layer that orders what it draws, in draw order.
 
-For the render queue, `queueConfig()` reads the environment and `queueState(config)` reports usage. Wrap a drawing process in `acquireRenderLease(config, { group, what, memory })` before loading its scene. Call `verify()` after loading and around expensive rendering phases, register any encoder with `trackChild(pid)`, and call `release()` in a finally block. `renderParallel` accepts a `group` that its child workers inherit. Older assemblers can still call `startMasterGpuJob()`. It returns `null` because their render workers now reserve shared memory individually.
+For the render queue, `queueKind()` says which queue the machine uses (`'memory'` or `'places'`). `queueConfig()` reads the environment and `queueState(config)` reports the memory queue's usage; `placesConfig()` and `placesState(config)` do the same for the place queue, and `acquirePlace(config, { what, lane })` takes a place in the `'long'` or `'short'` lane. Wrap a drawing process in `acquireRenderLease(config, { group, what, memory })` before loading its scene: it takes the queue of the machine, and in the place queue a short place when `short` is set, a long one otherwise, and none when `draws` is false. Call `verify()` after loading and around expensive rendering phases, register any encoder with `trackChild(pid)`, and call `release()` in a finally block. `renderParallel` accepts a `group` that its child workers inherit. Older assemblers can still call `startMasterGpuJob()`. It returns `null` because their render workers now reserve shared memory individually.
 
 For colour, `checkPalette(palette)` returns the rules of a palette that are broken, `colourDistance(a, b)` the difference of two colours in lightness and in colour, and `reviewContrast(c, bake)` the contrast review of a shot that asks for one (null otherwise); `runChecks(c, bake, langs, { contrast: true })` adds it to the checks.
 

@@ -97,7 +97,7 @@ const transient = (error: unknown): boolean => /^(EPERM|EACCES|EBUSY)$/.test((er
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 const pause = (): void => { Atomics.wait(sleeper, 0, 0, 1); };
 
-function alive(pid: number): boolean {
+export function alive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid < 1) return false;
   if (pid === process.pid) return true;
   try {
@@ -131,7 +131,7 @@ function list(dir: string): string[] {
 }
 
 /** Use unique lock tickets so a dead owner's cleanup cannot unlink a successor's lock. */
-function locked<T>(dir: string, action: () => T): T {
+export function locked<T>(dir: string, action: () => T): T {
   const name = 'memory-lock-' + process.pid + '-' + randomBytes(6).toString('hex');
   const file = join(dir, name);
   const contenders = (): string[] => list(dir).filter((n) => n.startsWith('memory-lock-') && n !== name);
@@ -169,7 +169,7 @@ function locked<T>(dir: string, action: () => T): T {
   }
 }
 
-function readJson<T>(file: string, fallback: T): T {
+export function readJson<T>(file: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as T;
   } catch (error) {
@@ -178,7 +178,7 @@ function readJson<T>(file: string, fallback: T): T {
   }
 }
 
-function writeJson(file: string, value: unknown): void {
+export function writeJson(file: string, value: unknown): void {
   const part = file + '.' + process.pid + '.part';
   writeFileSync(part, JSON.stringify(value));
   for (let attempt = 0; ; attempt++) {
