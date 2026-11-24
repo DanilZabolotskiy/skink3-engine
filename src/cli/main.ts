@@ -663,21 +663,35 @@ full report: ${file}`);
       const bake = readBake(bakePath);
       if (bake.header.sceneHash !== c.sceneHash) fail('_chunk: the bake does not belong to this scene');
       loaded();
-      await renderChunk(c, bake, {
-        from: int('from', str('from'), 0, 0, c.frames - 1),
-        to: int('to', str('to'), c.frames, 1, c.frames),
-        out: str('out') ?? fail('_chunk: --out is required'),
-        lang: common.lang,
-        width: common.width,
-        gpu: common.gpu,
-        lease: lease ?? undefined,
-        encoder,
-        hashesFile: str('hashes-file') ?? null,
-        onFrames: (frames) => {
-          process.send?.({ frames });
-        },
-        ...(failAt === undefined ? {} : { failAtFrame: Number(failAt) }),
-      });
+      // A render stops its other workers when one fails. On Windows a worker's encoder dies with the worker; elsewhere
+      // it would outlive it, write its chunk after the render removed it and keep its place, so it is stopped first.
+      const stopped = new AbortController();
+      const stop = (): void => stopped.abort();
+      process.once('SIGTERM', stop);
+      try {
+        await renderChunk(c, bake, {
+          from: int('from', str('from'), 0, 0, c.frames - 1),
+          to: int('to', str('to'), c.frames, 1, c.frames),
+          out: str('out') ?? fail('_chunk: --out is required'),
+          lang: common.lang,
+          width: common.width,
+          gpu: common.gpu,
+          lease: lease ?? undefined,
+          encoder,
+          hashesFile: str('hashes-file') ?? null,
+          onFrames: (frames) => {
+            process.send?.({ frames });
+          },
+          ...(failAt === undefined ? {} : { failAtFrame: Number(failAt) }),
+          signal: stopped.signal,
+        });
+      } catch (error) {
+        // Stopped by its render, which reports why: exit as a terminated process would, without a message.
+        if (stopped.signal.aborted) return 143;
+        throw error;
+      } finally {
+        process.off('SIGTERM', stop);
+      }
       return 0;
     }
 

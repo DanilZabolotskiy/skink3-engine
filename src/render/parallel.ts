@@ -123,6 +123,8 @@ export async function renderChunk(
     onFrames?: (count: number) => void;
     /** Fault injection for the tests: fail when this frame is reached. */
     failAtFrame?: number;
+    /** Stops the chunk before its next frame: the encoder is stopped and has exited when the promise rejects. */
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   const height = heightFor(opts.width);
@@ -163,6 +165,7 @@ export async function renderChunk(
     // chunk; a frame that is only recorded holds nothing there and changes nothing of the frame being read back.
     for (let f = opts.from; f < opts.to; f++) {
       if (f === opts.failAtFrame) throw new Error(`injected failure at frame ${f}`);
+      if (opts.signal?.aborted) throw new Error(`the chunk was stopped before frame ${f}`);
       const state = evaluate(c, bake, f, ropts.lang);
       before = reading;
       reading = null;
