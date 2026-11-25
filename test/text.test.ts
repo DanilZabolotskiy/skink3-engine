@@ -199,6 +199,21 @@ test('text: the text-fit check holds it: a string that does not fit, a text off 
   assert.deepEqual([stats[0]!.what, stats[0]!.label, stats[0]!.lines, stats[0]!.size], ['text', 't', 1, 60]);
 });
 
+test('text fit compares separate text layers and checks bake identity for a text-free shot', async () => {
+  const spec = make([circle({ id: 'decoration', r: 40, fill: 'accent.aqua' })], [], [
+    layer({ id: 'title', depth: 0, nodes: [text(T)] }),
+    layer({ id: 'caption', depth: 0, nodes: [text({ ...T, id: 'u' })] }),
+  ]);
+  const c = compileShot(spec);
+  const bake = await bakeShot(c);
+  const fit = checkTextFit(c, bake, ['en']);
+  assert.deepEqual(fit.issues.map((i) => [i.kind, i.message]), [['overlap', 'texts "t" and "u" [en]: overlap at frame 0 (0.00 s)']]);
+  assert.deepEqual(fit.stats.map((s) => s.label), ['t', 'u']);
+  const empty = compileShot(make([circle({ id: 'dot', r: 10, fill: 'accent.aqua' })]));
+  assert.deepEqual(checkTextFit(empty, await bakeShot(empty), ['en']), { issues: [], stats: [] });
+  assert.throws(() => checkTextFit(empty, bake, ['en']), /bake does not belong/);
+});
+
 test('text: what it refuses, and that it is opt-in', async () => {
   const bad = (make0: () => unknown, message: RegExp): void => {
     assert.throws(make0, (e: unknown) => e instanceof Error && message.test(e.message), String(message));

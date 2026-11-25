@@ -151,6 +151,16 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
   const stats: FitStat[] = [];
   const labels = c.nodes.filter((n) => n.node.type === 'label');
   const texts = c.nodes.filter((n) => n.node.type === 'text');
+  // Compilation keeps parents, targets, clips and other node references in one layer.
+  // Keep the whole layer for label coverage; projected text boxes still meet across layers.
+  const textLayers = new Set([...labels, ...texts].map((n) => n.layer));
+  const fitScene: CompiledShot = textLayers.size === c.layers.length ? c : {
+    ...c,
+    activeNodes: (c.activeNodes ?? c.nodes).filter((n) => textLayers.has(n.layer)),
+    layers: c.layers.map((layer, i) => textLayers.has(i) ? layer : { ...layer, nodes: [] }),
+  };
+  // With no text, one empty sample preserves the evaluator's bake check.
+  const frames = textLayers.size ? c.frames : Math.min(1, c.frames);
   const relatedOf = new Map<string, Set<number>>();
   for (const n of labels) relatedOf.set(n.id, related(c, n));
 
@@ -180,8 +190,8 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
     // label id + node id -> first and last sampled frame at which the label covers the node
     const covered = new Map<string, { label: string; node: string; first: number; last: number }>();
 
-    for (let f = 0; f < c.frames; f += SAMPLE_EVERY) {
-      const state = evaluate(c, bake, f, lang);
+    for (let f = 0; f < frames; f += SAMPLE_EVERY) {
+      const state = evaluate(fitScene, bake, f, lang);
       const stageBoxes: Box[] = [];
       for (const layer of state.layers) {
         const leaves = flatItems(layer.items);
