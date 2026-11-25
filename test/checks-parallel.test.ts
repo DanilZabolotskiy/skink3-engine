@@ -118,10 +118,10 @@ test('particles: prewarm populates the field before frame 0', async () => {
   assert.equal(await bake(6, 1), 0, 'an emitter that starts later is not prewarmed');
 });
 
-test('render: a failing worker stops the others, leaves nothing behind and names its frames', { skip: !ffmpegAvailable() }, () => {
+function checkWorkerRecovery(extraArgs: readonly string[]): void {
   const dir = mkdtempSync(join(tmpdir(), 'skink3-render-'));
   try {
-    const args = [CLI, 'render', MINIMAL, '--from', '0', '--to', '120', '--workers', '4', '--width', '480', '--cpu', '--out', join(dir, 'clip.mp4')];
+    const args = [CLI, 'render', MINIMAL, '--from', '0', '--to', '120', '--workers', '4', '--width', '480', '--cpu', ...extraArgs, '--out', join(dir, 'clip.mp4')];
     const failed = spawnSync(process.execPath, args, { cwd: dir, encoding: 'utf8', env: { ...process.env, SKINK3_TEST_FAIL_AT_FRAME: '70' } });
     assert.equal(failed.status, 1);
     assert.match(failed.stderr, /skink3: the render worker for frames 60\.\.89 failed \(exit code 1\); the other workers were stopped and nothing was written/);
@@ -139,4 +139,12 @@ test('render: a failing worker stops the others, leaves nothing behind and names
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
+}
+
+test('render: a failing worker stops the others, leaves nothing behind and names its frames', { skip: !ffmpegAvailable() }, () => {
+  checkWorkerRecovery([]);
+});
+
+test('render: a prepared scene is cleaned up after both a worker failure and a successful retry', { skip: !ffmpegAvailable() }, () => {
+  checkWorkerRecovery(['--reuse-scene']);
 });

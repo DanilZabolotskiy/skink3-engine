@@ -12,12 +12,15 @@ import type { CompiledShot } from '../scene/compile.ts';
 import { concatChunks, openEncoder, type Encoder } from './encode.ts';
 import { drawFrame, heightFor, readRaw, type DrawnFrame } from './frame.ts';
 import { renderGroup } from './group.ts';
+import { prepareScene } from './prepared.ts';
 import type { AdmissionWaiting } from './admission.ts';
 import { GROUP_WORKERS, queueConfig, type RenderLease } from './queue.ts';
 
 export interface RenderJob {
   /** Absolute path of the scene module. */
   readonly scene: string;
+  /** Value-only input already built and checked by this render's parent. */
+  readonly preparedScene?: Pick<CompiledShot, 'spec' | 'sceneHash'>;
   /** Absolute path of the bake cache file. */
   readonly bakeFile: string;
   /** First frame, and one past the last frame. */
@@ -237,6 +240,12 @@ export async function renderParallel(job: RenderJob): Promise<RenderResult> {
   };
 
   const children: ChildProcess[] = [];
+  let prepared: ReturnType<typeof prepareScene> | undefined;
+  if (job.preparedScene) {
+    // Scene descriptions may contain values V8 cannot serialize. Those workers take their usual module-loading path.
+    try { prepared = prepareScene(dir, job.scene, job.preparedScene); }
+    catch { /* The normal worker loads the source. */ }
+  }
   let done = 0;
   let failure: Error | null = null;
   let toldWaiting = false;
@@ -263,6 +272,7 @@ export async function renderParallel(job: RenderJob): Promise<RenderResult> {
         '--out', chunk.file, '--lang', job.lang, '--width', String(job.width), '--encoder', job.encoder, '--group', group,
       ];
       if (!job.gpu) args.push('--cpu');
+      if (prepared) args.push('--prepared-scene', prepared.file, '--prepared-digest', prepared.digest);
       if (chunk.hashes) args.push('--hashes-file', chunk.hashes);
       const child = spawn(process.execPath, args, {
         // The fourth channel carries progress messages from the worker.
@@ -301,7 +311,7 @@ export async function renderParallel(job: RenderJob): Promise<RenderResult> {
       });
     };
     startMore();
-  });
+  }).finally(() => prepared?.close());
 
   if (failure) {
     removeParts();

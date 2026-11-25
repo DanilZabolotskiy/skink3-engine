@@ -2176,7 +2176,7 @@ bake    simulate physics, springs and particles; write the cache        [--force
 still   frames as PNG          --frame <n[,n...]> | --time <s[,s...]>   [--hash] [--alone]
 strip   a motion strip         --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h] [--alone]
 sheet   a contact sheet        [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h] [--alone]
-render  an mp4                 [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
+render  an mp4                 [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--reuse-scene] [--force]
 motion  the motion review      [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/motion.json
 physics the physics review     [--pictures [--top 3]]                   report as text, and as JSON in out/<shot>/physics.json
 trail   a ghost trail          --node <id[,id...]> [--from f] [--to f] | [--time s,s]  [--every k] [--space stage|screen]
@@ -2195,6 +2195,7 @@ common  --lang <tag>  --width <px> (default 1920)  --cpu  --out <file>  --cache 
 - `--crop` is in stage units with the origin at the **top-left** corner of the frame (unlike scene coordinates).
 - `sheet --lang en,x-long --frames 700,880` puts the same frames side by side in several languages: the way to review a translation.
 - `--hash` and `--hashes` print or write the SHA-256 of each frame's raw RGBA pixels, for determinism checks.
+- `render --reuse-scene` builds an expensive scene module once for the parent render. Each chunk compiles the same description, including localized strings, from a temporary file created after the parent checks the scene. Workers verify the entire file's digest, engine version, source path and compiled scene hash. A worker falls back to loading the source if the description cannot be shared. The temporary file belongs to one render and is removed when its workers finish or fail.
 - `--alone` (`still`, `strip`, `sheet`): every frame is the frame a still of it alone draws, whatever the process drew before it. Without it, on the GPU, a frame drawn soon after a frame of another zoom may come out with a few pixels of a curved edge otherwise: the drawing library keeps the triangles of a curved outline for about a second and draws that outline again with them, also at another scale. With it, each frame after the first waits until the GPU has rested that long (`GPU_FORGETS_MS`, 1.25 s), so a still of 21 frames takes about 25 s longer. A still of one frame is alone anyway. Every other command refuses it; a render draws its frames in a row (see "The render queue").
 - `render` reports its progress: a line rewritten in place on a terminal, a line every five seconds otherwise.
 - If one render worker fails, the others are stopped at once, no further chunk is started, the partial files are removed, and the command exits with code 1 and a message naming the worker's frame range.

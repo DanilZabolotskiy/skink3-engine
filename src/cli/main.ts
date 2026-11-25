@@ -35,6 +35,7 @@ import { CAMERA_SUBJECT } from '../scene/types.ts';
 import { languagesOf } from '../text/strings.ts';
 import { engineVersion, physicsVersion } from '../version.ts';
 import { loadShot } from './load.ts';
+import { readPreparedScene } from '../render/prepared.ts';
 
 const HELP = `skink3 <command> <scene module> [options]
 
@@ -64,7 +65,7 @@ Common options
 still   --frame <n[,n...]> | --time <s[,s...]>   [--hash] [--alone]
 strip   --from <frame> [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h] [--alone]
 sheet   [--cols 6] [--rows 5] [--frames n,n,...] [--lang a,b] [--tile 480] [--crop x,y,w,h] [--alone]
-render  [--workers <n>] [--chunk <frames>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [--hashes] [--force]
+render  [--workers <n>] [--chunk <frames>] [--from <frame>] [--to <frame>] [--encoder x264|nvenc] [--hashes] [--reuse-scene] [--force]
 bake    [--force]
 check   [--bank <bank.json>]        with a bank, a sound key it does not know fails the checks; --lang limits the text checks
 motion  [--pictures [--top 3]]      report as text, and as JSON in out/<shot>/motion.json
@@ -202,6 +203,9 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
       workers: { type: 'string' },
       encoder: { type: 'string' },
       hashes: { type: 'boolean', default: false },
+      'reuse-scene': { type: 'boolean', default: false },
+      'prepared-scene': { type: 'string' },
+      'prepared-digest': { type: 'string' },
       'hashes-file': { type: 'string' },
       force: { type: 'boolean', default: false },
       bake: { type: 'string' },
@@ -319,7 +323,9 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
     }
   }
   keep(lease);
-  const { compiled, file: sceneFile } = await loadShot(scene);
+  const snapshot = command === '_chunk' ? str('prepared-scene') : undefined;
+  const digest = snapshot && str('prepared-digest');
+  const { compiled, file: sceneFile } = (snapshot && digest ? readPreparedScene(scene, snapshot, digest) : undefined) ?? await loadShot(scene);
   const langs = languagesOf(compiled.spec.strings);
   const langArg = str('lang');
   const common: Common = {
@@ -483,6 +489,7 @@ async function run(argv: readonly string[], keep: (lease: RenderLease | null) =>
       let shown = false;
       const result = await renderParallel({
         scene: sceneFile,
+        ...(flag('reuse-scene') ? { preparedScene: { spec: c.spec, sceneHash: c.sceneHash } } : {}),
         bakeFile: baked.file,
         from,
         to,

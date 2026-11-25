@@ -1,6 +1,6 @@
 # Quick reference for scene authors
 
-The index links to the authoring and review guides.
+The index links to both guides.
 
 - After `/**/`: defaults.
 - Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
@@ -146,7 +146,7 @@ bake    [--force]
 still   --frame n[,n] | --time s[,s] [--hash] [--alone]
 strip   --from f [--count 12] [--step 2] [--cols 6] [--tile 480] [--crop x,y,w,h]
 sheet   [--cols 6] [--rows 5] [--frames n,n] [--lang a,b] [--tile 480] [--crop x,y,w,h]
-render  [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--force]
+render  [--workers n] [--chunk f] [--from f] [--to f] [--encoder x264|nvenc] [--hashes] [--reuse-scene] [--force]
 motion  [--pictures [--top 3]]
 physics as motion
 trail   --node id[,id] [--from f] [--to f] | [--time s,s] [--every k] [--space stage|screen]
