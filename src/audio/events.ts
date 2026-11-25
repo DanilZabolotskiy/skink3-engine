@@ -307,8 +307,8 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
       drafts.push({ kind: 'sfx', frame, dur: 0, node: key.target, key: from ? keyOf(from) : null, sound: key.sound, gain: key.gain, size: 0, speed: 0, x, y, seen: true });
       continue;
     }
-    // The keys of the camera, of its zoom and of the background are no event, and neither are the running of a counter, the bending of a link, a change of the width of a line, a change of the height of a body, a change of a haze, a change of a fill, a change of an outline, a drive and a key of the camera of a perspective layer.
-    if (key.kind === 'cameraTo' || key.kind === 'zoomTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo' || key.kind === 'widthTo' || key.kind === 'riseTo' || key.kind === 'hazeTo' || key.kind === 'fillTo' || key.kind === 'reshape' || key.kind === 'drive' || key.kind === 'perspectiveTo') continue;
+    // The keys of the camera, of its zoom and of the background are no event, and neither are the running of a counter, the bending of a link, a change of the width of a line, a change of the height of a body, a change of a haze, a change of a fill, a change of an outline, a drive, a key of the camera of a perspective layer and a pull of a layer's focus.
+    if (key.kind === 'cameraTo' || key.kind === 'zoomTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo' || key.kind === 'widthTo' || key.kind === 'riseTo' || key.kind === 'hazeTo' || key.kind === 'fillTo' || key.kind === 'reshape' || key.kind === 'drive' || key.kind === 'perspectiveTo' || key.kind === 'blurTo') continue;
     const n = c.byId.get(key.target)!;
     // A muted intent is silent in all it does; a key it names is the sound of its start.
     const after = key.sound === false ? false : undefined;

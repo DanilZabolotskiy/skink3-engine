@@ -9,7 +9,7 @@ export { shot, layer, circle, capsule, polygon, rect, blob, region, relief, glob
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
 export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo, zoomTo, countTo, bendTo, widthTo, riseTo, hazeTo, fillTo, backgroundTo, reshape } from './motion/intents.ts';
-export { drive, perspectiveTo, type Driven, type DriveSamples } from './motion/intents.ts';
+export { drive, perspectiveTo, blurTo, type Driven, type DriveSamples } from './motion/intents.ts';
 export { IntentError, type Key, type SfxKey, type StaggerOrder } from './motion/intents.ts';
 export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfile, type SpeedKeys } from './motion/curves.ts';
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, pathHeightAt, type PathSpec, type PathPoint } from './motion/paths.ts';

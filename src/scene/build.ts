@@ -673,6 +673,8 @@ export function rect(o: ShapeOptions & { w: number; h: number; radius?: number }
  * - feather: units of the rect: the field fades out smoothly over this distance toward its edges, so that it melts
  *   into what lies under it (a far edge into the haze, a fine field into a coarse one under it). Left out: it ends
  *   sharp at its edges.
+ * - backdrop: true: labels may lie over it without a covers-node warning, as over any backdrop shape (the ground of
+ *   a map). Default false.
  */
 export function relief(o: {
   id: string;
@@ -692,9 +694,10 @@ export function relief(o: {
   amount?: number;
   tints?: readonly (readonly [number, ColorRef])[];
   feather?: number;
+  backdrop?: boolean;
 }): ShapeNode {
   const where = `relief("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather']);
+  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
   const g = o.heights;
   if (g === null || typeof g !== 'object') fail(where, 'heights must be { cols, rows, values }');
   checkKeys(`${where} heights`, g, ['cols', 'rows', 'values']);
@@ -714,7 +717,7 @@ export function relief(o: {
     });
     for (let k = 1; k < tints.length; k++) if (!(tints[k]![0] > tints[k - 1]![0])) fail(where, `tints must run from the lowest height up; tints[${k}] is at ${tints[k]![0]}, after ${tints[k - 1]![0]}`);
   }
-  const base = shapeNode(where, { id: o.id, fill: o.dark, lit: false, ...(o.at === undefined ? {} : { at: o.at }), ...(o.depth === undefined ? {} : { depth: o.depth }), ...(o.rotation === undefined ? {} : { rotation: o.rotation }), ...(o.scale === undefined ? {} : { scale: o.scale }), ...(o.opacity === undefined ? {} : { opacity: o.opacity }), ...(o.clipTo === undefined ? {} : { clipTo: o.clipTo }) }, wrapShape(where, () => rectShape(num(where, 'w', o.w, 1, 1e6), num(where, 'h', o.h, 1, 1e6), 0)), null);
+  const base = shapeNode(where, { id: o.id, fill: o.dark, lit: false, ...(o.at === undefined ? {} : { at: o.at }), ...(o.depth === undefined ? {} : { depth: o.depth }), ...(o.rotation === undefined ? {} : { rotation: o.rotation }), ...(o.scale === undefined ? {} : { scale: o.scale }), ...(o.opacity === undefined ? {} : { opacity: o.opacity }), ...(o.clipTo === undefined ? {} : { clipTo: o.clipTo }), ...(o.backdrop === undefined ? {} : { backdrop: o.backdrop }) }, wrapShape(where, () => rectShape(num(where, 'w', o.w, 1, 1e6), num(where, 'h', o.h, 1, 1e6), 0)), null);
   return {
     ...base,
     relief: {

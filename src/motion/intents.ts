@@ -446,6 +446,23 @@ export interface PerspectiveToKey extends Voiced {
   readonly ramp: number;
 }
 
+/**
+ * A pull of the focus of a layer: its blur goes from what it is at the key's moment to `to` over `dur`. It has no node:
+ * it is a key of the timeline that the layer reads.
+ */
+export interface BlurToKey extends Voiced {
+  readonly kind: 'blurTo';
+  /** A key of a layer's focus has no node. */
+  readonly target: null;
+  readonly layer: string;
+  readonly at: number;
+  /** The blur radius it ends at, in units, as a layer's own `blur`. */
+  readonly to: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
 export interface SfxKey {
   readonly kind: 'sfx';
@@ -487,6 +504,7 @@ export type Key =
   | ReshapeKey
   | DriveKey
   | PerspectiveToKey
+  | BlurToKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -1623,6 +1641,36 @@ export function perspectiveTo(
     ...(opts.tilt === undefined ? {} : { tilt: num(w, 'tilt', opts.tilt, -90, 90) }),
     ...(opts.turn === undefined ? {} : { turn: num(w, 'turn', opts.turn, -36000, 36000) }),
     ...(opts.lens === undefined ? {} : { lens: num(w, 'lens', opts.lens, 1, 1e6) }),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Pull the focus of a layer at a moment: its blur goes from what it is then to
+ * `to` (a radius in units, as the layer's own `blur`; 0 is sharp) over `dur`,
+ * along its profile, and stays there. Keys chain: each starts from the blur
+ * reached at its moment. A layer without keys keeps the blur it was given (or
+ * that its depth and the camera's focus give it).
+ *
+ *   blurTo('far', { at: 2, to: 0 }); blurTo('near', { at: 2, to: 8 })    // the focus goes from near to far
+ */
+export function blurTo(
+  layerId: string,
+  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): BlurToKey {
+  const w = `blurTo("${layerId}")`;
+  if (typeof layerId !== 'string' || layerId.length === 0) throw new IntentError('blurTo: the first argument is the id of a layer');
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'blurTo',
+    target: null,
+    layer: layerId,
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, 0, 200),
+    dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

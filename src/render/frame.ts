@@ -653,7 +653,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     // A layer may hold nothing to draw and still a haze, which moves what the layers behind it have drawn.
     const backdrop = layer.layer.sampledIndex === undefined ? undefined : backdrops?.get(layer.layer.sampledIndex);
     if (leaves.length === 0 && !layer.hazes && !backdrop) continue;
-    const blurPx = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
+    // A layer whose focus is pulled has the blur of this frame.
+    const blurPx = Math.min(MAX_SOFT_PX * k, (layer.blur ?? layer.layer.blur) * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
     const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop };

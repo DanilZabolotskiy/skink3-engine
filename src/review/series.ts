@@ -219,6 +219,15 @@ export interface PerspectiveSeries {
   readonly grow: Float32Array;
 }
 
+/** A layer whose focus is pulled (blurTo): how its blur changes from the frame before to each frame. */
+export interface FocusSeries {
+  /** Index of the layer in the shot, and its id. */
+  readonly layer: number;
+  readonly id: string;
+  /** The change of its blur radius on screen, in px (positive: it blurs): how far a blurred edge spreads or gathers. */
+  readonly step: Float32Array;
+}
+
 /** How a layer is mapped to the screen at every frame: screen = layer * zoom + (tx, ty). */
 export interface ViewSeries {
   readonly zoom: Float64Array;
@@ -251,6 +260,8 @@ export interface MotionSeries {
   readonly perspectives?: readonly PerspectiveSeries[];
   /** The heat hazes. Left out in a shot without one. */
   readonly hazes?: readonly HazeSeries[];
+  /** The layers whose focus is pulled. Left out in a shot without one. */
+  readonly focus?: readonly FocusSeries[];
 }
 
 export interface SampleOptions {
@@ -968,7 +979,15 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     }
     hazes.push(h);
   }
-  const more = { ...(perspectives.length > 0 ? { perspectives } : {}), ...(hazes.length > 0 ? { hazes } : {}) };
+  // Pulls of focus: the blur of a layer, as the picture shows it at the zoom of the layer.
+  const focus: FocusSeries[] = [];
+  c.layers.forEach((layer, li) => {
+    if (!layer.focus) return;
+    const step = f32();
+    for (let f = 1; f < frames; f++) step[f] = (sampleRise(layer.focus, f / FPS) - sampleRise(layer.focus, (f - 1) / FPS)) * views[li]!.zoom[f]!;
+    focus.push({ layer: li, id: layer.spec.id, step });
+  });
+  const more = { ...(perspectives.length > 0 ? { perspectives } : {}), ...(hazes.length > 0 ? { hazes } : {}), ...(focus.length > 0 ? { focus } : {}) };
 
   if (c.backgroundTrack) {
     const background = f32();

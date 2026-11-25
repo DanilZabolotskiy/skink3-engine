@@ -21,6 +21,12 @@
 // largest change of a channel of its colour in one frame: a colour has no
 // place and no speed to start or stop with.
 //
+// A layer whose focus is pulled (blurTo) is judged under the subject
+// "(focus:<layer id>)", for a jump and for a start or a stop without an ease,
+// on how far its blur radius changes in a frame: the travel of a blurred edge
+// as it spreads or gathers. A pull is the camera's, so it is not the life of
+// the background either.
+//
 // The camera of a perspective layer whose view is keyed (perspectiveTo) is
 // judged as the camera is, under the subject "(perspective:<layer id>)": for
 // a jump and for a start or a stop without an ease, on how far the picture
@@ -53,7 +59,7 @@ import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { PULSE_LENGTH, strokePulseLength } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
-import { perspectiveSubject, type CompiledShot } from '../scene/compile.ts';
+import { focusSubject, perspectiveSubject, type CompiledShot } from '../scene/compile.ts';
 import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
 import { CAMERA_SUBJECT, STAGE_H, STAGE_W, type MotionFindingKind } from '../scene/types.ts';
 import { globeTurn } from '../scene/globe.ts';
@@ -62,7 +68,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold' | 'focus';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -142,7 +148,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width' | 'shadow';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width' | 'shadow' | 'focus';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -225,6 +231,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   outline: { moved: 'changed by', what: 'outline (travel of its points)' },
   width: { moved: 'changed by', what: 'width (travel of its edge)' },
   shadow: { moved: 'moved', what: 'shadow (travel of its end)' },
+  focus: { moved: 'changed by', what: 'focus (travel of a blurred edge)' },
 };
 
 
@@ -938,6 +945,19 @@ export function detectMotion(series: MotionSeries): Finding[] {
       jumps(subject, ch, all, F, out);
       abrupt(subject, ch, cam, F, new Set(), out);
     }
+  }
+
+  // A pull of focus: how far the blur radius of its layer changes in a frame.
+  for (const p of series.focus ?? []) {
+    const ch = chan('focus', F);
+    const all = new Uint8Array(F).fill(1);
+    all[0] = 0;
+    for (let f = 1; f < F; f++) {
+      ch.a[f] = p.step[f]!;
+      ch.d[f] = Math.abs(ch.a[f]!);
+    }
+    jumps(focusSubject(p.id), ch, all, F, out);
+    abrupt(focusSubject(p.id), ch, { seen: all, inFrame: all }, F, new Set(), out);
   }
 
   return out;

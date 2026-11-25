@@ -879,6 +879,8 @@ export interface LayerState {
   readonly items: readonly Item[];
   /** The heat hazes of the layer at this frame, in draw order. Left out in a layer without one. */
   readonly hazes?: readonly HazeItem[];
+  /** The blur radius at this frame, in units, in a layer whose focus is pulled (blurTo). Left out: the layer's `blur`. */
+  readonly blur?: number;
 }
 
 export interface FrameState {
@@ -2107,9 +2109,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     }
     // Shadows whose raised bodies were not drawn at all go after the flat members still.
     for (const group of [...shadowsHeld.keys()]) placeShadows(group);
-    if (marks.length === 0) return { layer, view, items: prune(root) };
+    const focus = layer.focus ? { blur: sampleRise(layer.focus, t) } : {};
+    if (marks.length === 0) return { layer, view, items: prune(root), ...focus };
     const { items, hazes } = pruneWithHazes(root, marks);
-    return { layer, view, items, hazes };
+    return { layer, view, items, hazes, ...focus };
   });
 
   // A shot whose background is not keyed is the state it always was.

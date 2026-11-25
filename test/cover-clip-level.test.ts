@@ -18,6 +18,7 @@ import {
   levelTo,
   moveTo,
   rect,
+  relief,
   reviewMotion,
   runChecks,
   shot,
@@ -350,6 +351,32 @@ test('backdrop: a label may lie over a backdrop without a warning; over anything
   assert.equal((await warnings(scene())).length, 1);
   assert.match((await warnings(scene()))[0]!, /covers node "ground"/);
   assert.deepEqual(await warnings(scene(true)), []);
+});
+
+test('backdrop: a relief takes it too, and passes it to its shape; left out, a label over the relief is reported', async () => {
+  const ground = (backdrop?: boolean) =>
+    relief({ id: 'hills', at: [0, -60], w: 1200, h: 300, heights: { cols: 3, rows: 2, values: [0, 40, 10, 20, 60, 0] }, dark: 'deep.abyss', bright: 'light.snow', ...(backdrop === undefined ? {} : { backdrop }) });
+  assert.equal(ground(true).backdrop, true);
+  assert.equal(ground(false).backdrop, false);
+  assert.equal('backdrop' in ground(), false);
+  assert.throws(() => ground('yes' as unknown as boolean), /backdrop/);
+  const scene = (backdrop?: boolean): ShotSpec =>
+    make([
+      ground(backdrop),
+      circle({ id: 'a', at: [0, 40], r: 30, fill: 'accent.aqua' }),
+      label({ id: 'tag', text: 'label.a', target: 'a', fill: 'light.cream', ink: 'deep.abyss' }),
+    ]);
+  const warnings = async (spec: ShotSpec): Promise<string[]> => {
+    const c = compileShot(spec);
+    const report = await runChecks(c, await bakeShot(c), ['en']);
+    return report.issues.filter((i) => i.message.includes('covers node')).map((i) => i.message);
+  };
+  assert.match((await warnings(scene())).join('\n'), /covers node "hills"/);
+  assert.deepEqual(await warnings(scene(true)), []);
+  // The picture is the same with it and without it: it only tells the check what the relief is.
+  const [plain, marked] = [compileShot(scene()), compileShot(scene(true))];
+  const raw = async (c: ReturnType<typeof compileShot>) => frameRaw(c, await bakeShot(c), 0, { width: WIDTH, lang: 'en', gpu: false });
+  assert.ok((await raw(plain)).equals(await raw(marked)));
 });
 
 test('layout: a no-break space keeps two words on one line', () => {

@@ -18,6 +18,7 @@ import { PULSE_BUMP } from '../motion/intents.ts';
 import type {
   BackgroundToKey,
   BendToKey,
+  BlurToKey,
   BumpKey,
   CameraToKey,
   CountToKey,
@@ -177,8 +178,10 @@ export interface CLayer {
   /** Node indices of this layer in draw order. */
   readonly nodes: readonly number[];
   readonly parallax: number;
-  /** Blur radius in units. */
+  /** Blur radius in units: the layer's own, or what its depth and the camera's focus give it. */
   readonly blur: number;
+  /** The blur over time, in a layer whose focus is pulled (blurTo); left out: it stays at `blur`. */
+  readonly focus?: RiseTrack;
   /** 0..1 atmospheric tint. */
   readonly tint: number;
   /** A perspective layer: its camera over time; null for a flat layer. */
@@ -366,6 +369,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const hingesY = new Map<number, TurnToKey[]>();
   // The camera keys of the perspective layers, by layer.
   const perspKeys = new Map<number, PerspectiveToKey[]>();
+  // The pulls of focus, by layer.
+  const blurKeys = new Map<number, BlurToKey[]>();
   const push =<T>(map: Map<number, T[]>, index: number, item: T): void => {
     const list = map.get(index);
     if (list) list.push(item);
@@ -410,6 +415,15 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (li < 0) fail(`${where}: perspectiveTo names the layer "${key.layer}", which does not exist (layers: ${spec.layers.map((layer) => layer.id).join(', ')})`);
       if (!spec.layers[li]!.perspective) fail(`${where}: perspectiveTo("${key.layer}"): the layer is flat; give it the option perspective to make it a perspective layer`);
       push(perspKeys, li, key);
+      continue;
+    }
+    if (key.kind === 'blurTo') {
+      // A pull of the focus of a layer: it has no node either.
+      if (key.at > spec.seconds) fail(`${where}: blurTo("${key.layer}") starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      const li = spec.layers.findIndex((layer) => layer.id === key.layer);
+      if (li < 0) fail(`${where}: blurTo names the layer "${key.layer}", which does not exist (layers: ${spec.layers.map((layer) => layer.id).join(', ')})`);
+      if (spec.layers[li]!.sampledBackdrop !== undefined) fail(`${where}: blurTo("${key.layer}"): the layer samples a backdrop (sampledBackdrop), whose pictures are drawn at one blur; pull the focus of another layer, or leave sampledBackdrop out`);
+      push(blurKeys, li, key);
       continue;
     }
     const index = idIndex.get(key.target);
@@ -1000,11 +1014,14 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const cam = spec.camera;
   const layers: CLayer[] = spec.layers.map((layer, li): CLayer => {
     const depth = layer.depth;
+    const blur = layer.blur ?? (depth >= 0 ? cam.focus.far * depth : cam.focus.near * -depth);
+    const pulls = blurKeys.get(li);
     return {
       spec: layer,
       nodes: layerNodes[li]!,
       parallax: layer.parallax ?? 1 / (1 + depth),
-      blur: layer.blur ?? (depth >= 0 ? cam.focus.far * depth : cam.focus.near * -depth),
+      blur,
+      ...(pulls ? { focus: buildRiseTrack(blur, pulls) } : {}),
       tint: layer.tint ?? defaultTint(depth),
       persp: perspTracks[li]!,
       ordered: layer.perspective !== undefined || layerNodes[li]!.some((i) => nodes[i]!.depth !== null || (nodes[i]!.node as { depth?: number }).depth !== undefined),
@@ -1072,7 +1089,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   // 5. Intended exceptions to the motion review and to the physics review must
   // name things that exist, so that an exception does not outlive the node it
   // was written for.
-  const subjects = new Set<string>([CAMERA_SUBJECT, FRAME_SUBJECT, ...FRAME_REGIONS.map((r) => `(frame:${r})`), ...spec.layers.filter((layer) => layer.perspective).map((layer) => perspectiveSubject(layer.id))]);
+  const subjects = new Set<string>([
+    CAMERA_SUBJECT,
+    FRAME_SUBJECT,
+    ...FRAME_REGIONS.map((r) => `(frame:${r})`),
+    ...spec.layers.filter((layer) => layer.perspective).map((layer) => perspectiveSubject(layer.id)),
+    ...spec.layers.filter((_, li) => blurKeys.has(li)).map((layer) => focusSubject(layer.id)),
+  ]);
   for (const x of spec.intended ?? []) {
     if (!x || typeof x !== 'object' || !Array.isArray(x.nodes) || !FINDING_KINDS_ALL.includes(x.kind)) {
       fail(`${where}: intended holds something that was not made with intended()`);
@@ -1184,6 +1207,11 @@ function detailLevels(nodes: readonly CNode[]): number[] | null {
 /** The name the camera of a perspective layer has in the motion review, and in intended(). */
 export function perspectiveSubject(layerId: string): string {
   return `(perspective:${layerId})`;
+}
+
+/** The name the focus of a layer whose focus is pulled (blurTo) has in the motion review, and in intended(). */
+export function focusSubject(layerId: string): string {
+  return `(focus:${layerId})`;
 }
 
 /**

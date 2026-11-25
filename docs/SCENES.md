@@ -411,6 +411,17 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 
 **A `blur` softens everything its layer draws,** a perspective layer included: a soft ground under a sharp layer of lines is a layer of its own. It is in the units of the layer (0 to 200), so under a zoom of the camera it grows with the picture, up to 400 px of a 1080p frame. A layer that is seen after a zoom of 40 and should be blurred by 8 units of the frame there takes `blur: 8 / 40`. To soften one node or one group there is `soft` (see A soft edge).
 
+**A pull of focus.** `blurTo(layerId, { at, to, dur?, profile?, ramp? })` changes the blur of a layer at a moment: from what it is then to `to` (units, 0 to 200; 0 is sharp) over `dur` (1.2 s), along its profile (`'ease'`, or `'steady'`, `'in'`, `'out'` with `ramp`), and it stays there; keys chain, each from the blur reached at its moment. A layer without keys keeps the blur it was given, or that its depth and the camera's `focus` give it, on every frame. Two keys at one moment move the focus from one layer to another, as a lens is pulled from what is near to what is far:
+
+```ts
+layer({ id: 'far', depth: 0.6, blur: 9, nodes: [/* the hills */] }),
+layer({ id: 'near', depth: -0.4, blur: 0, nodes: [/* the lamp */] }),
+// ...
+timeline: [blurTo('near', { at: 1.5, to: 14, dur: 1.6 }), blurTo('far', { at: 1.5, to: 0, dur: 1.6 })],
+```
+
+A pull makes no sound and moves nothing. The motion review judges it under the subject `(focus:<layer id>)` (see Motion review). A layer that samples a backdrop (`sampledBackdrop`) draws its pictures at one blur, so a pull of its focus is refused.
+
 **A `depth` on a node changes the draw order.** Every placed node listed directly in a layer's `nodes` (a shape, a group, an eye, a stroke, a text) takes `depth`, a number, 0 when left out. The node with the larger depth is drawn first, behind the others; nodes of one depth keep the order of the list. A `drive` may set it over time (see A node that follows a function of time), so that a thing passes in front of another and then behind it. A link is drawn at the mean of the depths of the two nodes it joins; a label and an emitter keep their place in the list, among the nodes of depth 0. Inside a parent the order of the children is the draw order, and a `depth` there is refused. A layer in which no node has a depth is drawn exactly as listed.
 
 `perspective` makes the layer a space of three dimensions with a camera of its own: see A perspective layer.
@@ -697,7 +708,7 @@ relief({ id: 'hills', w: 2400, h: 1800, heights: { cols: 400, rows: 300, values:
 | `tints` | none | `[[height, colour], ...]`, from the lowest: the ground takes the colour of its height, between the two tints around it, and is shaded over that. Left out, only the shading is drawn, as translucent tones over what lies under the field |
 | `feather` | none | units of the rect: the field fades out smoothly over this distance toward its edges, into what lies under it: a far edge into the haze, a finer field into a coarser one under it with no seam (blend their heights at the edge too, so the shading meets). Left out, it ends sharp at its edges |
 
-It also takes `at`, `depth`, `rotation`, `scale`, `opacity` and `clipTo`.
+It also takes `at`, `depth`, `rotation`, `scale`, `opacity`, `clipTo` and `backdrop`: `backdrop: true` lets labels lie over it without a covers-node warning, as over any backdrop (see Checks); it changes nothing in the picture.
 
 - **No pixels of its own.** Every pixel the field covers is worked out at the size the frame draws it: taken back into the field (through the perspective of a plane too), and its shade and its height read off the grid between its points along smooth curves. A camera that pushes in finds a smooth field however near it comes, and the same frame is the same on the processor and on the GPU. Detail finer than the grid is not there: give a grid as fine as the closest view needs.
 - **On a map.** In a group with a `plane` it lies on the plane, as any shape does; `clipTo` keeps it on the land, and things drawn after it lie over it. It is shading only: the ground stays flat, so a body or a travel over a hill does not rise with it unless it is given the height. A group with `ground` names it as the ground of its plane: then it is drawn raised and what comes after it stands on it (see A perspective layer, A ground).
@@ -1101,6 +1112,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
 | `drive(id, { dur, by })` | any node but an emitter | `at` (0), `by` or `samples` | the node follows a function of time that the scene computes: its place, rotation, scale, opacity, depth, and the points of a region or a stroke (see A node that follows a function of time) |
+| `blurTo(layerId, { at, to, ... })` | the focus of a layer | `dur` (1.2), `profile` (`'ease'`), `ramp` (0.3) | changes the blur of the layer to `to` (units): a pull of focus; keys chain (see A pull of focus, under `layer`) |
 | `perspectiveTo(layerId, { at, ... })` | the camera of a perspective layer | `dur` (1.6), `aim`, `distance`, `tilt`, `turn`, `lens`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera of that layer: it tilts, goes round, moves in, looks elsewhere; keys chain (see A perspective layer) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
 | `widthTo(id, { at, to, ... })` | link, stroke | `dur` (0.6), `overshoot` (0.15) | changes the width of the line where it lies: it grows thick or thins, shoots past the new width and settles (see A line whose width changes) |
@@ -1811,6 +1823,7 @@ Things to know when you write a scene:
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
+- A pull of focus (`blurTo`) is judged under the subject `(focus:<layer id>)`, on the channel `focus`: how far the blur radius changes in a frame, at the zoom of the layer, as the travel of a blurred edge. A pull over a few frames is a `jump` or an `abrupt-start`; one at one speed that starts and stops at 3 px a frame or more is an `abrupt-start` and an `abrupt-stop`. An eased pull of a second or more is far below that. A pull is the camera's, so it is not the life of the background: it does not keep a `dead-area` away.
 - A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn (see A globe).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 

@@ -1,7 +1,5 @@
 # Quick reference for scene authors
 
-The index links to both guides.
-
 - After `/**/`: defaults.
 - Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
 
@@ -21,7 +19,7 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette references; text: `strings` keys, all languages; random: `Rng`. Mistakes: refused with the fix.
+- Colours: palette keys; text: `strings` keys, all languages; random: `Rng`. Mistakes: refused with the fix.
 - A palette has `rules` (held by `check`), `tones`, variants.
 
 ## Shot, camera, layers
@@ -36,12 +34,13 @@ backgroundTo({ at: 3, inner: 'deep.night', /**/ dur: 2, profile: 'ease' }); // +
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 layer({ id: 'room', depth: 0, nodes: [], perspective: { aim: [0, 0, 0], distance: 1600, tilt: 0, turn: 0 } }); // or true: a space, z away, with its camera; + lens
 perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6, profile: 'ease' }); // + aim, distance (a dolly), turn, lens (a zoom)
+blurTo('far', { at: 2, to: 0, /**/ dur: 1.2 }); // a focus pull
 ```
 
 - `drift.speed`: units/frame along `heading` (norm 0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`: with `speed` (units/frame) it loops a closed one (`loopPoints(center, r | [rx, ry])`), else runs it once.
 - Keys chain. `cameraTo`: `zoom` times the authored view, `to` its final aim; path and drift wait. Under `zoomTo` they run on.
-- `depth` 0 is in focus, positive is far (less parallax, blurred, tinted), down to -0.9 is near. Far first, then list order, parents before children.
+- `depth` 0 is in focus, positive is far (less parallax, blurred, tinted), down to -0.9 near. Far first, then list order, parents before children.
 - A listed node's `depth` (larger: behind) orders any layer. A perspective layer's listed nodes take `at: [x, y, z]`, face the camera; `region`, `stroke`: `points` of three; a `plane` group lies in it; near over far; behind the camera: cut.
 - Dense maps: [`sampledBackdrop: { group, frames }`](SCENES.md#sampling-a-dense-backdrop).
 
@@ -59,15 +58,15 @@ link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor:
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen)
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + count; runInk: '2.0 · [Aug 2026]': runs in that ink
 text({ id: 'title', text: 'label.dot', ink: 'light.cream', /**/ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // + box: a colour, count, runInk
-circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast; + step, rows, shape: 'arch', sill, inset, color (walls too)
+circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast, step, rows, shape: 'arch', sill, inset, color (walls too)
 group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; shadows (+ opacity, length, dir, soft, over: 'flat', ground: true; dressings too), plain under min px
 eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 });
 globe({ id: 'earth', r: 300, fill: 'dark.indigo', layers: [{ rings: [globeBlob({ at: [10, 40], r: 8 })], fill: 'mid.mist' }], light: { night: 'deep.night' }, /**/ view: [0, 0], spin: 0, shade: 0.25 }); // rings: [lon, lat]; spin: deg/s east, or keys; + lights, air
 globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed: 1 }); // a cloud
 ```
 
-- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`). All but `region` are convex.
-- `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: an arc or a ring (degrees).
+- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`; + `backdrop`). All but `region` are convex.
+- `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: an arc or ring (degrees).
 - `globe`: layer `drift` (deg/s), `soft`; `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride the turn, hide behind it, head along `rotation`; a `[lon, lat]` `stroke` lies on it.
 - `label`: tail at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; as a shape's child, on it; in a `parallax: 0` layer, the frame's.
 
@@ -86,7 +85,7 @@ A dynamic body waits till `release` (s), then only physics moves it; `velocity`:
 ## Motion and timing
 
 ```ts
-moveTo('dot', { at: 1.2, to: [260, -40], /**/ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of the distance. Or arrive: when it first reaches `to`
+moveTo('dot', { at: 1.2, to: [260, -40], /**/ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of distance. Or arrive: when it reaches `to`
 hop('buddy', { at: 4, to: [610, 130], /**/ dur: 0.6, height: 80 }); // a parabola; or land:
 travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // speed: units/s, or dur, or speeds: [[s, speed], ...]; + roll: wheel radius; [x, y, h]: heights
 turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // absolute degrees. + profile: no overshoot ('steady': a spin); for to: speed (deg/s) or speeds; about: 'x' | 'y': a plane's hinge
@@ -157,7 +156,7 @@ queue   render queue status
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
-`--group` shares render admission (not on macOS). Commands bake as needed. `check` detects palette, string, glyph and text layout issues. `--crop`: units, top-left. `--alone`: each frame drawn alone (~1 s).
+`--group` shares render admission (not on macOS). Commands bake as needed. `check`: palette, strings, glyphs, layout. `--crop`: units, top-left. `--alone`: each frame alone (~1 s).
 
 ## Reading the reviews
 
@@ -175,7 +174,7 @@ Not reported: hidden, off the frame, behind a `cover`, outside its clip. Mark wh
 
 ```ts
 shot({ ...scene, contrast: { nodes: ['dot'], lightness: 18, colour: 24 } }); // off unless given; it blends below both: L*, a*b* (colourDistance(a, b)); + edge, seconds
-shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] }); // + { from, to }: s; also '(camera)', '(perspective:room)', '(frame)', '(frame:top-left)'
+shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] }); // + { from, to }: s; also '(camera)', '(perspective:room)', '(focus:far)', '(frame)', '(frame:top-left)'
 ```
 
 ## Index
