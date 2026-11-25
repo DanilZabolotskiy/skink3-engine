@@ -10,7 +10,8 @@ import {
   bakeShot, cameraTo, compileShot, drive, evaluate, frameRaw, group, layer, perspectiveTo, rect, rendererInfo, shot,
   type ColorRef, type Key, type LayerSpec,
 } from '../src/index.ts';
-import { sampledFrame } from '../src/render/backdrop.ts';
+import { glowView, sampledFrame } from '../src/render/backdrop.ts';
+import type { Item } from '../src/scene/evaluate.ts';
 import { ffmpegAvailable } from '../src/render/encode.ts';
 import { renderChunk } from '../src/render/parallel.ts';
 
@@ -128,4 +129,78 @@ test('an invalid schedule or a group with external compositing or node dependenc
   }
   assert.throws(() => compileShot(scene(schedule, [], false, [...nodes,
     rect({ id: 'live', fill: 'mid.mist', w: 100, h: 100, clipTo: 'tile' })])), /reference across/);
+});
+
+test('a sampled group keeps moving halos live through a clip and a foreground cover', async () => {
+  const base = rect({ id: 'tile', fill: 'mid.mist', w: 20, h: 20, opacity: 0 });
+  const clip = rect({ id: 'mask', fill: 'mid.mist', w: 1000, h: 500, opacity: 0 });
+  const front = rect({ id: 'front', at: [400, 10], fill: 'dark.indigo', w: 70, h: 170, cover: true });
+  const move = drive('lamp', { dur: 1.99, samples: { at: [[-320, 0], [320, 0], [-320, 0]] } });
+  const render = async (sampled: boolean, glow: number, f: number) => {
+    const lamp = rect({ id: 'lamp', fill: 'accent.amber', w: 60, h: 60, glow, lit: false, clipTo: 'mask' });
+    const contents = [group({ id: 'terrain', opacity: 0.7, children: [base, clip, lamp] }), front];
+    const option = sampled ? { group: 'terrain', frames: [], liveGlow: true } : undefined;
+    const c = compileShot(scene(option, [move], false, contents));
+    return frameRaw(c, await bakeShot(c), f, opts);
+  };
+  const stock = await render(false, 1, 60), sampled = await render(true, 1, 60), dark = await render(true, 0, 60);
+  // This box surrounds the lamp at its live midpoint. Its body appears at the other end of the stage in the sampled picture.
+  let light = 0, maximumError = 0;
+  for (let y = 52; y <= 80; y++) for (let x = 149; x <= 176; x++) {
+    if (x >= 155 && x <= 165 && y >= 61 && y <= 74) continue;
+    const offset = (y * opts.width + x) * 4;
+    for (let channel = 0; channel < 3; channel++) {
+      const i = offset + channel;
+      light += Math.max(0, sampled[i]! - dark[i]!);
+      maximumError = Math.max(maximumError, Math.abs(sampled[i]! - stock[i]!));
+    }
+  }
+  assert.ok(light > 1000, `the live midpoint contributes ${light} light levels`);
+  assert.ok(maximumError <= 2, `the visible halo and cover have at most two levels of rounding (${maximumError})`);
+  const anchor = await render(true, 1, 0), native = await render(false, 1, 0);
+  const maximum = anchor.reduce((worst, value, i) => Math.max(worst, Math.abs(value - native[i]!)), 0);
+  assert.ok(maximum <= 2, `the concrete body is painted once at its anchor (${maximum})`);
+  assert.throws(() => compileShot(scene({ ...schedule, liveGlow: 1 } as never)), /liveGlow must be a boolean/);
+});
+
+test('the halo-only evaluation keeps original clip and parent indices, and soft masks use the full view', () => {
+  for (const soft of [undefined, 12]) {
+    const mask = rect({ id: 'mask', fill: 'mid.mist', w: 100, h: 100, soft });
+    const lamp = rect({ id: 'lamp', fill: 'accent.amber', w: 40, h: 40, glow: 1, clipTo: 'mask' });
+    const contents = [group({ id: 'terrain', children: [land('tile', -70, 'accent.aqua'), mask, lamp] })];
+    const c = compileShot(scene({ ...schedule, liveGlow: true }, [], false, contents));
+    const view = glowView(c, c.sampledBackdrops![0]!);
+    if (soft) assert.equal(view, c);
+    else {
+      assert.deepEqual(view.activeNodes?.map(n => n.id), ['terrain', 'mask', 'lamp']);
+      assert.equal(view.nodes[view.byId.get('lamp')!.clipIndex], c.byId.get('mask'));
+    }
+  }
+});
+
+test('a glowing shape follows the live clip geometry of a moving sibling subtree', async () => {
+  const mask = rect({ id: 'mask', fill: 'mid.mist', w: 120, h: 90, at: [20, 0], opacity: 0 });
+  const holder = group({ id: 'carrier', children: [mask] });
+  const lamp = rect({ id: 'lamp', fill: 'accent.amber', w: 300, h: 120, glow: 1, clipTo: 'mask' });
+  const contents = [group({ id: 'terrain', children: [land('tile', 0, 'accent.aqua'), holder, lamp] })];
+  const move = drive('carrier', { dur: 1.99, samples: { at: [[-100, 0], [100, 0], [-100, 0]] } });
+  const c = compileShot(scene({ ...schedule, liveGlow: true }, [move], false, contents));
+  const view = glowView(c, c.sampledBackdrops![0]!);
+  assert.notEqual(view, c);
+  assert.deepEqual(view.activeNodes?.map(n => n.id), ['terrain', 'carrier', 'mask', 'lamp']);
+  const bake = await bakeShot(c);
+  const clipForLamp = (items: readonly Item[]) => {
+    const clip = items.find(item => item.kind === 'clip' && item.node.id === 'mask');
+    assert.ok(clip?.kind === 'clip');
+    assert.ok(clip.items.some(item => item.node.id === 'lamp'));
+    return clip;
+  };
+  const positions: number[] = [];
+  for (const f of [0, 25, 60, 95, 119]) {
+    const expected = clipForLamp(evaluate(c, bake, f, 'en').layers[0]!.items);
+    const actual = clipForLamp(evaluate(view, bake, f, 'en').layers[0]!.items);
+    assert.deepEqual(actual, expected);
+    positions.push(actual.xf.x);
+  }
+  assert.ok(Math.max(...positions) - Math.min(...positions) > 190);
 });

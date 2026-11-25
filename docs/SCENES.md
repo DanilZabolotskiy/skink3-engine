@@ -427,6 +427,8 @@ When rendering a map or city with many small features, keep slowly changing scen
 
 Generate the frame schedule from the duration and cues of each language version. This example samples every 48 frames during quiet sections and every 16 during a reveal. The reveal's start and end are also anchors.
 
+Set `liveGlow: true` inside `sampledBackdrop` when the group contains glowing shapes or strokes. Their halos and background light follow the original geometry, clips and covers at every frame. The renderer evaluates those frames and saves the work of painting the rest of the group. Choose enough anchors for changes to the coloured shapes inside the group.
+
 ```ts
 import { FPS, layer } from 'skink3-engine';
 
@@ -442,7 +444,7 @@ layer({ id: 'map', depth: 0, nodes: [terrain, route], sampledBackdrop: { group: 
 
 - Use strictly increasing integer frame numbers within the shot. The first and last frame are included automatically. An empty array uses just those two frames. Stills, partial renders and workers use the same global schedule.
 - An interval uses ordinary drawing when the layer's effective camera or perspective moves, the group's own position, rotation or scale changes, or the atmosphere changes on a tinted layer. A spring, idle motion or animated stretch on the root keeps the group live throughout. Put anchors at camera stops and starts so surrounding holds can benefit.
-- Choose an independently drawable group. Compilation rejects a reference across its boundary in either direction, and rejects glow sources, pulses, glow covers and heat haze inside it. Put those elements outside the group. Motion **inside** the group is sampled, including custom drives. Keep fast foreground motion live or give it closely spaced anchors.
+- Choose an independently drawable group. Compilation rejects references across its boundary in either direction, pulses, glow covers and heat haze inside it. Glowing shapes and strokes require `liveGlow: true`. Other glow sources belong outside the group. Motion **inside** the group is sampled, including custom drives. Keep fast foreground motion live or give it closely spaced anchors.
 - Compare the original and sampled versions at delivery resolution through a whole transition and a camera stop. Look for doubled edges on moving features and for steps in fades. Include anchor capture and encoding when timing the same range. A continuously moving view still requires the full geometry on every frame.
 
 ## Nodes

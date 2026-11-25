@@ -192,7 +192,7 @@ export interface CLayer {
 export interface CompiledShot {
   /** Global node indices and bake slots are preserved when drawing only the live part of a sampled scene. */
   readonly activeNodes?: readonly CNode[];
-  readonly sampledBackdrops?: readonly { readonly layer: number; readonly group: CNode; readonly frames: readonly number[] }[];
+  readonly sampledBackdrops?: readonly { readonly layer: number; readonly group: CNode; readonly frames: readonly number[]; readonly liveGlow?: true }[];
   readonly spec: ShotSpec;
   readonly frames: number;
   readonly nodes: readonly CNode[];
@@ -1019,7 +1019,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     const option = layer.spec.sampledBackdrop;
     if (option === undefined) return [];
     const why = `${where}: sampledBackdrop in layer "${layer.spec.id}"`;
-    if (!option || typeof option !== 'object' || Object.keys(option).some(k => k !== 'group' && k !== 'frames')) fail(`${why}: expected {group, frames}`);
+    if (!option || typeof option !== 'object' || Object.keys(option).some(k => k !== 'group' && k !== 'frames' && k !== 'liveGlow')) fail(`${why}: expected {group, frames, liveGlow?}`);
+    if (option.liveGlow !== undefined && typeof option.liveGlow !== 'boolean') fail(`${why}: liveGlow must be a boolean`);
     const root = byId.get(option.group);
     if (!root || root.layer !== li || root.parent !== -1 || root.node.type !== 'group') fail(`${why}: group must name a top-level group of this layer`);
     if (!Array.isArray(option.frames)) fail(`${why}: frames must be an array of global shot frame numbers`);
@@ -1029,16 +1030,20 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       previous = f;
     }
     const inside = (i: number) => root.index <= i && i <= root.subtreeEnd;
+    let liveGlow = false;
     for (const n of nodes) {
       const captured = inside(n.index);
+      const glowing = 'glow' in n.node && n.node.glow > 0;
+      const keepGlow = option.liveGlow && (n.node.type === 'shape' || n.node.type === 'stroke');
+      if (captured && glowing && keepGlow) liveGlow = true;
       if (captured && ((n.node.type === 'shape' && (n.node.cover || n.haze)) ||
-        ('glow' in n.node && n.node.glow > 0) || n.stroke?.pulses.length || n.link?.pulses.length)) {
+        (glowing && !keepGlow) || n.stroke?.pulses.length || n.link?.pulses.length)) {
         fail(`${why}: "${n.id}" uses glow, a pulse, a cover or heat haze that interacts with live drawing`);
       }
       const refs = [n.clipIndex, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
       if (refs.some(i => i >= 0 && inside(i) !== captured)) fail(`${why}: "${n.id}" has a reference across the sampled group boundary`);
     }
-    return [{ layer: li, group: root, frames: [...new Set([0, ...option.frames, frames - 1])] }];
+    return [{ layer: li, group: root, frames: [...new Set([0, ...option.frames, frames - 1])], ...(liveGlow ? { liveGlow: true as const } : {}) }];
   });
 
   // A plane that stands things on a ground: the ground is a relief among its own children.

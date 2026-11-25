@@ -32,7 +32,7 @@ import {
   type Paint,
 } from './draw.ts';
 import { applyHaze } from './haze.ts';
-import { sampledFrame } from './backdrop.ts';
+import { glowView, sampledFrame } from './backdrop.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
 
 export interface RenderOptions {
@@ -701,11 +701,36 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
  */
 export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): DrawnFrame {
   if (!c.sampledBackdrops) return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
-  const { live, images } = sampledFrame(c, bake, frame, opts, ({ group }, f) => {
-    const state = evaluate(c, bake, f, opts.lang);
-    return captureBackdrop(c, state, group, opts);
-  });
-  return drawState(live, evaluate(live, bake, frame, opts.lang), opts, images);
+  let current: FrameState | undefined;
+  const full = (f: number): FrameState => f === frame ? current ??= evaluate(c, bake, f, opts.lang) : evaluate(c, bake, f, opts.lang);
+  const { live, images } = sampledFrame(c, bake, frame, opts, ({ group }, f) => captureBackdrop(c, full(f), group, opts));
+  if (!images?.size) return drawState(c, full(frame), opts);
+  const state = evaluate(live, bake, frame, opts.lang);
+  if (!c.sampledBackdrops.some(source => source.liveGlow && images.has(source.group.index))) return drawState(live, state, opts, images);
+  const layers = [...state.layers];
+  for (const source of c.sampledBackdrops) {
+    const { group, layer, liveGlow } = source;
+    if (!liveGlow || !images.has(group.index)) continue;
+    const view = glowView(c, source);
+    const frameView = current ?? (view === c ? full(frame) : evaluate(view, bake, frame, opts.lang));
+    const original = frameView.layers[layer]!.items.filter(item => group.index <= item.node.index && item.node.index <= group.subtreeEnd);
+    const glows = glowItems(original);
+    const active = layers[layer]!;
+    layers[layer] = { ...active, items: active.items.map(item => item.kind === 'group' && item.sampled && item.node.index === group.index ? { ...item, items: glows } : item) };
+  }
+  return drawState(live, { ...state, layers }, opts, images);
+}
+
+/** The live halo traverses its original group, plane and clip wrappers. The colour pass paints the cached group image. */
+function glowItems(items: readonly Item[]): Item[] {
+  const result: Item[] = [];
+  for (const item of items) {
+    if ('items' in item) {
+      const children = glowItems(item.items);
+      if (children.length) result.push({ ...item, items: children });
+    } else if (glowStrength(item) > 0) result.push(item);
+  }
+  return result;
 }
 
 /** Rasterize the group's own transparent contribution, before layer blur, live halos and vignette. */

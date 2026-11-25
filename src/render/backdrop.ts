@@ -11,6 +11,47 @@ import { perspAt } from '../scene/space.ts';
 type Backdrop = NonNullable<CompiledShot['sampledBackdrops']>[number];
 type Capture = (group: Backdrop, frame: number) => ImageData;
 
+const glowViews = new WeakMap<CompiledShot, Map<number, CompiledShot>>();
+
+/** Only the original nodes needed for a sampled group's halos, with their original indices and bake slots. */
+export function glowView(c: CompiledShot, source: Backdrop): CompiledShot {
+  let views = glowViews.get(c);
+  if (!views) { views = new Map(); glowViews.set(c, views); }
+  const saved = views.get(source.group.index);
+  if (saved) return saved;
+  const needed = new Set<number>();
+  for (let i = source.group.index; i <= source.group.subtreeEnd; i++) {
+    const node = c.nodes[i]!.node;
+    if ((node.type === 'shape' || node.type === 'stroke') && node.glow > 0) needed.add(i);
+  }
+  let ordinaryOrder = true;
+  for (const i of needed) {
+    const n = c.nodes[i]!;
+    // New entries are visited in turn, including the parents and references of a sibling used as a mask.
+    for (const index of [n.parent, n.plane, n.globe?.index ?? -1, n.clipIndex, n.lookAtIndex,
+      n.targetIndex, n.fromIndex, n.toIndex, n.attachIndex]) {
+      if (index >= 0) needed.add(index);
+    }
+    if (n.clipIndex >= 0) {
+      const mask = c.nodes[n.clipIndex]!.node;
+      // Skipping an intervening item can combine neighbouring clips; soft masks composite those differently.
+      if (mask.type === 'shape' && (mask.soft || mask.clipMask)) ordinaryOrder = false;
+    }
+    for (const ground of c.grounds?.get(i) ?? []) needed.add(ground);
+    // A sorted or shadow-casting group's draw order may depend on the geometry of its unlit children.
+    if (n.node.type === 'group' && (n.node.sort || n.node.cast)) ordinaryOrder = false;
+  }
+  // The sampled group is the only top-level item here. Within it, ordinary children stay in source order.
+  const view = ordinaryOrder ? {
+    ...c,
+    activeNodes: c.nodes.filter(n => needed.has(n.index)),
+    layers: c.layers.map((layer, i) => ({ ...layer, ordered: false, sorted: false,
+      nodes: i === source.layer ? layer.nodes.filter(index => needed.has(index)) : [] })),
+  } : c;
+  views.set(source.group.index, view);
+  return view;
+}
+
 /** Compact live traversal, leaving all indices used by the evaluator, its references and the original bake intact. */
 function liveView(c: CompiledShot, groups: readonly Backdrop[]): CompiledShot {
   const nodes = [...c.nodes];

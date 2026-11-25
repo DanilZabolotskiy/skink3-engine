@@ -701,7 +701,7 @@ export type SceneNode = ShapeNode | GroupNode | LinkNode | LabelNode | EyeNode |
 /** A depth layer. Depth 0 is the focus plane; positive is farther, negative is nearer. */
 export interface LayerSpec {
   /** Rasterize this top-level group at global shot frames and interpolate between them while the camera holds. */
-  readonly sampledBackdrop?: { readonly group: string; readonly frames: readonly number[] };
+  readonly sampledBackdrop?: { readonly group: string; readonly frames: readonly number[]; readonly liveGlow?: boolean };
   readonly id: string;
   /** Distance from the focus plane; must be above -1. */
   readonly depth: number;
