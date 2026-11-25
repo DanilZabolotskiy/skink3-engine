@@ -1505,6 +1505,7 @@ export function layer(o: {
   id: string;
   depth: number;
   nodes: readonly SceneNode[];
+  sampledBackdrop?: LayerSpec['sampledBackdrop'];
   /** Blur radius in units; default derived from depth. */
   blur?: number;
   /** Default 1 / (1 + depth). */
@@ -1520,12 +1521,13 @@ export function layer(o: {
   perspective?: true | { aim?: Vec3; distance?: number; tilt?: number; turn?: number; lens?: number };
 }): LayerSpec {
   const where = `layer("${o?.id}")`;
-  checkKeys(where, o, ['id', 'depth', 'nodes', 'blur', 'parallax', 'tint', 'perspective']);
+  checkKeys(where, o, ['id', 'depth', 'nodes', 'blur', 'parallax', 'tint', 'perspective', 'sampledBackdrop']);
   if (!Array.isArray(o.nodes)) fail(where, 'nodes must be an array');
   return {
     id: idOf(where, o.id),
     depth: num(where, 'depth', o.depth, -0.9, 50),
     nodes: o.nodes,
+    ...(o.sampledBackdrop === undefined ? {} : { sampledBackdrop: o.sampledBackdrop }),
     blur: o.blur === undefined ? null : num(where, 'blur', o.blur, 0, 200),
     parallax: o.parallax === undefined ? null : num(where, 'parallax', o.parallax, 0, 20),
     tint: o.tint === undefined ? null : num(where, 'tint', o.tint, 0, 1),

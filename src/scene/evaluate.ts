@@ -389,7 +389,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     });
   }
 
-  for (const n of c.nodes) {
+  for (const n of c.activeNodes ?? c.nodes) {
     const node = n.node;
     if (node.type !== 'shape' && node.type !== 'group' && node.type !== 'eye' && node.type !== 'stroke' && node.type !== 'text') continue;
     const scale = node.scale * (n.scale ? sampleScale(n.scale, t) : 1);
@@ -527,7 +527,7 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     }
   }
 
-  for (const n of c.nodes) {
+  for (const n of c.activeNodes ?? c.nodes) {
     const node = n.node;
     if (node.type !== 'label') continue;
     const target = c.nodes[n.targetIndex]!;
@@ -751,6 +751,8 @@ export interface HazeItem {
  * opacity multiplies down the tree.
  */
 export interface GroupItem {
+  /** A render-only placeholder for a captured image at this place in the item list. */
+  readonly sampled?: true;
   readonly kind: 'group';
   readonly node: CNode;
   readonly opacity: number;
@@ -984,7 +986,7 @@ function prune(items: readonly Item[]): Item[] {
     if (item.kind !== 'group' && item.kind !== 'clip' && item.kind !== 'stretch' && item.kind !== 'plane') out.push(item);
     else {
       const inner = prune(item.items);
-      if (inner.length > 0) out.push({ ...item, items: inner });
+      if (inner.length > 0 || (item.kind === 'group' && item.sampled)) out.push({ ...item, items: inner });
     }
   }
   return out;
@@ -1065,7 +1067,7 @@ export function eyeOpen(blinks: readonly number[], t: number): number {
 export function opacities(c: CompiledShot, t: number): { own: Float64Array; alpha: Float64Array } {
   const own = new Float64Array(c.nodes.length).fill(1);
   const alpha = new Float64Array(c.nodes.length).fill(1);
-  for (const n of c.nodes) {
+  for (const n of c.activeNodes ?? c.nodes) {
     own[n.index] = n.opacity ? sampleOpacity(n.opacity, t) : 1;
     // Not drawn at all: a node that shows only while it travels, outside its travel; a body that waits for its release.
     if ((n.pos !== null && n.pos.onlyWhile && !sampleTravelling(n.pos, t)) || (n.bodySlot >= 0 && awaitsRelease(n, t))) own[n.index] = 0;
@@ -1077,7 +1079,7 @@ export function opacities(c: CompiledShot, t: number): { own: Float64Array; alph
     }
     alpha[n.index] = own[n.index]! * (n.parent >= 0 ? alpha[n.parent]! : 1);
   }
-  for (const n of c.nodes) {
+  for (const n of c.activeNodes ?? c.nodes) {
     if (n.node.type !== 'link') continue;
     own[n.index] = own[n.index]! * Math.min(alpha[n.fromIndex]!, alpha[n.toIndex]!);
     alpha[n.index] = own[n.index]!;
@@ -1878,6 +1880,11 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
       // What is open belongs to the nodes around this one. In a layer drawn as listed the nodes only go up; among
       // children drawn far to near they also go back, and a wall comes again with its next stretch.
       while (open.length > 0 && (index > open[open.length - 1]!.end || index <= open[open.length - 1]!.start)) open.pop();
+      if (index === layer.sampledIndex) {
+        // This top-level placeholder follows the same draw order as its full group, including perspective sorting.
+        root.push({ kind: 'group', node: n, opacity: 1, items: [], sampled: true });
+        continue;
+      }
       const node = n.node;
       const xf = placeOf(index);
       const a = alpha[index]!;

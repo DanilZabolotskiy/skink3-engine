@@ -10,8 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
 import { concatChunks, openEncoder, type Encoder } from './encode.ts';
-import { evaluate } from '../scene/evaluate.ts';
-import { drawState, heightFor, readRaw, type DrawnFrame } from './frame.ts';
+import { drawFrame, heightFor, readRaw, type DrawnFrame } from './frame.ts';
 import { renderGroup } from './group.ts';
 import type { AdmissionWaiting } from './admission.ts';
 import { GROUP_WORKERS, queueConfig, type RenderLease } from './queue.ts';
@@ -166,16 +165,17 @@ export async function renderChunk(
     for (let f = opts.from; f < opts.to; f++) {
       if (f === opts.failAtFrame) throw new Error(`injected failure at frame ${f}`);
       if (opts.signal?.aborted) throw new Error(`the chunk was stopped before frame ${f}`);
-      const state = evaluate(c, bake, f, ropts.lang);
       before = reading;
       reading = null;
       let done: { frame: number; raw: Buffer } | null = null;
-      recorded = drawState(c, state, ropts);
+      // A sampled shot can read an anchor synchronously during drawing. Finish the previous read first in that case.
+      if (!c.sampledBackdrops) recorded = drawFrame(c, bake, f, ropts);
       if (before) {
         const r: Reading = before;
         before = null;
         done = { frame: r.frame, raw: await finish(r) };
       }
+      recorded ??= drawFrame(c, bake, f, ropts);
       reading = start(f, recorded);
       recorded = null;
       if (done) {

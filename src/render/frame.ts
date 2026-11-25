@@ -4,12 +4,12 @@
 //
 // No texture, no grain: flat fills and gradients only.
 
-import { Canvas, type CanvasRenderingContext2D, type DOMMatrix } from 'skia-canvas';
+import { Canvas, ImageData, type CanvasRenderingContext2D, type DOMMatrix } from 'skia-canvas';
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
-import type { CompiledShot } from '../scene/compile.ts';
+import type { CNode, CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { outlineOf, shapeExtent } from '../shape/geometry.ts';
@@ -32,6 +32,7 @@ import {
   type Paint,
 } from './draw.ts';
 import { applyHaze } from './haze.ts';
+import { sampledFrame } from './backdrop.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
 
 export interface RenderOptions {
@@ -108,6 +109,7 @@ function newCanvas(scratch: Scratch, w: number, h: number, gpu: boolean): Canvas
 
 /** What is needed to open another canvas that lines up with a layer's canvas. */
 interface LayerTarget {
+  readonly backdrop?: ImageData;
   readonly scratch: Scratch;
   readonly layer: LayerState;
   readonly width: number;
@@ -225,6 +227,13 @@ function drawItems(
       case 'text': drawText(ctx, item, paint); break;
       case 'cast': drawCast(ctx, item, paint); break;
       case 'group': {
+        if (target.backdrop && item.node.index === target.layer.layer.sampledIndex) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(target.backdrop, 0, 0);
+          ctx.restore();
+          break;
+        }
         // A faded line outside the actual layer canvas has no pixels to composite, even in its blur padding.
         const plane = planeCanvasOf(ctx);
         if (plane && fadedStrokeOutside(item, plane.transform, target.width + 2 * target.pad, target.height + 2 * target.pad)) break;
@@ -576,7 +585,7 @@ export interface DrawnFrame {
 }
 
 /** Draws a display list. */
-export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions): DrawnFrame {
+export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>): DrawnFrame {
   const width = opts.width;
   const height = heightFor(width);
   const k = width / STAGE_W;
@@ -642,11 +651,12 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   // 3. Layers.
   for (const { layer, leaves, paint, seen } of layers) {
     // A layer may hold nothing to draw and still a haze, which moves what the layers behind it have drawn.
-    if (leaves.length === 0 && !layer.hazes) continue;
+    const backdrop = layer.layer.sampledIndex === undefined ? undefined : backdrops?.get(layer.layer.sampledIndex);
+    if (leaves.length === 0 && !layer.hazes && !backdrop) continue;
     const blurPx = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
-    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu };
+    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop };
     if (!layer.hazes) {
       drawLayerPart(ctx, c, layer.items, leaves, paint, seen, target, blurPx);
       continue;
@@ -657,7 +667,9 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
       if (h > 0) applyHaze(ctx, layer.hazes[h - 1]!, layer.view, k, width, height, opts.gpu ? GPU_MSAA : false);
       const part = parts[h]!;
       const partLeaves = flatItems(part);
-      if (partLeaves.length > 0) drawLayerPart(ctx, c, part, partLeaves, paint, seen, target, blurPx);
+      if (partLeaves.length > 0 || (backdrop && part.some(item => item.node.index === layer.layer.sampledIndex))) {
+        drawLayerPart(ctx, c, part, partLeaves, paint, seen, target, blurPx);
+      }
     }
   }
 
@@ -688,13 +700,35 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
  * drawn on the GPU may come out with other pixels (see `oneFrameAtATime`), so dispose of it before the next one.
  */
 export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): DrawnFrame {
-  return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
+  if (!c.sampledBackdrops) return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
+  const { live, images } = sampledFrame(c, bake, frame, opts, ({ group }, f) => {
+    const state = evaluate(c, bake, f, opts.lang);
+    return captureBackdrop(c, state, group, opts);
+  });
+  return drawState(live, evaluate(live, bake, frame, opts.lang), opts, images);
+}
+
+/** Rasterize the group's own transparent contribution, before layer blur, live halos and vignette. */
+function captureBackdrop(c: CompiledShot, state: FrameState, group: CNode, opts: RenderOptions): ImageData {
+  const layer = state.layers[group.layer]!;
+  const items = layer.items.filter(item => item.node.index >= group.index && item.node.index <= group.subtreeEnd);
+  const k = opts.width / STAGE_W;
+  const blurPx = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
+  const target: LayerTarget = { scratch: { canvases: [] }, layer, k, width: opts.width, height: heightFor(opts.width),
+    gpu: opts.gpu, pad: blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0 };
+  try {
+    const { canvas, ctx } = layerCanvas(target);
+    drawItems(ctx, items, makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones), target);
+    const raw = canvas.toBufferSync('raw', { colorType: 'rgba', msaa: opts.gpu ? GPU_MSAA : false });
+    return new ImageData(raw, canvas.width, canvas.height);
+  } finally {
+    for (const canvas of target.scratch.canvases) canvas.dispose();
+  }
 }
 
 /** Draws a frame and frees its canvases when readback has finished. */
 async function drawnAndRead<T>(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions, read: (drawn: DrawnFrame) => Promise<T>): Promise<T> {
-  const state = evaluate(c, bake, frame, opts.lang);
-  const drawn = drawState(c, state, opts);
+  const drawn = drawFrame(c, bake, frame, opts);
   try {
     return await read(drawn);
   } finally {

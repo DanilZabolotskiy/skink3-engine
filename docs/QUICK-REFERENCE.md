@@ -1,6 +1,6 @@
 # Quick reference for scene authors
 
-What a scene can use; open SCENES.md or a review doc only at an indexed section. What neither has is not built.
+The index links to the authoring and review guides.
 
 - After `/**/`: defaults.
 - Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
@@ -41,8 +41,9 @@ perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6, profile: 'ease' }); // +
 - `drift.speed`: units/frame along `heading` (norm 0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`: with `speed` (units/frame) it loops a closed one (`loopPoints(center, r | [rx, ry])`), else runs it once.
 - Keys chain. `cameraTo`: `zoom` times the authored view, `to` its final aim; path and drift wait. Under `zoomTo` they run on.
-- `depth` 0: the focus plane; above 0 farther (less parallax, blurred, toward `atmosphere`), below (to -0.9) nearer. Drawn far first, then as listed, children after parents.
+- `depth` 0 is in focus, positive is far (less parallax, blurred, tinted), down to -0.9 is near. Far first, then list order, parents before children.
 - A listed node's `depth` (larger: behind) orders any layer. A perspective layer's listed nodes take `at: [x, y, z]`, face the camera; `region`, `stroke`: `points` of three; a `plane` group lies in it; near over far; behind the camera: cut.
+- Dense maps: [`sampledBackdrop: { group, frames }`](SCENES.md#sampling-a-dense-backdrop).
 
 ## Nodes
 

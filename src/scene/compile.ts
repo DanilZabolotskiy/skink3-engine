@@ -171,6 +171,8 @@ export interface CNode {
 }
 
 export interface CLayer {
+  /** In a render-only evaluation view, marks the group whose pixels stand in for its descendants. */
+  readonly sampledIndex?: number;
   readonly spec: LayerSpec;
   /** Node indices of this layer in draw order. */
   readonly nodes: readonly number[];
@@ -188,6 +190,9 @@ export interface CLayer {
 }
 
 export interface CompiledShot {
+  /** Global node indices and bake slots are preserved when drawing only the live part of a sampled scene. */
+  readonly activeNodes?: readonly CNode[];
+  readonly sampledBackdrops?: readonly { readonly layer: number; readonly group: CNode; readonly frames: readonly number[] }[];
   readonly spec: ShotSpec;
   readonly frames: number;
   readonly nodes: readonly CNode[];
@@ -1010,6 +1015,32 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const byId = new Map<string, CNode>();
   for (const n of nodes) byId.set(n.id, n);
 
+  const sampledBackdrops = layers.flatMap((layer, li) => {
+    const option = layer.spec.sampledBackdrop;
+    if (option === undefined) return [];
+    const why = `${where}: sampledBackdrop in layer "${layer.spec.id}"`;
+    if (!option || typeof option !== 'object' || Object.keys(option).some(k => k !== 'group' && k !== 'frames')) fail(`${why}: expected {group, frames}`);
+    const root = byId.get(option.group);
+    if (!root || root.layer !== li || root.parent !== -1 || root.node.type !== 'group') fail(`${why}: group must name a top-level group of this layer`);
+    if (!Array.isArray(option.frames)) fail(`${why}: frames must be an array of global shot frame numbers`);
+    let previous = -1;
+    for (const f of option.frames) {
+      if (!Number.isSafeInteger(f) || f < 0 || f >= frames || f <= previous) fail(`${why}: frames must be strictly increasing integers in 0..${frames - 1}`);
+      previous = f;
+    }
+    const inside = (i: number) => root.index <= i && i <= root.subtreeEnd;
+    for (const n of nodes) {
+      const captured = inside(n.index);
+      if (captured && ((n.node.type === 'shape' && (n.node.cover || n.haze)) ||
+        ('glow' in n.node && n.node.glow > 0) || n.stroke?.pulses.length || n.link?.pulses.length)) {
+        fail(`${why}: "${n.id}" uses glow, a pulse, a cover or heat haze that interacts with live drawing`);
+      }
+      const refs = [n.clipIndex, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
+      if (refs.some(i => i >= 0 && inside(i) !== captured)) fail(`${why}: "${n.id}" has a reference across the sampled group boundary`);
+    }
+    return [{ layer: li, group: root, frames: [...new Set([0, ...option.frames, frames - 1])] }];
+  });
+
   // A plane that stands things on a ground: the ground is a relief among its own children.
   let grounds: Map<number, number[]> | null = null;
   for (const n of nodes) {
@@ -1121,6 +1152,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     tones,
     stringKeys: [...stringKeys],
     sceneHash,
+    ...(sampledBackdrops.length ? { sampledBackdrops } : {}),
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
     cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,

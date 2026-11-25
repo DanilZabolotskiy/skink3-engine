@@ -399,7 +399,7 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 
 `prewarm` is the number of seconds the world is simulated before the shot starts. With it a body may be released at a negative time, so a pile already lies there, or a stream already falls, at frame 0 (see Rigid bodies).
 
-## `layer({ id, depth, nodes, blur?, parallax?, tint?, perspective? })`
+## `layer({ id, depth, nodes, blur?, parallax?, tint?, perspective?, sampledBackdrop? })`
 
 | `depth` | Meaning | Derived defaults |
 |---|---|---|
@@ -420,6 +420,30 @@ A point of a layer lands on the screen at `p × zoom + (tx, ty)` (origin at the 
 **Tint is atmospheric perspective.** With tint *t*, every colour drawn in the layer (fills, shadows, highlights, links, particles, labels) loses `0.6 × t` of its saturation and then moves *t* of the way to the shot's `atmosphere` colour: hue along the short way round the colour wheel, saturation and value straight. So far things are paler, less saturated and close to one tone, and a warm colour fading into a cool atmosphere never turns gray. At tint 1 everything is the atmosphere colour.
 
 A shot with depth has at least three layers: a far one with large shapes, the stage at depth 0 where the action is, and a near one with a few big blurred shapes at the edges. Keep far shapes away from the spot behind the subject: the depth tint separates them by tone, but a diagram reads best against the plain background. A far layer moves less than the stage, so "behind the subject" is a band there, as wide as the camera's travel times `1 - parallax`.
+
+### Sampling a dense backdrop
+
+When rendering a map or city with many small features, keep slowly changing scenery in one top-level group. Give its layer `sampledBackdrop: { group, frames }` to rasterize that group on selected frames. On intervening frames the renderer blends the two transparent images in their original drawing order. Labels, routes, halos from live objects and the other layers still draw at 60 fps. Without the option every node draws normally.
+
+Generate the frame schedule from the duration and cues of each language version. This example samples every 48 frames during quiet sections and every 16 during a reveal. The reveal's start and end are also anchors.
+
+```ts
+import { FPS, layer } from 'skink3-engine';
+
+const last = Math.max(0, Math.round(seconds * FPS) - 1);
+const start = Math.min(last, Math.max(0, Math.floor(revealStartSeconds * FPS)));
+const end = Math.min(last, Math.max(start, Math.ceil(revealEndSeconds * FPS)));
+const frames: number[] = [];
+for (const [from, to, step] of [[0, start, 48], [start, end, 16], [end, last, 48]] as const) {
+  for (let f = from; f < to; f += step) frames.push(f);
+}
+layer({ id: 'map', depth: 0, nodes: [terrain, route], sampledBackdrop: { group: terrain.id, frames } });
+```
+
+- Use strictly increasing integer frame numbers within the shot. The first and last frame are included automatically. An empty array uses just those two frames. Stills, partial renders and workers use the same global schedule.
+- An interval uses ordinary drawing when the layer's effective camera or perspective moves, the group's own position, rotation or scale changes, or the atmosphere changes on a tinted layer. A spring, idle motion or animated stretch on the root keeps the group live throughout. Put anchors at camera stops and starts so surrounding holds can benefit.
+- Choose an independently drawable group. Compilation rejects a reference across its boundary in either direction, and rejects glow sources, pulses, glow covers and heat haze inside it. Put those elements outside the group. Motion **inside** the group is sampled, including custom drives. Keep fast foreground motion live or give it closely spaced anchors.
+- Compare the original and sampled versions at delivery resolution through a whole transition and a camera stop. Look for doubled edges on moving features and for steps in fades. Include anchor capture and encoding when timing the same range. A continuously moving view still requires the full geometry on every frame.
 
 ## Nodes
 
