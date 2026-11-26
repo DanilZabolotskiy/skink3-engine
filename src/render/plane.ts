@@ -107,6 +107,10 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
   let path: Path2D | null = null;
   // The transform has changed since the path was begun.
   let moved = false;
+  // A polygonal path only reaches behind the camera if one of its vertices does. Accumulate that test while
+  // tracing, so a line does not need to copy every native path edge back to JavaScript before it can be stroked.
+  let linear = true;
+  let behind = false;
   // The transform as it is now, once it has been asked for; and what it was at each save that is still open.
   let matrix: DOMMatrix | null = null;
   const saved: (DOMMatrix | null)[] = [];
@@ -118,7 +122,7 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
       throw new Error(`a path that is drawn in a plane of a perspective layer must be begun there and built and drawn under one transform (${String(name)})`);
     }
     // A stroke takes no fill rule; a fill and a clip keep theirs.
-    return reachesBehind(ctx, path) ? Reflect.apply(method, ctx, [path, ...args]) : Reflect.apply(method, ctx, args);
+    return (linear ? behind : reachesBehind(ctx, path)) ? Reflect.apply(method, ctx, [path, ...args]) : Reflect.apply(method, ctx, args);
   };
   const made = new Proxy(ctx, {
     get(target, name) {
@@ -134,11 +138,25 @@ export function planeContext(ctx: CanvasRenderingContext2D): CanvasRenderingCont
           target.beginPath();
           path = new Path2D();
           moved = false;
+          linear = true;
+          behind = false;
         };
       } else if (BUILDS.has(name)) {
         value = (...args: unknown[]): void => {
           Reflect.apply(Reflect.get(target, name) as (...a: unknown[]) => unknown, target, args);
-          if (path) Reflect.apply(Reflect.get(path, name) as (...a: unknown[]) => unknown, path, args);
+          if (!path) return;
+          Reflect.apply(Reflect.get(path, name) as (...a: unknown[]) => unknown, path, args);
+          if (!linear || behind || name === 'closePath') return;
+          if (name !== 'moveTo' && name !== 'lineTo') {
+            linear = false;
+            return;
+          }
+          const m = (matrix ??= target.getTransform());
+          const x = m.m14 * (args[0] as number), y = m.m24 * (args[1] as number);
+          const w = x + y + m.m44, margin = 2 ** -15 * (1 + Math.abs(x) + Math.abs(y) + Math.abs(m.m44));
+          // At the clipping threshold let Skia resolve its own float coordinates, exactly as for curves.
+          if (w < PLANE_NEAR_W0 - margin) behind = true;
+          else if (!(w > PLANE_NEAR_W0 + margin)) linear = false;
         };
       } else if (MOVES.has(name)) {
         value = (...args: unknown[]): unknown => {

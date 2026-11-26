@@ -20,6 +20,7 @@ import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/g
 import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
 import { shapePath } from '../shape/path.ts';
 import { liftedContext, PLANE_NEAR_W0, planeCanvas } from './plane.ts';
+import { projectedLine } from './projected-line.ts';
 import { drawGlobe } from './globe.ts';
 import { drawRelief } from './relief.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
@@ -982,6 +983,37 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
   ctx.restore();
 }
 
+/** The positive half-space of the eye is convex. Test a spline's control hull before tracing it on the raw plane canvas. */
+function strokePen(ctx: CanvasRenderingContext2D, path: ReturnType<typeof itemPath>): CanvasRenderingContext2D {
+  const plane = planeCanvas(ctx);
+  if (!plane) return ctx;
+  const m = plane.transform();
+  const safe = (x: number, y: number): boolean => {
+    const a = m.m14 * x,
+      b = m.m24 * y;
+    return a + b + m.m44 > PLANE_NEAR_W0 + 2 ** -15 * (1 + Math.abs(a) + Math.abs(b) + Math.abs(m.m44));
+  };
+  const p = path.points,
+    n = p.length;
+  if (n === 2 && !path.closed) return safe(p[0]![0], p[0]![1]) && safe(p[1]![0], p[1]![1]) ? plane.raw : ctx;
+  const at = (i: number): Vec2 => p[path.closed ? (i + n) % n : Math.max(0, Math.min(n - 1, i))]!;
+  const k = path.smooth / 6;
+  for (let i = 0; i < n; i++) {
+    const a = p[i]!;
+    if (!safe(a[0], a[1])) return ctx;
+    if (i === n - 1 && !path.closed) break;
+    const b = at(i + 1),
+      before = at(i - 1),
+      after = at(i + 2);
+    if (
+      !safe(a[0] + (b[0] - before[0]) * k, a[1] + (b[1] - before[1]) * k) ||
+      !safe(b[0] - (after[0] - a[0]) * k, b[1] - (after[1] - a[1]) * k)
+    )
+      return ctx;
+  }
+  return plane.raw;
+}
+
 /**
  * Strokes the drawn part of a stroke in the current colour. The dashes are
  * anchored at the first point of the line, so they stay where they are while
@@ -991,9 +1023,8 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
  */
 function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   const node = item.node.node as StrokeNode;
-  const table = pathTable(itemPath(item));
+  const path = itemPath(item);
   const { xf } = item;
-  const upTo = table.length * item.drawn;
   const whole = item.drawn >= 1 - 1e-9;
   ctx.save();
   ctx.translate(xf.x, xf.y);
@@ -1007,45 +1038,74 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
     const gap = node.dash[1] + node.width;
     ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
   }
-  ctx.beginPath();
-  if (item.runs) {
-    // A line on a globe: the parts of it that face the viewer.
-    for (const run of item.runs) {
-      ctx.moveTo(run[0]!, run[1]!);
-      for (let i = 2; i < run.length; i += 2) ctx.lineTo(run[i]!, run[i + 1]!);
-    }
-    ctx.stroke();
+  const pen = item.runs ? ctx : strokePen(ctx, path);
+  pen.beginPath();
+  if (item.node.plane >= 0 && !node.dash && !path.closed && path.points.length === 2 && item.drawn >= 1 && !item.runs && !item.part) {
+    const [a, b] = path.points;
+    pen.moveTo(a![0], a![1]);
+    pen.lineTo(b![0], b![1]);
+    pen.stroke();
     ctx.restore();
     return;
   }
-  if (item.part || node.curveSteps) {
+  const table = pathTable(path);
+  const upTo = table.length * item.drawn;
+  if (item.runs) {
+    // A line on a globe: the parts of it that face the viewer.
+    for (const run of item.runs) {
+      pen.moveTo(run[0]!, run[1]!);
+      for (let i = 2; i < run.length; i += 2) pen.lineTo(run[i]!, run[i + 1]!);
+    }
+    pen.stroke();
+    ctx.restore();
+    return;
+  }
+  const straight = !node.dash && !path.closed && path.points.length === 2;
+  const steps = node.curveSteps ?? (item.node.plane >= 0 && straight ? 1 : undefined);
+  if (!steps && !node.dash && item.path && path.points.length >= 3 && item.node.plane >= 0) {
+    const reach = 0.75 * itemWidth(item);
+    const from = item.part ? Math.max(0, item.part[0] - reach) : 0;
+    const to = item.part ? Math.min(item.part[1] + reach, upTo) : upTo;
+    let first = true;
+    projectedLine(table, from, to, ctx.getTransform(), (x, y) => {
+      if (first) {
+        pen.moveTo(x, y);
+        first = false;
+      } else pen.lineTo(x, y);
+    });
+    if (!item.part && whole && path.closed) pen.closePath();
+    pen.stroke();
+    ctx.restore();
+    return;
+  }
+  if (item.part || steps) {
     // One stretch of a wall. Its line reaches a little into the stretches beside it, so that the side of none of them shows in the line.
     const reach = 0.75 * itemWidth(item);
     const from = item.part ? Math.max(0, item.part[0] - reach) : 0;
     const to = item.part ? Math.min(item.part[1] + reach, upTo) : upTo;
-    const points = stretchPoints(table, from, to, node.curveSteps);
-    ctx.moveTo(points[0]![0], points[0]![1]);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]![0], points[i]![1]);
-    if (!item.part && whole && node.path.closed) ctx.closePath();
-    ctx.stroke();
+    const points = stretchPoints(table, from, to, steps);
+    pen.moveTo(points[0]![0], points[0]![1]);
+    for (let i = 1; i < points.length; i++) pen.lineTo(points[i]![0], points[i]![1]);
+    if (!item.part && whole && node.path.closed) pen.closePath();
+    pen.stroke();
     ctx.restore();
     return;
   }
-  ctx.moveTo(table.xs[0]!, table.ys[0]!);
+  pen.moveTo(table.xs[0]!, table.ys[0]!);
   const m = table.cum.length;
   for (let i = 1; i < m; i++) {
     if (table.cum[i]! <= upTo) {
-      ctx.lineTo(table.xs[i]!, table.ys[i]!);
+      pen.lineTo(table.xs[i]!, table.ys[i]!);
       continue;
     }
     // The line ends between two samples.
     const span = table.cum[i]! - table.cum[i - 1]!;
     const u = span > 1e-12 ? (upTo - table.cum[i - 1]!) / span : 0;
-    if (u > 1e-9) ctx.lineTo(table.xs[i - 1]! + (table.xs[i]! - table.xs[i - 1]!) * u, table.ys[i - 1]! + (table.ys[i]! - table.ys[i - 1]!) * u);
+    if (u > 1e-9) pen.lineTo(table.xs[i - 1]! + (table.xs[i]! - table.xs[i - 1]!) * u, table.ys[i - 1]! + (table.ys[i]! - table.ys[i - 1]!) * u);
     break;
   }
-  if (whole && node.path.closed) ctx.closePath();
-  ctx.stroke();
+  if (whole && node.path.closed) pen.closePath();
+  pen.stroke();
   ctx.restore();
 }
 
@@ -1159,29 +1219,25 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   const node = item.node.node as StrokeNode;
   const table = pathTable(itemPath(item));
   const upTo = table.length * item.drawn;
-  let points: Vec2[] = [[table.xs[0]!, table.ys[0]!]];
-  if (item.part || node.curveSteps) points = stretchPoints(table, item.part?.[0] ?? 0, Math.min(item.part?.[1] ?? upTo, upTo), node.curveSteps);
-  const m = item.part || node.curveSteps ? 0 : table.cum.length;
-  for (let i = 1; i < m; i++) {
-    if (table.cum[i]! <= upTo) {
-      points.push([table.xs[i]!, table.ys[i]!]);
-      continue;
-    }
-    // The line ends between two samples.
-    const span = table.cum[i]! - table.cum[i - 1]!;
-    const u = span > 1e-12 ? (upTo - table.cum[i - 1]!) / span : 0;
-    if (u > 1e-9) points.push([table.xs[i - 1]! + (table.xs[i]! - table.xs[i - 1]!) * u, table.ys[i - 1]! + (table.ys[i]! - table.ys[i - 1]!) * u]);
-    break;
-  }
-  if (points.length < 2) return;
   const { xf } = item;
-  const closed = !item.part && item.drawn >= 1 - 1e-9 && node.path.closed;
-  const path = sidePath(points, closed, foot, false);
-  const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
   ctx.save();
   ctx.translate(xf.x, xf.y);
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
+  const from = item.part?.[0] ?? 0;
+  const to = Math.min(item.part?.[1] ?? upTo, upTo);
+  let points: Vec2[];
+  if (item.node.plane >= 0 && !node.curveSteps && !foot.tall && item.path) {
+    points = [];
+    projectedLine(table, from, to, ctx.getTransform(), (x, y) => points.push([x, y]), foot);
+  } else points = stretchPoints(table, from, to, node.curveSteps);
+  if (points.length < 2) {
+    ctx.restore();
+    return;
+  }
+  const closed = !item.part && item.drawn >= 1 - 1e-9 && node.path.closed;
+  const path = sidePath(points, closed, foot, false);
+  const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
   ctx.fillStyle = tone;
   ctx.strokeStyle = tone;
   ctx.lineWidth = itemWidth(item);

@@ -90,6 +90,8 @@ import { CAMERA_SUBJECT, FINDING_KINDS_ALL, FRAME_REGIONS, FRAME_SUBJECT, LINK_M
 export class CompileError extends Error {}
 
 export interface CNode {
+  /** Internal display view of a dense plane whose text is composited separately. */
+  readonly pictureScale?: number;
   readonly index: number;
   readonly id: string;
   readonly node: SceneNode;
@@ -195,6 +197,11 @@ export interface CLayer {
 export interface CompiledShot {
   /** Global node indices and bake slots are preserved when drawing only the live part of a sampled scene. */
   readonly activeNodes?: readonly CNode[];
+  /** Size in stage units of a repeated, unkeyed decorative mark in a render-only view. */
+  readonly inkSize?: Float32Array;
+  readonly inkPixels?: number;
+  readonly facetRoofs?: Uint8Array;
+  readonly retainedMask?: Uint8Array;
   readonly sampledBackdrops?: readonly { readonly layer: number; readonly group: CNode; readonly frames: readonly number[]; readonly liveGlow?: true }[];
   readonly spec: ShotSpec;
   readonly frames: number;

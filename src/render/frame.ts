@@ -31,6 +31,10 @@ import {
   fillClipShape,
   type Paint,
 } from './draw.ts';
+import { heldFrame, type HeldRange } from './holds.ts';
+import { outsideShape } from './bounds.ts';
+import { drawFootprints } from './footprints.ts';
+import { displayPlan } from './detail.ts';
 import { applyHaze } from './haze.ts';
 import { glowView, sampledFrame } from './backdrop.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
@@ -110,6 +114,7 @@ function newCanvas(scratch: Scratch, w: number, h: number, gpu: boolean): Canvas
 /** What is needed to open another canvas that lines up with a layer's canvas. */
 interface LayerTarget {
   readonly backdrop?: ImageData;
+  readonly retained?: ReadonlyMap<number, ImageData>;
   readonly scratch: Scratch;
   readonly layer: LayerState;
   readonly width: number;
@@ -131,6 +136,14 @@ export function maskedClip(item: ClipItem): boolean {
   return node.type === 'shape' && node.clipMask === true;
 }
 
+/** Large projected outlines require an expensive intersection at every native clip; paint their alpha once instead. */
+function rasterClip(item: ClipItem): boolean {
+  if (maskedClip(item)) return true;
+  if (item.node.plane < 0 || item.node.node.type !== 'shape' || item.node.node.clipMask === false) return false;
+  const shape = itemShape(item);
+  return shape.kind === 'polygon' && (shape.points.length >= 96 || Boolean(shape.rings?.some((r) => r.length >= 96)));
+}
+
 function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingContext2D } {
   const canvas = newCanvas(t.scratch, t.width + 2 * t.pad, t.height + 2 * t.pad, t.gpu);
   const ctx = canvas.getContext('2d');
@@ -138,6 +151,17 @@ function layerCanvas(t: LayerTarget): { canvas: Canvas; ctx: CanvasRenderingCont
   ctx.scale(t.k, t.k);
   ctx.transform(t.layer.view.zoom, 0, 0, t.layer.view.zoom, t.layer.view.tx, t.layer.view.ty);
   return { canvas, ctx };
+}
+
+/** Size and offset of a plane's own colour surface. Cached ranges use exactly this same pixel grid. */
+function pictureTarget(target: LayerTarget, ratio: number): LayerTarget {
+  return ratio === 1 ? target : {
+    ...target,
+    width: Math.ceil(target.width * ratio),
+    height: Math.ceil(target.height * ratio),
+    k: target.k * ratio,
+    pad: Math.ceil(target.pad * ratio),
+  };
 }
 
 type DrawingMatrix = Pick<DOMMatrix, 'm11' | 'm12' | 'm14' | 'm21' | 'm22' | 'm24' | 'm41' | 'm42' | 'm44'>;
@@ -216,17 +240,49 @@ function drawItems(
   target: LayerTarget,
   stretches: readonly (StretchItem | PlaneItem)[] = NO_STRETCH,
 ): void {
-  for (const item of items) {
+  const planeView = planeCanvasOf(ctx);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    if (item.kind === 'shape' && item.detail?.facet) {
+      const drawn = drawFootprints(ctx, items, i, paint);
+      if (drawn) i += drawn - 1;
+      else drawShape(ctx, { ...item, detail: undefined, foot: item.detail.facet }, paint);
+      continue;
+    }
     switch (item.kind) {
-      case 'shape': drawShape(ctx, item, paint); break;
-      case 'eye': drawEye(ctx, item, paint); break;
-      case 'link': drawLink(ctx, item, paint); break;
-      case 'label': drawLabel(ctx, item, paint); break;
-      case 'particles': drawParticles(ctx, item, paint); break;
-      case 'stroke': drawStroke(ctx, item, paint); break;
-      case 'text': drawText(ctx, item, paint); break;
-      case 'cast': drawCast(ctx, item, paint); break;
+      case 'shape':
+        if (!planeView || !outsideShape(item, planeView)) drawShape(ctx, item, paint);
+        break;
+      case 'eye':
+        drawEye(ctx, item, paint);
+        break;
+      case 'link':
+        drawLink(ctx, item, paint);
+        break;
+      case 'label':
+        drawLabel(ctx, item, paint);
+        break;
+      case 'particles':
+        drawParticles(ctx, item, paint);
+        break;
+      case 'stroke':
+        drawStroke(ctx, item, paint);
+        break;
+      case 'text':
+        drawText(ctx, item, paint);
+        break;
+      case 'cast':
+        drawCast(ctx, item, paint);
+        break;
       case 'group': {
+        if (item.retained) {
+          const image = target.retained!.get(item.node.index)!;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(image, 0, 0);
+          ctx.restore();
+          break;
+        }
         if (target.backdrop && item.node.index === target.layer.layer.sampledIndex) {
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -237,6 +293,43 @@ function drawItems(
         // A faded line outside the actual layer canvas has no pixels to composite, even in its blur padding.
         const plane = planeCanvasOf(ctx);
         if (plane && fadedStrokeOutside(item, plane.transform, target.width + 2 * target.pad, target.height + 2 * target.pad)) break;
+        const leaf = item.items.length === 1 ? item.items[0] : undefined;
+        if (
+          plane &&
+          item.soft === undefined &&
+          leaf?.kind === 'stroke' &&
+          leaf.node === item.node &&
+          !leaf.foot &&
+          !leaf.pulses &&
+          !leaf.runs
+        ) {
+          ctx.save();
+          ctx.globalAlpha *= item.opacity;
+          drawStroke(ctx, leaf, paint);
+          ctx.restore();
+          break;
+        }
+        if (
+          plane &&
+          item.soft === undefined &&
+          leaf?.kind === 'shape' &&
+          leaf.node === item.node &&
+          leaf.node.node.type === 'shape' &&
+          !leaf.node.node.lit &&
+          !leaf.node.node.rimLight &&
+          !leaf.node.node.relief &&
+          !leaf.node.node.globe &&
+          !leaf.foot &&
+          !leaf.detail?.facet &&
+          !leaf.upon &&
+          !leaf.level
+        ) {
+          ctx.save();
+          ctx.globalAlpha *= item.opacity;
+          drawShape(ctx, leaf, paint);
+          ctx.restore();
+          break;
+        }
         // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
         const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) } : target;
@@ -257,7 +350,7 @@ function drawItems(
       }
       case 'clip': {
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
-        if (softPx > 0.05 || maskedClip(item)) {
+        if (softPx > 0.05 || rasterClip(item)) {
           // A clip with a soft edge: the items are drawn whole into a picture of their own, and that picture is kept
           // as far as the blurred outline of the shape is there. A clip by a mask (clipMask) is drawn the same way with a
           // sharp edge (see maskedClip).
@@ -300,22 +393,29 @@ function drawItems(
         break;
       case 'plane': {
         const fog = item.far === undefined ? undefined : (item.node.node as GroupNode).fog;
-        if (fog) {
-          // A plane with fog is drawn into a picture of its own, the fog laid over what it draws, and composited.
-          const { canvas, ctx: gx } = layerCanvas(target);
+        const ratio = item.node.pictureScale ?? 1;
+        if (fog || ratio < 1) {
+          const inner = pictureTarget(target, ratio);
+          const { canvas, ctx: gx } = layerCanvas(inner);
           for (const s of stretches) {
             if (s.kind === 'plane') applyPlane(gx, s);
             else applyStretch(gx, s);
           }
           applyPlane(gx, item);
           if (!seesPlane(gx)) break;
-          drawItems(planeContext(gx), item.items, paint, target, [...stretches, item]);
-          fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'source-atop');
-          // A plane that fades out with distance lets what lies behind it show through.
-          if (fog.fade) fogPlane(gx, item.far!, { ...fog.fade, amount: 1 }, paint.tone('base', item.node.colors['fog']!), 'destination-out');
+          drawItems(planeContext(gx), item.items, paint, inner, [...stretches, item]);
+          if (fog) {
+            fogPlane(gx, item.far!, fog, paint.tone('base', item.node.colors['fog']!), 'source-atop');
+            if (fog.fade) fogPlane(gx, item.far!, { ...fog.fade, amount: 1 }, paint.tone('base', item.node.colors['fog']!), 'destination-out');
+          }
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.drawCanvas(canvas, 0, 0);
+          if (ratio === 1) ctx.drawCanvas(canvas, 0, 0);
+          else {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'medium';
+            ctx.drawCanvas(canvas, target.pad - inner.pad / ratio, target.pad - inner.pad / ratio, canvas.width / ratio, canvas.height / ratio);
+          }
           ctx.restore();
           break;
         }
@@ -528,7 +628,7 @@ function drawLayerPart(
     const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
     const gpad = Math.ceil(wide * 3);
     const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
-    drawGlow(gx, items, paint, c.covers.length > 0, seen, undefined, () => {
+    drawGlow(gx, layer.layer.persp ? glowItems(items, c.covers.length > 0) : items, paint, c.covers.length > 0, seen, undefined, () => {
       const made = newCanvas(target.scratch, gc.width, gc.height, target.gpu);
       return { canvas: made, ctx: made.getContext('2d') };
     });
@@ -575,7 +675,7 @@ export interface DrawnFrame {
 }
 
 /** Draws a display list. */
-export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>): DrawnFrame {
+export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>, retained?: ReadonlyMap<number, ImageData>): DrawnFrame {
   const width = opts.width;
   const height = heightFor(width);
   const k = width / STAGE_W;
@@ -583,6 +683,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   const out = newCanvas(scratch, width, height, opts.gpu);
   const ctx = out.getContext('2d');
   const spec = c.spec;
+  const retainedLayers = new Set<number>();
+  for (const index of retained?.keys() ?? []) retainedLayers.add(c.nodes[index]!.layer);
   // The background of this frame: what the shot says, or what its keys have made of it by now.
   const bg = state.background ?? { inner: c.background.inner, outer: c.background.outer, center: spec.background.center, radius: spec.background.radius, atmosphere: c.atmosphere, vignette: spec.vignette };
 
@@ -642,12 +744,12 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   for (const { layer, leaves, paint, seen } of layers) {
     // A layer may hold nothing to draw and still a haze, which moves what the layers behind it have drawn.
     const backdrop = layer.layer.sampledIndex === undefined ? undefined : backdrops?.get(layer.layer.sampledIndex);
-    if (leaves.length === 0 && !layer.hazes && !backdrop) continue;
+    if (leaves.length === 0 && !layer.hazes && !backdrop && !retainedLayers.has(c.layers.indexOf(layer.layer))) continue;
     // A layer whose focus is pulled has the blur of this frame.
     const blurPx = Math.min(MAX_SOFT_PX * k, (layer.blur ?? layer.layer.blur) * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
-    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop };
+    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop, retained };
     if (!layer.hazes) {
       drawLayerPart(ctx, c, layer.items, leaves, paint, seen, target, blurPx);
       continue;
@@ -691,37 +793,93 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
  * drawn on the GPU may come out with other pixels (see `oneFrameAtATime`), so dispose of it before the next one.
  */
 export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: RenderOptions): DrawnFrame {
-  if (!c.sampledBackdrops) return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
+  c = displayPlan(c, opts.width).view;
+  if (!c.sampledBackdrops) {
+    const held = heldFrame(c, bake, frame, opts);
+    if (!held?.ranges.length) return drawState(c, evaluate(c, bake, frame, opts.lang), opts);
+    if (held.images.size < held.ranges.length) {
+      const states = new Map<number, FrameState>();
+      for (const range of held.ranges) {
+        if (held.images.has(range.first)) continue;
+        let state = states.get(range.anchor);
+        if (!state) {
+          state = evaluate(c, bake, range.anchor, opts.lang);
+          states.set(range.anchor, state);
+        }
+        held.images.set(range.first, captureRange(c, state, range, opts));
+      }
+    }
+    return drawState(held.view, evaluate(held.view, bake, frame, opts.lang), opts, undefined, held.images);
+  }
   let current: FrameState | undefined;
-  const full = (f: number): FrameState => f === frame ? current ??= evaluate(c, bake, f, opts.lang) : evaluate(c, bake, f, opts.lang);
+  const full = (f: number): FrameState => (f === frame ? (current ??= evaluate(c, bake, f, opts.lang)) : evaluate(c, bake, f, opts.lang));
   const { live, images } = sampledFrame(c, bake, frame, opts, ({ group }, f) => captureBackdrop(c, full(f), group, opts));
   if (!images?.size) return drawState(c, full(frame), opts);
   const state = evaluate(live, bake, frame, opts.lang);
-  if (!c.sampledBackdrops.some(source => source.liveGlow && images.has(source.group.index))) return drawState(live, state, opts, images);
+  if (!c.sampledBackdrops.some((source) => source.liveGlow && images.has(source.group.index))) return drawState(live, state, opts, images);
   const layers = [...state.layers];
   for (const source of c.sampledBackdrops) {
     const { group, layer, liveGlow } = source;
     if (!liveGlow || !images.has(group.index)) continue;
     const view = glowView(c, source);
     const frameView = current ?? (view === c ? full(frame) : evaluate(view, bake, frame, opts.lang));
-    const original = frameView.layers[layer]!.items.filter(item => group.index <= item.node.index && item.node.index <= group.subtreeEnd);
+    const original = frameView.layers[layer]!.items.filter((item) => group.index <= item.node.index && item.node.index <= group.subtreeEnd);
     const glows = glowItems(original);
     const active = layers[layer]!;
-    layers[layer] = { ...active, items: active.items.map(item => item.kind === 'group' && item.sampled && item.node.index === group.index ? { ...item, items: glows } : item) };
+    layers[layer] = {
+      ...active,
+      items: active.items.map((item) =>
+        item.kind === 'group' && item.sampled && item.node.index === group.index ? { ...item, items: glows } : item,
+      ),
+    };
   }
   return drawState(live, { ...state, layers }, opts, images);
 }
 
 /** The live halo traverses its original group, plane and clip wrappers. The colour pass paints the cached group image. */
-function glowItems(items: readonly Item[]): Item[] {
+function glowItems(items: readonly Item[], covers = false): Item[] {
   const result: Item[] = [];
   for (const item of items) {
     if ('items' in item) {
-      const children = glowItems(item.items);
+      const children = glowItems(item.items, covers);
       if (children.length) result.push({ ...item, items: children });
-    } else if (glowStrength(item) > 0) result.push(item);
+    } else if (glowStrength(item) > 0 || covers && item.kind === 'shape' && item.node.node.type === 'shape' && item.node.node.cover) result.push(item);
   }
   return result;
+}
+
+/** Capture the contiguous source-order colour contribution inside its original plane. */
+function captureRange(c: CompiledShot, state: FrameState, r: HeldRange, opts: RenderOptions): ImageData {
+  const layer = state.layers[r.layer]!;
+  const p = layer.items.find((item): item is PlaneItem => item.kind === 'plane' && item.node.index === r.plane);
+  const k = opts.width / STAGE_W,
+    blur = Math.min(MAX_SOFT_PX * k, layer.layer.blur * k * layer.view.zoom);
+  const target = pictureTarget({
+    scratch: { canvases: [] },
+    layer,
+    k,
+    width: opts.width,
+    height: heightFor(opts.width),
+    gpu: opts.gpu,
+    pad: blur > 0.05 ? Math.ceil(blur * 3) : 0,
+  }, p?.node.pictureScale ?? 1);
+  try {
+    const { canvas, ctx } = layerCanvas(target);
+    if (p) {
+      applyPlane(ctx, p);
+      if (seesPlane(ctx))
+        drawItems(
+          planeContext(ctx),
+          p.items.filter((x) => x.node.index >= r.first && x.node.index <= r.last),
+          makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones),
+          target,
+          [p],
+        );
+    }
+    return new ImageData(canvas.toBufferSync('raw', { colorType: 'rgba', msaa: opts.gpu ? GPU_MSAA : false }), canvas.width, canvas.height);
+  } finally {
+    for (const cv of target.scratch.canvases) cv.dispose();
+  }
 }
 
 /** Rasterize the group's own transparent contribution, before layer blur, live halos and vignette. */

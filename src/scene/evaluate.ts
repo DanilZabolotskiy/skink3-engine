@@ -753,6 +753,7 @@ export interface HazeItem {
 export interface GroupItem {
   /** A render-only placeholder for a captured image at this place in the item list. */
   readonly sampled?: true;
+  readonly retained?: true;
   readonly kind: 'group';
   readonly node: CNode;
   readonly opacity: number;
@@ -988,7 +989,7 @@ function prune(items: readonly Item[]): Item[] {
     if (item.kind !== 'group' && item.kind !== 'clip' && item.kind !== 'stretch' && item.kind !== 'plane') out.push(item);
     else {
       const inner = prune(item.items);
-      if (inner.length > 0 || (item.kind === 'group' && item.sampled)) out.push({ ...item, items: inner });
+      if (inner.length > 0 || (item.kind === 'group' && (item.sampled || item.retained))) out.push({ ...item, items: inner });
     }
   }
   return out;
@@ -1205,6 +1206,14 @@ function sortedSteps(
     return false;
   };
   const emit = (index: number): void => {
+    const retained = c.retainedMask?.[index];
+    if (retained) {
+      if (retained === 1) {
+        order.push(index);
+        parts.push(null);
+      }
+      return;
+    }
     const n = c.nodes[index]!;
     order.push(index);
     parts.push(null);
@@ -1273,6 +1282,7 @@ function sortedSteps(
 
 /** What a body of a group that says what detail its bodies are worth (detail) is drawn with at a frame. */
 export interface Worth {
+  readonly facet?: Foot;
   /** The size of one unit of the body on screen, in units of the stage. */
   readonly unit: number;
   /** True while the body is smaller on screen than the least size of that group, across and in height: its top alone is drawn. */
@@ -1290,7 +1300,8 @@ function worthOf(c: CompiledShot, n: CNode, t: number, foot: Foot | undefined, u
   if (node.type !== 'shape' && node.type !== 'stroke') return null;
   // A wall is as large as it is high; any other body as its outline is across, or as it is high.
   const across = node.type === 'shape' ? spanOf(n.outline || n.form ? shapeOf(n, t) : node.shape) : 0;
-  return { unit, plain: Math.max(across, foot.h) * unit < min };
+  const plain = Math.max(across, foot.h) * unit < min;
+  return { unit, plain, ...(plain && c.facetRoofs?.[n.index] ? { facet: foot } : {}) };
 }
 
 /** Below this height, in its units, a body casts no shadow worth drawing. */
@@ -1892,6 +1903,12 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
       // What is open belongs to the nodes around this one. In a layer drawn as listed the nodes only go up; among
       // children drawn far to near they also go back, and a wall comes again with its next stretch.
       while (open.length > 0 && (index > open[open.length - 1]!.end || index <= open[open.length - 1]!.start)) open.pop();
+      const retained = c.retainedMask?.[index];
+      if (retained) {
+        if (retained === 1)
+          (open.length ? open[open.length - 1]!.items : root).push({ kind: 'group', node: n, opacity: 1, items: [], retained: true });
+        continue;
+      }
       if (index === layer.sampledIndex) {
         // This top-level placeholder follows the same draw order as its full group, including perspective sorting.
         root.push({ kind: 'group', node: n, opacity: 1, items: [], sampled: true });
@@ -1910,6 +1927,40 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         skipFrom = index;
         skipUntil = n.subtreeEnd;
         continue;
+      }
+      let displayOpacity = own[index]!;
+      const ink = c.inkSize?.[index];
+      if (ink && places) {
+        const map = places.planes.get(n.plane);
+        if (map) {
+          let extent = Infinity;
+          const project = (p: Vec2): Vec2 | undefined => {
+            const u = xfApply(xf, p);
+            if (map.g * u[0] + map.h * u[1] + 1 < 0.125) return;
+            return planePoint(map, u);
+          };
+          const pixels = (a: Vec2 | undefined, b: Vec2 | undefined): number =>
+            a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) * view.zoom * c.inkPixels! : Infinity;
+          if (node.type === 'stroke') {
+            const path = strokeLaid(n, false).path ?? node.path;
+            if (path.points.length === 2) {
+              const [a, b] = path.points,
+                radius = node.width / 2;
+              const x = Math.min(a![0], b![0]) - radius,
+                y = Math.min(a![1], b![1]) - radius;
+              const right = Math.max(a![0], b![0]) + radius,
+                bottom = Math.max(a![1], b![1]) + radius;
+              const rect = [project([x, y]), project([right, y]), project([right, bottom]), project([x, bottom])];
+              extent = 0;
+              for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) extent = Math.max(extent, pixels(rect[i]!, rect[j]!));
+            }
+          } else if (node.type === 'shape' && node.shape.kind === 'polygon') {
+            const [a, b, d, e] = node.shape.points.map(project);
+            extent = Math.min(Math.max(pixels(a!, b!), pixels(d!, e!)), Math.max(pixels(b!, d!), pixels(e!, a!)));
+          }
+          displayOpacity *= Math.max(0, Math.min(1, (extent - 10) / 12));
+          if (displayOpacity <= FAINT) continue;
+        }
       }
       let items = open.length > 0 ? open[open.length - 1]!.items : root;
       if (n.plane === index) {
@@ -1980,9 +2031,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         items.push({ kind: 'group', node: n, opacity: Math.min(1, own[index]!), items: group, soft });
         open.push({ start: index, end: n.subtreeEnd, items: group });
         items = group;
-      } else if (own[index]! < OPAQUE) {
+      } else if (displayOpacity < OPAQUE) {
         const group: Item[] = [];
-        items.push({ kind: 'group', node: n, opacity: own[index]!, items: group });
+        items.push({ kind: 'group', node: n, opacity: displayOpacity, items: group });
         open.push({ start: index, end: n.subtreeEnd, items: group });
         items = group;
       }

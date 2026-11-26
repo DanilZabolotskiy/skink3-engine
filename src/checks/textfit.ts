@@ -7,6 +7,7 @@
 
 import { xfApply, type Vec2 } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
+import { sampleOpacity, sampleScale } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemShape, labelLayout, textLayout, type LabelItem, type LeafItem, type TextItem } from '../scene/evaluate.ts';
@@ -143,11 +144,31 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
   const texts = c.nodes.filter((n) => n.node.type === 'text');
   // Compilation keeps parents, targets, clips and other node references in one layer.
   // Keep the whole layer for label coverage; projected text boxes still meet across layers.
-  const textLayers = new Set([...labels, ...texts].map((n) => n.layer));
-  const fitScene: CompiledShot = textLayers.size === c.layers.length ? c : {
-    ...c,
-    activeNodes: (c.activeNodes ?? c.nodes).filter((n) => textLayers.has(n.layer)),
-    layers: c.layers.map((layer, i) => textLayers.has(i) ? layer : { ...layer, nodes: [] }),
+  const textNodes = [...labels, ...texts];
+  const textLayers = new Set(textNodes.map((n) => n.layer));
+  const views = new Map<string, CompiledShot>();
+  const fitAt = (frame: number): CompiledShot => {
+    // Parent opacity, travel visibility and hiding on a globe can only reduce the node's own opacity.
+    const visible = new Set<number>();
+    const t = frame / FPS;
+    for (const n of textNodes) {
+      if (visible.has(n.layer)) continue;
+      if (n.opacity && sampleOpacity(n.opacity, t) < SHOWN_ALPHA) continue;
+      if (n.scale && sampleScale(n.scale, t) < SHOWN_SCALE) continue;
+      visible.add(n.layer);
+    }
+    if (visible.size === c.layers.length) return c;
+    const key = [...visible].sort((a, b) => a - b).join(',');
+    let view = views.get(key);
+    if (!view) {
+      view = {
+        ...c,
+        activeNodes: (c.activeNodes ?? c.nodes).filter((n) => visible.has(n.layer)),
+        layers: c.layers.map((layer, i) => (visible.has(i) ? layer : { ...layer, nodes: [] })),
+      };
+      views.set(key, view);
+    }
+    return view;
   };
   // With no text, one empty sample preserves the evaluator's bake check.
   const frames = textLayers.size ? c.frames : Math.min(1, c.frames);
@@ -181,7 +202,7 @@ export function checkTextFit(c: CompiledShot, bake: Bake, langs: readonly string
     const covered = new Map<string, { label: string; node: string; first: number; last: number }>();
 
     for (let f = 0; f < frames; f += SAMPLE_EVERY) {
-      const state = evaluate(fitScene, bake, f, lang);
+      const state = evaluate(fitAt(f), bake, f, lang);
       const stageBoxes: Box[] = [];
       for (const layer of state.layers) {
         const leaves = flatItems(layer.items);
