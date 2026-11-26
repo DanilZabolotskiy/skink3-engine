@@ -32,6 +32,24 @@ export function steadySizeOverLife(a: number): number {
   return edge * edge * (3 - 2 * edge);
 }
 
+/**
+ * Radius of a growing particle over its life (0..1): a quick swell to nearly half its size, then on, evenly, to its
+ * full size at its death. It never shrinks: a growing particle fades away instead (its `fade` ends at 0).
+ */
+export function growSizeOverLife(a: number): number {
+  if (a <= 0 || a >= 1) return 0;
+  const swell = a < 0.12 ? Math.sqrt(a / 0.12) : 1;
+  return swell * (0.4 + 0.6 * a);
+}
+
+/** The opacity of a particle with a fade at a share `a` of its life: from `birth` to `death`, evenly. */
+export function fadeOverLife(fade: readonly [number, number], a: number): number {
+  return fade[0] + (fade[1] - fade[0]) * Math.min(1, Math.max(0, a));
+}
+
+/** A particle fainter than this is not stored: it adds nothing to the picture. */
+export const FAINTEST_PARTICLE = 1 / 512;
+
 export interface EmitterResult {
   /** frames + 1 offsets (in particles) into `data`. */
   readonly index: Uint32Array;
@@ -44,11 +62,14 @@ export interface EmitterResult {
    * the particle. null for an emitter of round particles.
    */
   readonly tails: Float32Array | null;
+  /** An emitter with a fade: the opacity of every particle, in the order of `data`. null for an emitter of opaque particles. */
+  readonly alphas: Float32Array | null;
 }
 
 /**
  * Simulates one emitter for the whole shot.
- * `positionAt(frame)` gives the emitter's place at a frame (it may ride on a node).
+ * `positionAt(frame)` gives the emitter's place at a frame (it may ride on a node). `rateAt(seconds)`, for an
+ * emitter whose rate is keyed (rateTo), gives its rate at a moment; without it the emitter keeps its `rate`.
  */
 export function simulateEmitter(
   spec: EmitterNode,
@@ -56,11 +77,16 @@ export function simulateEmitter(
   seed: number,
   positionAt: (frame: number) => Vec2,
   contacts: readonly ContactEvent[],
+  rateAt: ((seconds: number) => number) | null = null,
 ): EmitterResult {
   const rng = new Rng(seed, `particles/${spec.id}`);
   const field = spec.turbulence ? new Noise(seed, `turbulence/${spec.id}`) : null;
   const nColors = spec.colors.length;
   const steady = spec.sizing === 'steady';
+  const grow = spec.sizing === 'grow';
+  const sizeOf = (a: number): number => (steady ? steadySizeOverLife(a) : grow ? growSizeOverLife(a) : sizeOverLife(a));
+  // A fade gives every particle an opacity of its own; without one they are opaque, and nothing more is stored.
+  const fade = spec.fade ?? null;
   // A streak is the way of the last `streak` seconds, along the velocity, and never longer than the way since birth.
   const streak = spec.streak ?? 0;
 
@@ -92,8 +118,10 @@ export function simulateEmitter(
     // Emit. Before the shot starts (prewarm) the emitter runs as it does at its
     // first moment, so that the field is already populated at frame 0.
     const emitting = time < 0 ? spec.from <= 1e-9 : time >= spec.from - 1e-9 && time < spec.until;
-    if (spec.rate > 0 && emitting) {
-      carry += spec.rate * SIM_DT;
+    // A keyed rate runs before the shot as it is at its first moment, as everything of the emitter does.
+    const rate = rateAt ? Math.max(0, rateAt(Math.max(0, time))) : spec.rate;
+    if (rate > 0 && emitting) {
+      carry += rate * SIM_DT;
       while (carry >= 1) {
         carry -= 1;
         spawn(at, 1);
@@ -153,6 +181,7 @@ export function simulateEmitter(
   const chunks: Float32Array[] = [];
   const velocityChunks: Float32Array[] = [];
   const tailChunks: Float32Array[] = [];
+  const alphaChunks: Float32Array[] = [];
   let total = 0;
   for (let f = 0; f < frames; f++) {
     // Record the state at the start of the frame.
@@ -160,10 +189,16 @@ export function simulateEmitter(
     const rec = new Float32Array(n * PARTICLE_STRIDE);
     const vel = new Float32Array(n * PARTICLE_VELOCITY_STRIDE);
     const tail = streak > 0 ? new Float32Array(n * PARTICLE_TAIL_STRIDE) : null;
+    const alpha = fade ? new Float32Array(n) : null;
     let m = 0;
     for (let i = 0; i < n; i++) {
-      const r = size[i]! * (steady ? steadySizeOverLife(age[i]! / life[i]!) : sizeOverLife(age[i]! / life[i]!));
+      const r = size[i]! * sizeOf(age[i]! / life[i]!);
       if (r <= 0.05) continue;
+      if (alpha) {
+        const o = fadeOverLife(fade!, age[i]! / life[i]!);
+        if (o < FAINTEST_PARTICLE) continue;
+        alpha[m] = o;
+      }
       rec[m * PARTICLE_STRIDE] = px[i]!;
       rec[m * PARTICLE_STRIDE + 1] = py[i]!;
       rec[m * PARTICLE_STRIDE + 2] = r;
@@ -180,6 +215,7 @@ export function simulateEmitter(
     chunks.push(rec.subarray(0, m * PARTICLE_STRIDE));
     velocityChunks.push(vel.subarray(0, m * PARTICLE_VELOCITY_STRIDE));
     if (tail) tailChunks.push(tail.subarray(0, m * PARTICLE_TAIL_STRIDE));
+    if (alpha) alphaChunks.push(alpha.subarray(0, m));
     index[f] = total;
     total += m;
 
@@ -207,12 +243,21 @@ export function simulateEmitter(
     velocity.set(c, o);
     o += c.length;
   }
-  if (streak <= 0) return { index, data, velocity, tails: null };
+  let alphas: Float32Array | null = null;
+  if (fade) {
+    alphas = new Float32Array(total);
+    o = 0;
+    for (const c of alphaChunks) {
+      alphas.set(c, o);
+      o += c.length;
+    }
+  }
+  if (streak <= 0) return { index, data, velocity, tails: null, alphas };
   const tails = new Float32Array(total * PARTICLE_TAIL_STRIDE);
   o = 0;
   for (const c of tailChunks) {
     tails.set(c, o);
     o += c.length;
   }
-  return { index, data, velocity, tails };
+  return { index, data, velocity, tails, alphas };
 }

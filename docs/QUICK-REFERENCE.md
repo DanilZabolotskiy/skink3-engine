@@ -19,7 +19,7 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette keys; text: `strings` keys, all languages; random: `Rng`. Mistakes: refused with the fix.
+- Colours: palette keys; text: `strings` keys, all languages; random: `Rng`.
 - A palette has `rules` (held by `check`), `tones`, variants.
 
 ## Shot, camera, layers
@@ -42,7 +42,7 @@ blurTo('far', { at: 2, to: 0, /**/ dur: 1.2 }); // a focus pull
 - Keys chain. `cameraTo`: `zoom` times the authored view, `to` its final aim; path and drift wait. Under `zoomTo` they run on.
 - `depth` 0 is in focus, positive is far (less parallax, blurred, tinted), down to -0.9 near. Far first, then list order, parents before children.
 - A listed node's `depth` (larger: behind) orders any layer. A perspective layer's listed nodes take `at: [x, y, z]`, face the camera; `region`, `stroke`: `points` of three; a `plane` group lies in it; near over far; behind the camera: cut.
-- Dense maps: [`sampledBackdrop: { group, frames }`](SCENES.md#sampling-a-dense-backdrop).
+- Dense maps: `sampledBackdrop: { group, frames }`.
 
 ## Nodes
 
@@ -52,7 +52,7 @@ capsule({ id: 'arm', fill: 'mid.mist', length: 46, r: 8, /**/ origin: 'center' }
 polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /**/ radius: 8 }); // 0.16 r; or points: [[x, y], ...], radius: 0
 rect({ id: 'tray', fill: 'mid.mist', w: 240, h: 50, /**/ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed: 1 });
-region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000: a country (skink3-geo worldOnStage)
+region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000: a country (skink3-geo)
 group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash [length,gap], drawn, pulseColor, least, curveSteps
@@ -97,7 +97,7 @@ popIn('c', { at: 0.3, /**/ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /**/ dur: 0.35 });
 bump('c', { at: 2, /**/ amount: 0.14 }); // a size kick, 0.7 s
 squash('buddy', { at: 5, /**/ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
-countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text or label, "{n}" in its string; + ratio: true
+countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text or label, "{n}" in its string; + ratio
 levelTo('drink', { at: 2, to: 0.8, /**/ dur: 1.5, profile: 'ease' }); // 0 empty, 1 full
 riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8, profile: 'ease' });
 hazeTo('air', { at: 2, to: 6, /**/ dur: 1.5, profile: 'ease' });
@@ -124,13 +124,13 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 3 } }); // what is drawn before it wavers; + scale 40, speed 30, direction -90
 ```
 
-- An emitter needs `rate` (/s), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing: 'spark'` shrinks away. Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (a tail).
+- An emitter needs `rate` (/s; `rateTo('fizz', { at: 2, to: 30 })`), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): a number or `[min, max]`. `sizing: 'spark'` shrinks, `'grow'` grows; `fade: [birth, death]`: each one's opacity; `opacity`: all (`fadeTo`). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak` (a tail).
 - `cover`: hides the glow drawn before it. `backdrop`: labels may cover it. `clipTo`: only inside that shape, fading at a `soft` edge; a coast: `clipMask` on it. `level` (or 0..1): fills from the bottom, `wave` ripples it, children ride it.
 
 ## Sound
 
 ```ts
-circle({ id: 'marble', fill: 'mid.mist', r: 30, sound: 'marble' }); // the node's voice: the bank's sound "marble.<kind>", or "marble"
+circle({ id: 'marble', fill: 'mid.mist', r: 30, sound: 'marble' }); // its voice: the bank's "marble.<kind>", or "marble"
 popIn('c', { at: 1, sound: false }); // any intent: false mutes it, a key names its start's sound
 sfx('chime', { at: 6, /**/ gain: 1 }); // by hand, as on a word; + node: panned to it
 ```

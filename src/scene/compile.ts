@@ -28,6 +28,7 @@ import type {
   FillToKey,
   ColorToKey,
   HazeToKey,
+  RateToKey,
   HopKey,
   Key,
   LevelToKey,
@@ -101,7 +102,7 @@ export interface CNode {
   readonly parent: number;
   /** Index of the last node of this node's subtree (its own index if it has no children). */
   readonly subtreeEnd: number;
-  /** Opacity over time; null for nodes that have none (emitters). */
+  /** Opacity over time; null for a node that has none (an emitter without an opacity or a fadeTo of its own). */
   readonly opacity: OpacityTrack | null;
   readonly pos: PosTrack | null;
   readonly rot: RotTrack | null;
@@ -132,6 +133,8 @@ export interface CNode {
   readonly fill: FillTrack | null;
   /** Shapes with a haze: its amount over time (hazeTo), and the noise of its ripples; null for every other node. */
   readonly haze: { readonly amount: RiseTrack; readonly noise: Noise } | null;
+  /** An emitter with a rateTo: its rate over time, in particles per second. Left out: it keeps the rate it was given. */
+  readonly rate?: RiseTrack;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
   /** Slot in the bake, or -1. */
@@ -365,6 +368,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const widths = new Map<number, WidthToKey[]>();
   const rises = new Map<number, RiseToKey[]>();
   const hazes = new Map<number, HazeToKey[]>();
+  const rates = new Map<number, RateToKey[]>();
   const fills = new Map<number, FillToKey[]>();
   const lineColours = new Map<number, ColorToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
@@ -503,7 +507,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         } else push(scales, index, key);
         break;
       case 'fadeTo':
-        need(node.type !== 'emitter', 'shapes, groups, eyes, strokes, texts, labels and links');
+        // An emitter fades its particles as one picture; the fade makes no sound of its own.
+        if (node.type === 'emitter' && key.sound !== undefined) fail(`${where}: fadeTo("${node.id}") fades the particles of an emitter, which makes no event to sound; leave sound out`);
         push(fades, index, key);
         break;
       case 'bump':
@@ -569,6 +574,10 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           fail(`${where}: riseTo cannot target ${node.type} "${node.id}"; it applies to a shape or a stroke with a rise (give it the option rise; 0 lies flat until it is raised)`);
         }
         push(rises, index, key);
+        break;
+      case 'rateTo':
+        need(node.type === 'emitter', 'emitters');
+        push(rates, index, key);
         break;
       case 'hazeTo':
         if (node.type !== 'shape' || node.haze === undefined) {
@@ -906,7 +915,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           scale = { ...scale, drive: size };
         }
       }
-      if (node.type !== 'emitter') {
+      if (node.type === 'emitter') {
+        // An emitter with an opacity of its own, or a fadeTo, fades its particles as one picture; any other has no track.
+        if (node.opacity !== undefined || fades.has(d.index)) opacity = buildOpacityTrack(node.opacity ?? 1, fades.get(d.index) ?? []);
+        if (node.rate === 0 && node.bursts.length === 0 && !node.onContact && !rates.has(d.index)) {
+          fail(`emitter "${node.id}" never emits: its rate is 0 and no rateTo raises it; give it a rate, bursts or onContact, or a rateTo`);
+        }
+      } else {
         opacity = buildOpacityTrack(node.opacity, fades.get(d.index) ?? []);
         const shown = driveTrack(node.id, 'opacity', 1, driven, (k) => k.opacity);
         if (shown) {
@@ -1006,6 +1021,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
             : null,
       // A shape without a haze has none: it moves nothing.
       haze: node.type === 'shape' && node.haze ? { amount: buildRiseTrack(node.haze.amount, hazes.get(d.index) ?? []), noise: new Noise(spec.seed, `haze/${node.id}`) } : null,
+      // An emitter without a rateTo has no track: it sends out the rate it was given.
+      ...(node.type === 'emitter' && rates.has(d.index) ? { rate: buildRiseTrack(node.rate, rates.get(d.index)!) } : {}),
       clipIndex,
       bodySlot,
       springSlot,

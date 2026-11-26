@@ -269,11 +269,21 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       // An emitter with streaks: the tail of every particle is baked with it.
       for (let f = 0; f < F; f++) {
         const tails = bake.tailsAt(e, f);
-        if (!tails) return;
+        if (!tails) break;
         let bad = false;
         for (let k = 0; k < tails.length && !bad; k++) bad = !Number.isFinite(tails[k]!);
         if (!bad) continue;
         make('not-finite', id, null, f, F - 1, 1, 0, 'broken frames', `particles: the streak of a particle of this emitter is not a number at frame ${f}`, f, [0, 0], [], 1e6);
+        return;
+      }
+      // An emitter that fades its particles: the opacity of every particle is baked with it.
+      for (let f = 0; f < F; f++) {
+        const alphas = bake.alphasAt(e, f);
+        if (!alphas) return;
+        let bad = false;
+        for (let k = 0; k < alphas.length && !bad; k++) bad = !Number.isFinite(alphas[k]!);
+        if (!bad) continue;
+        make('not-finite', id, null, f, F - 1, 1, 0, 'broken frames', `particles: the opacity of a particle of this emitter is not a number at frame ${f}`, f, [0, 0], [], 1e6);
         return;
       }
     });

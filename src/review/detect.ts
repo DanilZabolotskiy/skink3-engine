@@ -4,10 +4,15 @@
 // Which finding applies to what:
 //
 //                   timeline nodes   rigid bodies      particles        links          camera
-//   jump                 yes         size, opacity         -       appearance, width    yes
+//   jump                 yes         size, opacity     opacity     appearance, width    yes
 //   abrupt start/stop    yes             size              -            width           yes
 //   mechanical           yes             size              -              -             no
 //   too-fast             yes              yes          per emitter      pulses          no
+//
+// An emitter with an opacity of its own (or a fadeTo) fades its particles as
+// one picture: that opacity is judged for a jump, as a node's is, while some
+// of its particles are seen. A particle that fades over its life (a fade) is
+// judged, and counted as life, only while it is seen.
 //
 // A light that runs along a stroke is judged as the pulse of a link is: too
 // fast when it covers half of its own length per frame or more.
@@ -844,6 +849,20 @@ export function detectMotion(series: MotionSeries): Finding[] {
       out.push(
         finding('too-fast', s.id, 'pulse', f0, Math.max(f0, f1), ratio, T.fastRatio, 'own length per frame',
           `a light of ${light.toFixed(0)} units runs ${way.toFixed(0)} units along the stroke in ${count.toFixed(1)} frames: ${ratio.toFixed(2)} of its own length per frame (it needs at least ${Math.ceil(way / (T.fastRatio * light))} frames)`),
+      );
+    }
+  }
+
+  // Emitters: their particles fade as one picture: a third of full opacity in one frame, while some are seen, is a pop.
+  for (const e of series.emitters) {
+    if (!e.alpha) continue;
+    for (let f = 1; f < F; f++) {
+      if (e.count[f - 1]! === 0 && e.count[f]! === 0) continue;
+      const step = Math.abs(e.alpha[f]! - e.alpha[f - 1]!);
+      if (step < T.jumpOpacity || Math.max(e.alpha[f - 1]!, e.alpha[f]!) < T.jumpOpacity) continue;
+      out.push(
+        finding('jump', e.id, 'opacity', f - 1, f, step, T.jumpOpacity, 'opacity in one frame',
+          `opacity: the particles, faded as one picture, changed by ${step.toFixed(2)} between frames ${f - 1} and ${f} (from ${e.alpha[f - 1]!.toFixed(2)} to ${e.alpha[f]!.toFixed(2)})`),
       );
     }
   }

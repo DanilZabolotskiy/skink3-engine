@@ -134,9 +134,10 @@ test('scaleTo and fadeTo are validated', () => {
     () => make([rect({ id: 'b', w: 40, h: 40, fill: 'mid.violet', body: { kind: 'fixed' } })], [scaleTo('b', { at: 1, to: 2 })]),
     /size of a rigid body is fixed/,
   );
+  // An emitter has no size to scale; it fades its particles as one picture (test/emitter-fade.test.ts).
   assert.throws(
-    () => make([emitter({ id: 'e', rate: 5, colors: ['accent.aqua'], size: 3, life: 1 })], [fadeTo('e', { at: 1, to: 0 })]),
-    /fadeTo cannot target emitter "e"/,
+    () => make([emitter({ id: 'e', rate: 5, colors: ['accent.aqua'], size: 3, life: 1 })], [scaleTo('e', { at: 1, to: 2 })]),
+    /scaleTo cannot target emitter "e"/,
   );
   assert.throws(() => make([a(), link({ id: 'l', from: 'a', to: 'a2', color: 'dark.haze' }), circle({ id: 'a2', r: 5, fill: 'accent.aqua' })], [scaleTo('l', { at: 1, to: 2 })]), /scaleTo cannot target link "l"/);
   // Links and labels can fade; a rigid body can fade too (only its size is fixed).

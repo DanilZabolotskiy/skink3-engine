@@ -1466,8 +1466,16 @@ export function emitter(o: {
   glow?: number;
   /** An inner disc on every particle: its colour and its radius as a fraction of the particle's (0..1). */
   core?: { color: ColorRef; size: number };
-  /** How the size runs over a particle's life: "spark" (default: swells, then shrinks away) or "steady" (full size nearly all its life). */
-  sizing?: 'spark' | 'steady';
+  /**
+   * How the size runs over a particle's life: "spark" (default: swells, then shrinks away), "steady" (full size nearly
+   * all its life) or "grow" (swells to nearly half its size, then grows on to its full size at its death; with a fade
+   * that ends at 0).
+   */
+  sizing?: 'spark' | 'steady' | 'grow';
+  /** 0..1: the particles' opacity as one picture at the start; fadeTo keys it. Default 1. */
+  opacity?: number;
+  /** [birth, death], each 0..1: every particle's own opacity over its life, evenly from the first to the second. */
+  fade?: Vec2;
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   clipTo?: string;
   /** Seconds, up to 1: each particle is drawn as a streak as long as the way it travels in that time: rain, sparks. */
@@ -1478,10 +1486,21 @@ export function emitter(o: {
   const where = `emitter("${o?.id}")`;
   checkKeys(where, o, [
     'id', 'colors', 'size', 'life', 'at', 'attach', 'area', 'rate', 'from', 'until', 'bursts', 'onContact', 'prewarm',
-    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'clipTo', 'streak', 'sound',
+    'direction', 'spread', 'speed', 'gravity', 'drag', 'turbulence', 'glow', 'core', 'sizing', 'opacity', 'fade', 'clipTo', 'streak', 'sound',
   ]);
-  if (o.sizing !== undefined && o.sizing !== 'spark' && o.sizing !== 'steady') fail(where, `sizing must be "spark" or "steady", got ${JSON.stringify(o.sizing)}`);
+  if (o.sizing !== undefined && o.sizing !== 'spark' && o.sizing !== 'steady' && o.sizing !== 'grow') fail(where, `sizing must be "spark", "steady" or "grow", got ${JSON.stringify(o.sizing)}`);
   if (!Array.isArray(o.colors) || o.colors.length === 0) fail(where, 'colors must be a non-empty array of palette references');
+  let fade: Vec2 | undefined;
+  if (o.fade !== undefined) {
+    const [birth, death] = vec(where, 'fade', o.fade);
+    if (birth < 0 || birth > 1 || death < 0 || death > 1) fail(where, `fade is [birth, death], each an opacity 0..1, got ${JSON.stringify(o.fade)}`);
+    if (birth === 1 && death === 1) fail(where, 'fade [1, 1] fades nothing: leave fade out for opaque particles');
+    fade = [birth, death];
+  }
+  // A particle that grows to its death would vanish at its full size: it has to have faded away by then.
+  if (o.sizing === 'grow' && (fade === undefined || fade[1] !== 0)) {
+    fail(where, `sizing "grow" makes every particle largest when it dies, so it has to fade away by then: give it fade: [birth, 0], got ${fade === undefined ? 'no fade' : `fade ${JSON.stringify(fade)}`}`);
+  }
   const rate = o.rate === undefined ? 0 : num(where, 'rate', o.rate, 0, 5000);
   const bursts = (o.bursts ?? []).map((b, i) => {
     checkKeys(`${where} bursts[${i}]`, b, ['at', 'count']);
@@ -1495,7 +1514,8 @@ export function emitter(o: {
       minImpulse: num(where, 'onContact.minImpulse', o.onContact.minImpulse, 0, 1e6),
     };
   }
-  if (rate === 0 && bursts.length === 0 && !onContact) fail(where, 'the emitter never emits: give rate, bursts or onContact');
+  // An emitter that starts at rate 0 may be raised by a rateTo of the timeline: the shot holds that to its timeline.
+  if (o.rate === undefined && bursts.length === 0 && !onContact) fail(where, 'the emitter never emits: give rate, bursts or onContact (rate: 0 with a rateTo raises it later)');
   let turbulence: TurbulenceSpec | null = null;
   if (o.turbulence !== undefined) {
     checkKeys(`${where} turbulence`, o.turbulence, ['strength', 'scale', 'speed']);
@@ -1512,6 +1532,9 @@ export function emitter(o: {
   }
   return {
     ...(o.sizing === undefined ? {} : { sizing: o.sizing }),
+    // An emitter without an opacity or a fade of its own is the data it always was.
+    ...(o.opacity === undefined ? {} : { opacity: num(where, 'opacity', o.opacity, 0, 1) }),
+    ...(fade === undefined ? {} : { fade }),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
     ...(o.streak === undefined ? {} : { streak: num(where, 'streak', o.streak, 0.001, STREAK_MAX) }),
     ...voice(where, o.sound),

@@ -1405,6 +1405,10 @@ function addStreak(p: Path2D, x: number, y: number, dx: number, dy: number, r: n
 
 /** Particles, batched into one path per colour, plus one for their inner discs if the emitter has a core. Streaks when the item has tails. */
 export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem, paint: Paint, alpha = 1): void {
+  if (item.alphas) {
+    drawFadingParticles(ctx, item, item.alphas, paint, alpha);
+    return;
+  }
   const colors = item.node.particleColors;
   const paths: (Path2D | null)[] = colors.map(() => null);
   const core = (item.node.node as EmitterNode).core;
@@ -1452,6 +1456,45 @@ export function drawParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem
   if (cores) {
     ctx.fillStyle = paint.tone('base', item.node.colors['core']!);
     ctx.fill(cores);
+  }
+  ctx.restore();
+}
+
+/**
+ * Particles that each have an opacity of their own (an emitter with a fade): each is filled on its own, at its
+ * opacity times `alpha`, so where they crowd they add up. A core is drawn on each at its particle's opacity.
+ */
+function drawFadingParticles(ctx: CanvasRenderingContext2D, item: ParticlesItem, alphas: Float32Array, paint: Paint, alpha: number): void {
+  const colors = item.node.particleColors.map((c) => paint.tone('base', c));
+  const core = (item.node.node as EmitterNode).core;
+  const coreColor = core ? paint.tone('base', item.node.colors['core']!) : '';
+  const d = item.data;
+  const tails = item.tails;
+  ctx.save();
+  for (let i = 0, j = 0, k = 0; i < d.length; i += PARTICLE_STRIDE, j += PARTICLE_TAIL_STRIDE, k++) {
+    const x = d[i]!;
+    const y = d[i + 1]!;
+    const r = d[i + 2]!;
+    ctx.globalAlpha = alpha * alphas[k]!;
+    ctx.fillStyle = colors[d[i + 3]!]!;
+    const p = new Path2D();
+    if (tails) addStreak(p, x, y, tails[j]!, tails[j + 1]!, r);
+    else {
+      p.moveTo(x + r, y);
+      p.arc(x, y, r, 0, TAU);
+    }
+    ctx.fill(p);
+    if (core) {
+      const c = new Path2D();
+      const cr = r * core.size;
+      if (tails) addStreak(c, x, y, tails[j]!, tails[j + 1]!, cr);
+      else {
+        c.moveTo(x + cr, y);
+        c.arc(x, y, cr, 0, TAU);
+      }
+      ctx.fillStyle = coreColor;
+      ctx.fill(c);
+    }
   }
   ctx.restore();
 }

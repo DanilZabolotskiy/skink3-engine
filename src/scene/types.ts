@@ -692,8 +692,20 @@ export interface EmitterNode {
    * How the size of a particle runs over its life. 'spark': a quick swell,
    * then a slow shrink to nothing over the second half. 'steady': full size
    * for nearly all of its life, with a short swell and a short shrink.
+   * 'grow': a quick swell to nearly half its size, then on to its full size
+   * at its death (it fades away meanwhile: `fade` ends at 0).
    */
-  readonly sizing?: 'spark' | 'steady';
+  readonly sizing?: 'spark' | 'steady' | 'grow';
+  /**
+   * The opacity of the particles as one picture at the start, 0..1: they are drawn together and faded as a group is.
+   * fadeTo keys it. Left out: opaque, as it always was.
+   */
+  readonly opacity?: number;
+  /**
+   * The opacity of every particle over its own life: from `fade[0]` at its birth to `fade[1]` at its death, evenly.
+   * Each particle is then drawn on its own, so where they crowd they add up. Left out: every particle opaque.
+   */
+  readonly fade?: Vec2;
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
   /**

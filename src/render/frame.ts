@@ -86,7 +86,8 @@ function glowStrength(item: LeafItem): number {
       // A pulse always glows; the line glows as much as the link says.
       return Math.max((item.node.node as LinkNode).glow, item.pulses.length > 0 ? 1 : 0) * item.alpha;
     case 'particles':
-      return item.node.node.type === 'emitter' ? item.node.node.glow : 0;
+      // An emitter faded as one picture glows as faintly as it is drawn.
+      return item.node.node.type === 'emitter' ? item.node.node.glow * (item.faded ?? 1) : 0;
     case 'stroke':
       // As on a link: a light that runs along it always glows.
       return (item.pulses ? Math.max((item.node.node as StrokeNode).glow, 1) : (item.node.node as StrokeNode).glow) * item.alpha;

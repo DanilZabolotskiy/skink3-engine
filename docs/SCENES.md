@@ -1079,7 +1079,7 @@ A simple creature is a blob with two eyes as children, optionally with `capsule`
 
 ### `emitter({ id, colors, size, life, ... })`
 
-Particles are small circles, or with `streak` short streaks along their way. By default each swells quickly and then shrinks to nothing (`sizing: 'spark'`); with `sizing: 'steady'` it keeps its size for nearly all of its life. They live in the layer's space.
+Particles are small circles, or with `streak` short streaks along their way. By default each swells quickly and then shrinks to nothing (`sizing: 'spark'`); with `sizing: 'steady'` it keeps its size for nearly all of its life; with `sizing: 'grow'` it grows to its death while it fades away. They live in the layer's space.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -1089,7 +1089,7 @@ Particles are small circles, or with `streak` short streaks along their way. By 
 | `at` | `[0, 0]` | position in the layer, or the offset from `attach` |
 | `attach` | none | id of a node (same layer) the emitter rides on |
 | `area` | `[0, 0]` | spawn box `[width, height]` around the position |
-| `rate` | `0` | particles per second, between `from` (0) and `until` (end) |
+| `rate` | `0` | particles per second, between `from` (0) and `until` (end); `rateTo` keys it (see A rate that changes) |
 | `bursts` | `[]` | `[{ at, count }]` |
 | `onContact` | none | `{ count, minImpulse }`: a burst at every rigid-body contact at least that strong, at the contact point |
 | `prewarm` | `0` | seconds simulated before the shot starts, so that a field is already populated at frame 0 (for an emitter whose `rate` runs from the start) |
@@ -1100,12 +1100,33 @@ Particles are small circles, or with `streak` short streaks along their way. By 
 | `turbulence` | none | `{ strength, scale, speed }`: a slowly changing swirl field |
 | `glow` | `0` | 0..1: the particles also feed the halo |
 | `core` | none | `{ color, size }`: an inner disc on every particle, in one palette colour; `size` is its radius as a fraction of the particle's (0.05..0.95). A particle with a core reads as a ring around a face: a cell, a bead, a wheel |
-| `sizing` | `'spark'` | how the radius runs over a particle's life. `'spark'`: it reaches its size after 12 % of its life, holds it until half-way, and shrinks smoothly to nothing over the second half. `'steady'`: full size from 8 % to 92 % of its life, with a short swell and a short shrink: for motes that drift and for particles that carry something across the frame |
+| `sizing` | `'spark'` | how the radius runs over a particle's life. `'spark'`: it reaches its size after 12 % of its life, holds it until half-way, and shrinks smoothly to nothing over the second half. `'steady'`: full size from 8 % to 92 % of its life, with a short swell and a short shrink: for motes that drift and for particles that carry something across the frame. `'grow'`: it swells to 0.47 of its size over the first 12 % of its life and grows on evenly to its full size at its death: a puff of vapor; it takes a `fade` that ends at 0 |
+| `fade` | none | `[birth, death]`, each 0..1: every particle's own opacity, from the first at its birth to the second at its death, evenly (see Particles that fade) |
+| `opacity` | `1` | the particles' opacity as one picture, as a faded group's; `fadeTo` keys it (see Particles that fade) |
 | `streak` | none | seconds, 0.001 to 1: every particle is drawn as a streak back along its way, as long as the way it travels in that time, and never longer than the way it has come since its birth: rain, sparks, a stream. The streak runs straight back along its velocity, as wide as the particle; a core is a streak too. A streak of 1/30 s or longer does not strobe however fast the particles go (see Motion review). The particles move as they do without it |
 | `clipTo` | none | id of a shape of the same layer: the particles are drawn only inside its outline (see Clipping) |
 | `sound` | none | key of the emitter's voice: what its bursts sound like (see Sound) |
 
-An emitter needs at least one of `rate`, `bursts`, `onContact`. `from`, `until` and the `at` of a burst are 0 or later; an emitter that should already be running at frame 0 takes a `prewarm`.
+An emitter needs at least one of `rate`, `bursts`, `onContact`; an emitter of `rate: 0` that a `rateTo` raises later counts. `from`, `until` and the `at` of a burst are 0 or later; an emitter that should already be running at frame 0 takes a `prewarm`.
+
+#### Particles that fade
+
+Vapor thins as it rises: each puff grows as it fades away, and where puffs crowd, near the source, the vapor is dense. A haze of small lights comes up and goes out light by light. Two options give an emitter's particles an opacity, and both leave how they move as it was.
+
+```ts
+emitter({ id: 'steam', at: [-420, 10], area: [150, 10], colors: ['light.snow'], size: [34, 56], sizing: 'grow', fade: [0.5, 0], life: [3, 4.5], rate: 10, prewarm: 4, spread: 24, speed: [70, 110], drag: 0.35 }),
+emitter({ id: 'lights', at: [380, -120], area: [900, 260], colors: ['accent.amber'], size: [3, 6], sizing: 'steady', fade: [0, 0.9], life: [2, 3], rate: 60, prewarm: 3, speed: [2, 8] }),
+emitter({ id: 'mist', at: [0, 200], area: [1200, 80], colors: ['mid.mist'], size: 20, life: 3, rate: 20, opacity: 0.6 }),
+// in the timeline:
+fadeTo('mist', { at: 6, to: 0, dur: 1.5 }),                          // the mist, as one picture, fades out
+```
+
+- **`fade: [birth, death]`** runs every particle's opacity evenly from the first to the second over its own life: `[0.5, 0]` thins away, `[0, 0.9]` comes up out of nothing. Such particles are drawn each on its own, so where they lie over each other they add up: a plume is denser where it is thick. A particle fainter than 1/512 is not stored. `[1, 1]` is refused: it fades nothing.
+- **`sizing: 'grow'`** makes every particle largest when it dies; it is refused without a `fade` that ends at 0, which takes the particle away at its full size.
+- **`opacity`** fades the particles of the emitter together as one picture, as a faded group fades (see Opacity): two particles over each other are as bright where they overlap as one is. `fadeTo` keys it, and its glow fades with it. A fade of an emitter is no event of the sound track, and takes no `sound`.
+- An emitter cannot stand in a group, so it takes no opacity and no soft edge from a parent. Particles soft at their edge stand in a layer of their own with a `blur`.
+- The motion review judges a fading particle, and counts it as life, only while it is seen: its own opacity times the emitter's at least 0.05. A particle whose opacity runs over its life by 0.004 a frame or more (full range in four seconds) is life even where it hardly drifts. An emitter's `opacity` is judged for a jump as a node's is.
+- An emitter without `fade` and `opacity` is the data, the bake and the picture it was.
 
 ## Timeline: intents
 
@@ -1119,6 +1140,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
 | `riseTo(id, { at, to, ... })` | a shape or a stroke with a `rise` | `dur` (0.8), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the body to the height `to`, in units: it grows out of the ground or sinks back; keys chain. See A height: bodies that stand on the ground |
 | `hazeTo(id, { at, to, ... })` | a shape with a `haze` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | changes how far the haze moves the picture to `to`, in units; its ripples drift on; keys chain. See A heat haze |
+| `rateTo(id, { at, to, ... })` | emitter | `dur` (1), `profile` (`'ease'`), `ramp` (0.3) | changes how many particles a second the emitter sends out to `to`; the particles already out live on; keys chain. See A rate that changes |
 | `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
 | `popOut(id, { at, ... })` | same | `dur` (0.35) | a small swell, then shrinks to nothing |
@@ -1128,7 +1150,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `turnTo(groupId, { at, about, ... })` | a group that lies in a plane | `about` (`'x'` or `'y'`), and the options of a turn | turns the plane on a hinge, out of its plane (see A perspective layer) |
 | `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
-| `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
+| `fadeTo(id, { at, to, ... })` | placed, label, link, emitter | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes; an emitter's particles fade as one picture (see Particles that fade) |
 | `fillTo(shapeId, { at, to, ... })` | shape | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key) |
 | `colorTo(lineId, { at, to, ... })` | stroke, link | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the colour of the line to the palette colour `to`, as `fillTo` does a fill (see A colour key) |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
@@ -1256,6 +1278,24 @@ travel('drop', { at: 4, path: BELT, speeds: [[0, 60], [2, 180], [4, 420]], only:
 - `roll`, `orient` and `only` work as they do at one speed: a wheel turns as far as it has gone.
 - A `drawOn` cannot follow such a travel exactly: it has profiles, not keys of speed.
 - The motion review judges it as any travel: a start at nearly its top speed from rest in view is an `abrupt-start`.
+
+### A rate that changes
+
+An emitter sends out its `rate` between its `from` and `until`. `rateTo` changes that rate over time: a plume that swells on a word and thins again, a haze of lights that thins to a fifth for a moment and comes back.
+
+```ts
+emitter({ id: 'plume', at: [0, 200], colors: ['light.snow'], size: [30, 50], sizing: 'grow', fade: [0.5, 0], life: 4, rate: 10, prewarm: 4 }),
+// in the timeline:
+rateTo('plume', { at: 2, to: 40, dur: 1.5 }),                    // swells
+rateTo('plume', { at: 5.5, to: 4 }),                             // thins
+```
+
+- **`to`** is the new rate, in particles per second (0 to 5000). It arrives at `at + dur` (`dur` 1 by default), from the rate the emitter has at `at`, on a profile (`'ease'` by default; `'steady'`, `'in'`, `'out'`); several keys chain from the rate reached at that moment.
+- **The particles already out live on.** A swell starts at the source and spreads with the particles, a thinning too; their life is what softens it.
+- It works within `from` and `until`. An emitter of `rate: 0` sends out nothing until a `rateTo` raises it; without one it is refused as an emitter that never emits. Before the shot (`prewarm`) the emitter runs at the rate of frame 0.
+- Bursts and `onContact` are not changed by it.
+- The motion review judges the particles it sends out as any; it has no finding of its own. A rate keyed to 0 leaves an area dead once its particles are gone.
+- An emitter without a `rateTo` is the data and the bake it was.
 
 ### A turn at a speed
 
@@ -1450,14 +1490,14 @@ drive('trail', { dur: 8, by: (t) => ({ points: tail(t) }) }),
 
 ### Opacity
 
-Every shape, group, eye, label and link has an `opacity` (default 1) that `fadeTo` animates. How it combines:
+Every shape, group, eye, label, link and emitter has an `opacity` (default 1) that `fadeTo` animates. How it combines:
 
 - **A faded node fades as one picture.** The node and everything in it (its automatic light, its children, their children) are drawn first and then faded together, so parts that overlap inside it do not show through each other: a half-faded creature does not reveal its body through its eyes.
 - **Opacity multiplies down the tree.** A child at 0.5 inside a parent at 0.5 ends up at 0.25. A child cannot be more visible than its parent.
 - **Glow fades too.** The halo of a glowing shape and the lift of the background behind it are scaled by the shape's opacity down the tree.
 - **A link takes the fainter of its two nodes**, times its own opacity.
 - At opacity 0 a node and its whole subtree are not drawn.
-- Particles are not children of anything and do not fade with a node; stop the emitter instead (`until`).
+- Particles are not children of anything and do not fade with a node. An emitter has an `opacity` of its own that `fadeTo` keys, and its particles fade as one picture (see Particles that fade); or stop it (`until`, a `rateTo` to 0).
 - Opacity is only a look. A faded rigid body still collides, and a faded label's string still has to fit.
 
 A translucent shape is simply a shape with `opacity` below 1, for example a soft field under a diagram: `circle({ id: 'field', r: 150, fill: 'mid.violet', lit: false, opacity: 0.2 })`.
@@ -1696,6 +1736,7 @@ stagger(PICKED.map((id) => `deep-${id}`), { at: 4.4, each: 0.22 }, (id, at) => f
 - **One country among its neighbours.** A map of a box (`world.mjs --bbox`) fitted to cover the stage (a little closer, `zoom: 1.04`, so the land still fills the frame when the camera aims at the country) holds every country of the box, cut to its edge: the country in the middle whole, its neighbours as far as the frame reaches. It has no edge of the world: a rectangle of sea behind the land. Tints picked so that no two neighbours share one come from the map's `borders`.
 - **Its cost.** The example `examples/world` (the whole world: about 18 000 points of countries, 11 000 of land drawn twice, 3800 of borders, about 1300 nodes) draws a 1080p frame in about a tenth of a second on the CPU, less on the GPU. A clip to a shape with more than a few hundred points needs `clipMask` (see Clipping); a soft circle does not.
 - The example `examples/world` holds both: `scene.ts` (the whole world, a shading spreading from the Gulf of Guinea, the equator and the countries it crosses) and `country.ts` (Slovenia among its neighbours, its border drawn round it and its name inside it); `prepare.mjs` writes their outlines from the library's examples.
+- **More layers of the library.** Where a map asks for them, skink3-geo also gives the first-level divisions of its countries, thinned with them so that a division's outer edge is its country's outline point for point (`--divisions`, at 1:10m; `worldOnStage` puts them on the stage with their borders), Natural Earth's rivers by rank or name and its towns with their people (`--rivers`, `--towns`), and a shading by category of water risk from WRI's Aqueduct (`--water-risk`; `waterRiskOnStage`, each category a `fillRings` clipped to the land), each with its credit in `SOURCES.md` (the library's README, "A world map"). The engine draws them with the nodes above: a division a flat `region` over its country, a river a `stroke`, a town a small disc at `view.project(town.at)`.
 - Nothing in the engine changed for it: a scene without a world map is the data it was.
 
 ## Springs: secondary motion
@@ -1868,6 +1909,7 @@ Things to know when you write a scene:
 - The shadow of a body whose height is keyed, in a group with `cast`, is judged on the channel `shadow`: the travel of its end, which is `cast.length` times the change of the height; with `cast.ground`, times how much longer the ground makes the shadow of its top (more down a slope, less up one).
 - A height that changes (`riseTo`) is the move of the top on screen, judged on the channel `position` (in a plane of a perspective layer on `scale` as well, since the top grows as it comes nearer): raised within a few frames it is an `abrupt-start` and an `abrupt-stop`, at one speed between two rests `mechanical`, and with the default `'ease'` there is nothing to report. While it changes the node counts as life.
 - A heat haze is judged on its ripples, on the channel `haze`: the finer ones drifting half their own size per frame or more, and 6 px, strobe (`too-fast`) while the haze moves the picture by a pixel or more. A haze that moves the picture by 0.1 px per frame or more keeps the regions of the frame it covers alive; one with `speed: 0` does not. Particles drawn as streaks are measured along the streak: half their size plus its length per frame or more strobes, so a streak of 1/30 s or longer never does.
+- A particle that fades (`fade`) is judged, and counts as life, only while it is seen: its opacity times the emitter's at least 0.05; one whose opacity runs by 0.004 a frame or more is life however slowly it drifts. An emitter's `opacity` (`fadeTo`) is judged for a jump, on the channel `opacity`, while some of its particles are seen. A `rateTo` has no finding of its own: its particles are judged as any.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
 - A pull of focus (`blurTo`) is judged under the subject `(focus:<layer id>)`, on the channel `focus`: how far the blur radius changes in a frame, at the zoom of the layer, as the travel of a blurred edge. A pull over a few frames is a `jump` or an `abrupt-start`; one at one speed that starts and stops at 3 px a frame or more is an `abrupt-start` and an `abrupt-stop`. An eased pull of a second or more is far below that. A pull is the camera's, so it is not the life of the background: it does not keep a `dead-area` away.
 - A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn (see A globe).

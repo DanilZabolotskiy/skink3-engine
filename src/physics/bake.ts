@@ -30,6 +30,7 @@ import {
   type BakeKey,
 } from './cache.ts';
 import { simulateEmitter } from './particles.ts';
+import { sampleRise } from '../motion/tracks.ts';
 import { simulateRigid, type RigidBodyDef } from './rigid.ts';
 
 export function bakeKey(c: CompiledShot): BakeKey {
@@ -155,6 +156,7 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
 
   // 3. Particles.
   const streaks = c.emitters.some((i) => { const node = c.nodes[i]!.node; return node.type === 'emitter' && node.streak !== undefined; });
+  const fading = c.emitters.some((i) => { const node = c.nodes[i]!.node; return node.type === 'emitter' && node.fade !== undefined; });
   const header = (events: BakeHeader['events'], particleCount: number): BakeHeader => ({
     format: BAKE_FORMAT,
     engine: key.engine,
@@ -175,6 +177,8 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
       particleVelocities: (particleCount / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE,
       // Only a shot with an emitter of streaks names its tails.
       ...(streaks ? { particleTails: (particleCount / PARTICLE_STRIDE) * PARTICLE_TAIL_STRIDE } : {}),
+      // Only a shot with an emitter that fades its particles names their opacities.
+      ...(fading ? { particleAlphas: particleCount / PARTICLE_STRIDE } : {}),
     },
   });
   const nEmitters = c.emitters.length;
@@ -182,32 +186,39 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
   let particles = new Float32Array(0);
   let velocities = new Float32Array(0);
   let tails = new Float32Array(0);
+  let alphas = new Float32Array(0);
   if (nEmitters > 0) {
     // Where every emitter is at every frame, from the state baked so far.
     const partial = new Bake(header(rigid.events, 0), rigid.poses, springs, particleIndex, particles, velocities);
     const places = emitterPlaces(c, posesFromBake(partial));
     const results = c.emitters.map((index, slot) => {
-      const node = c.nodes[index]!.node;
+      const n = c.nodes[index]!;
+      const node = n.node;
       if (node.type !== 'emitter') throw new Error('not an emitter');
-      return simulateEmitter(node, frames, c.spec.seed, (f) => places[slot]![f]!, rigid.events);
+      // An emitter with a rateTo sends out the rate its track gives at each moment.
+      const rate = n.rate;
+      return simulateEmitter(node, frames, c.spec.seed, (f) => places[slot]![f]!, rigid.events, rate ? (t) => sampleRise(rate, t) : null);
     });
     const total = results.reduce((a, r) => a + r.data.length, 0);
     particles = new Float32Array(total);
     velocities = new Float32Array((total / PARTICLE_STRIDE) * PARTICLE_VELOCITY_STRIDE);
     // Round particles have no tail: theirs stay 0, 0.
     if (streaks) tails = new Float32Array((total / PARTICLE_STRIDE) * PARTICLE_TAIL_STRIDE);
+    // Opaque particles of an emitter without a fade keep an opacity of 1.
+    if (fading) alphas = new Float32Array(total / PARTICLE_STRIDE).fill(1);
     let offset = 0;
     results.forEach((r, slot) => {
       particles.set(r.data, offset);
       const base = offset / PARTICLE_STRIDE;
       velocities.set(r.velocity, base * PARTICLE_VELOCITY_STRIDE);
       if (r.tails) tails.set(r.tails, base * PARTICLE_TAIL_STRIDE);
+      if (r.alphas) alphas.set(r.alphas, base);
       for (let f = 0; f <= frames; f++) particleIndex[slot * (frames + 1) + f] = base + r.index[f]!;
       offset += r.data.length;
     });
   }
 
-  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles, velocities, tails);
+  return new Bake(header(rigid.events, particles.length), rigid.poses, springs, particleIndex, particles, velocities, tails, alphas);
 }
 
 export interface EnsureBakeResult {

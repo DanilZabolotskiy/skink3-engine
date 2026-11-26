@@ -217,6 +217,18 @@ export interface HazeToKey extends Voiced {
   readonly ramp: number;
 }
 
+/** Change how many particles an emitter sends out a second, over time. */
+export interface RateToKey extends Voiced {
+  readonly kind: 'rateTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new rate, in particles per second. */
+  readonly to: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** Change the fill of a shape to another colour of the palette over time: a colour key. */
 export interface FillToKey extends Voiced {
   readonly kind: 'fillTo';
@@ -505,6 +517,7 @@ export type Key =
   | WidthToKey
   | RiseToKey
   | HazeToKey
+  | RateToKey
   | FillToKey
   | ColorToKey
   | PulseKey
@@ -1220,6 +1233,38 @@ export function hazeTo(
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, HAZE_MAX),
     dur: num(w, 'dur', opts.dur ?? 1.5, 0.05, 3600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/** The most particles a second an emitter may send out: the limit of its `rate`, and of a `rateTo` on it. */
+export const RATE_MAX = 5000;
+
+/**
+ * Change how many particles an emitter sends out a second: `to` is the new
+ * rate. It arrives exactly at `at + dur`, smoothly from the rate the emitter
+ * has at `at`; several keys chain from the rate reached at that moment. The
+ * particles already out live on as they were: a plume swells or thins from
+ * its source. It works between the emitter's `from` and `until`, as its
+ * `rate` does; an emitter of `rate: 0` is raised by its first key.
+ *
+ *   rateTo('steam', { at: 3, to: 40 })
+ */
+export function rateTo(
+  id: string,
+  opts: { at: number; to: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): RateToKey {
+  const w = `rateTo("${id}")`;
+  only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'rateTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    to: num(w, 'to', opts.to, 0, RATE_MAX),
+    dur: num(w, 'dur', opts.dur ?? 1, 0.05, 3600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

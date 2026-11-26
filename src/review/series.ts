@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleOpacity, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import { fillStep } from '../scene/fill.ts';
@@ -170,6 +170,11 @@ export interface EmitterSeries {
   readonly medianSpeed: Float32Array;
   /** Bit r: a particle moves in region r of the frame. */
   readonly regions: Uint8Array;
+  /**
+   * An emitter with an opacity of its own (or a fadeTo): that opacity at every frame, which its particles are seen
+   * through. Left out: opaque. A particle is counted only while it is seen: its own opacity (a fade) times this.
+   */
+  readonly alpha?: Float32Array;
 }
 
 /**
@@ -899,6 +904,9 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     c.emitters.forEach((index, slot) => {
       const n = c.nodes[index]!;
       const view = views[n.layer]!;
+      // The opacity of the emitter, where it has one; the particles of an emitter without one are as seen as they are drawn.
+      const faded = n.opacity ? f32() : null;
+      if (faded && n.opacity) for (let f = 0; f < frames; f++) faded[f] = sampleOpacity(n.opacity, f / FPS);
       const s: EmitterSeries = {
         node: n,
         id: n.id,
@@ -907,15 +915,24 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         medianRatio: f32(),
         medianSpeed: f32(),
         regions: new Uint8Array(frames),
+        ...(faded ? { alpha: faded } : {}),
       };
       const ratios: number[] = [];
       const speeds: number[] = [];
       // Streaks are as long, along their way, as their tails make them.
       const streak = n.node.type === 'emitter' && n.node.streak !== undefined;
+      const fading = n.node.type === 'emitter' && n.node.fade !== undefined;
+      // A particle whose opacity runs over its life fast enough to be seen to change is life while it is seen, however
+      // slowly it drifts: the slowest change is that of the longest life.
+      const twinkles = n.node.type === 'emitter' && n.node.fade !== undefined && Math.abs(n.node.fade[1] - n.node.fade[0]) / (n.node.life[1] * FPS) >= T.aliveOpacity;
       for (let f = 0; f < frames; f++) {
+        // An emitter faded below what is seen shows none of its particles.
+        const shown = faded ? faded[f]! : 1;
+        if (shown < T.visibleAlpha) continue;
         const data = bake.particlesAt(slot, f);
         const vel = bake.velocitiesAt(slot, f);
         const tails = streak ? bake.tailsAt(slot, f) : null;
+        const alphas = fading ? bake.alphasAt(slot, f) : null;
         const zoom = view.zoom[f]!;
         const tx = view.tx[f]!;
         const ty = view.ty[f]!;
@@ -928,6 +945,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
           const sy = data[i + 1]! * zoom + ty;
           const pr = data[i + 2]! * zoom;
           if (sx + pr < 0 || sy + pr < 0 || sx - pr > STAGE_W || sy - pr > STAGE_H) continue;
+          // A particle that has faded too far to be seen is neither judged nor counted as life.
+          if (alphas && alphas[k / PARTICLE_VELOCITY_STRIDE]! * shown < T.visibleAlpha) continue;
           const speed = (Math.hypot(vel[k]!, vel[k + 1]!) / FPS) * zoom;
           const length = tails ? Math.hypot(tails[(k / PARTICLE_VELOCITY_STRIDE) * PARTICLE_TAIL_STRIDE]!, tails[(k / PARTICLE_VELOCITY_STRIDE) * PARTICLE_TAIL_STRIDE + 1]!) * zoom : 0;
           const ratio = speed / (2 * pr + length);
@@ -935,7 +954,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
           speeds.push(speed);
           if (pr < 0.5) continue;
           if (ratio >= T.fastRatio && speed >= T.fastMinPx) fast++;
-          if (speed >= T.alivePx) regions |= regionsOf(sx, sy, pr);
+          if (speed >= T.alivePx || twinkles) regions |= regionsOf(sx, sy, pr);
         }
         if (ratios.length === 0) continue;
         ratios.sort((x, y) => x - y);

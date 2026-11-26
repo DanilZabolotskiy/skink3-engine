@@ -331,7 +331,7 @@ test('emitter sizing: steady particles keep their size for nearly all of their l
   const full = (r: number[]): number => r.filter((v) => v > 9.9).length / r.length;
   assert.ok(full(steady) > 0.8, `most steady particles are at full size (${full(steady)})`);
   assert.ok(full(spark) < 0.5, `most sparks are not (${full(spark)})`);
-  assert.throws(() => emitter({ id: 'e', rate: 1, life: 1, size: 1, colors: ['accent.amber'], sizing: 'big' as never }), /sizing must be "spark" or "steady"/);
+  assert.throws(() => emitter({ id: 'e', rate: 1, life: 1, size: 1, colors: ['accent.amber'], sizing: 'big' as never }), /sizing must be "spark", "steady" or "grow"/);
 });
 
 // --- Backdrop and no-break spaces ----------------------------------------------------------

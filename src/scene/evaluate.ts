@@ -721,6 +721,13 @@ export interface ParticlesItem {
   readonly data: Float32Array;
   /** An emitter of streaks: dx, dy per particle, in the order of `data`, from the particle to the end of its streak. Left out: round particles. */
   readonly tails?: Float32Array;
+  /** An emitter that fades its particles: the opacity of each, in the order of `data`. Left out: every particle opaque. */
+  readonly alphas?: Float32Array;
+  /**
+   * An emitter with an opacity of its own (or a fadeTo): that opacity at this frame. The particles are drawn in a
+   * group of it, faded as one picture; this is what their glow is scaled by. Left out: opaque.
+   */
+  readonly faded?: number;
 }
 
 /**
@@ -2173,8 +2180,18 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
         case 'emitter': {
           const data = bake.particlesAt(n.emitterSlot, frame);
-          // An emitter of streaks carries their tails; an emitter of round particles is the item it always was.
-          if (data.length > 0) items.push({ kind: 'particles', node: n, data, ...(node.streak === undefined ? {} : { tails: bake.tailsAt(n.emitterSlot, frame)! }) });
+          // An emitter of streaks carries their tails, one that fades its particles their opacities, one with an
+          // opacity of its own that opacity; an emitter of round, opaque particles is the item it always was.
+          if (data.length > 0) {
+            items.push({
+              kind: 'particles',
+              node: n,
+              data,
+              ...(node.streak === undefined ? {} : { tails: bake.tailsAt(n.emitterSlot, frame)! }),
+              ...(node.fade === undefined ? {} : { alphas: bake.alphasAt(n.emitterSlot, frame)! }),
+              ...(n.opacity ? { faded: a } : {}),
+            });
+          }
           break;
         }
       }
