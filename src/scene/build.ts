@@ -790,9 +790,10 @@ export function globe(o: {
   /**
    * The layers of the surface, painted in order: rings of [lon, lat], outer rings counter-clockwise seen from
    * outside and holes clockwise (as skink3-geo writes them), filled non-zero. drift turns a layer east over the
-   * body (clouds), degrees per second; soft blurs its edges, a share of the radius.
+   * body (clouds), degrees per second; soft blurs its edges, a share of the radius. A layer with an id, unique in
+   * the shot, takes fadeTo and fillTo: its opacity and its fill keyed over time.
    */
-  layers?: readonly { rings: readonly (readonly LonLat[])[]; fill: ColorRef; opacity?: number; drift?: number; soft?: number }[];
+  layers?: readonly { id?: string; rings: readonly (readonly LonLat[])[]; fill: ColorRef; opacity?: number; drift?: number; soft?: number }[];
   /**
    * The sun: from (degrees, 0 from the right, -90 from the top; default -135), lit (the share of the disc it lights,
    * 0 a new moon, 0.5 a half, 1 full; default 0.7), and the night: its colour, amount (0..1, how dark; default 0.8)
@@ -827,7 +828,7 @@ export function globe(o: {
   const layers: GlobeLayerSpec[] = (o.layers ?? []).map((l, k) => {
     const lw = `${where} layers[${k}]`;
     if (l === null || typeof l !== 'object') fail(lw, 'must be { rings, fill }');
-    checkKeys(lw, l, ['rings', 'fill', 'opacity', 'drift', 'soft']);
+    checkKeys(lw, l, ['id', 'rings', 'fill', 'opacity', 'drift', 'soft']);
     if (!Array.isArray(l.rings) || l.rings.length === 0) fail(lw, 'rings must be a list of rings, each a list of [lon, lat]');
     const rings: Float64Array[] = [];
     const holes: boolean[] = [];
@@ -839,6 +840,8 @@ export function globe(o: {
       holes.push(made.hole);
     });
     return {
+      // Written only when it is given: a layer without one is the data it always was.
+      ...(l.id === undefined ? {} : { id: idOf(lw, l.id) }),
       rings,
       holes,
       fill: color(lw, 'fill', l.fill),
@@ -1660,12 +1663,15 @@ function flatten<T>(items: Nested<T>, out: T[] = []): T[] {
  * Keys of the speed of the camera over a shot: [seconds from the start of the shot, units per second], at least two,
  * the first at 0, in order of time. A speed may be 0: the camera starts or ends at rest.
  */
-function cameraSpeeds(where: string, value: unknown): SpeedKeys {
-  return speedKeyList(where, 'speeds', value, 0, CAMERA_SPEED_MAX * 60, 'units per second');
+function cameraSpeeds(where: string, value: unknown, cuts: readonly number[] = []): SpeedKeys {
+  return speedKeyList(where, 'speeds', value, 0, CAMERA_SPEED_MAX * 60, 'units per second', cuts);
 }
 
-/** Keys of a speed over the shot: [seconds from its start, speed], at least two, the first at 0, in order of time. */
-function speedKeyList(where: string, name: string, value: unknown, min: number, max: number, unit: string): SpeedKeys {
+/**
+ * Keys of a speed over the shot: [seconds from its start, speed], at least two, the first at 0, in order of time. Two
+ * keys may share a moment only at a hard cut (`cuts`, in seconds): there the speed steps from one to the other.
+ */
+function speedKeyList(where: string, name: string, value: unknown, min: number, max: number, unit: string, cuts: readonly number[] = []): SpeedKeys {
   if (!Array.isArray(value) || value.length < 2) fail(where, `${name} must be a list of at least two keys [seconds from the start of the shot, ${unit}]`);
   const keys = value.map((k, i) => {
     if (!Array.isArray(k) || k.length !== 2) fail(where, `${name}[${i}] must be [seconds, ${unit}]`);
@@ -1673,7 +1679,10 @@ function speedKeyList(where: string, name: string, value: unknown, min: number, 
   });
   if (keys[0]![0] !== 0) fail(where, `the first key of ${name} is at 0 seconds: the speed the shot starts with`);
   for (let i = 1; i < keys.length; i++) {
-    if (!(keys[i]![0] > keys[i - 1]![0])) fail(where, `the keys of ${name} must be in order of time; key ${i} is at ${keys[i]![0]} s, after ${keys[i - 1]![0]} s`);
+    const [t, before] = [keys[i]![0], keys[i - 1]![0]];
+    // At a hard cut the speed may step: two keys at its moment, the speed before it and the speed after it.
+    const step = t === before && cuts.includes(t) && (i < 2 || keys[i - 2]![0] < t);
+    if (!(t > before) && !step) fail(where, `the keys of ${name} must be in order of time; key ${i} is at ${t} s, after ${before} s${t === before ? ' (two keys may share a moment only at a hard cut, cut({ at }), where the speed steps)' : ''}`);
   }
   return keys;
 }
@@ -1762,6 +1771,9 @@ export function shot(o: {
   };
   const cam = o.camera ?? {};
   checkKeys(`${where} camera`, cam, ['at', 'drift', 'path', 'pushIn', 'focus']);
+  const timeline = flatten<Key>(o.timeline ?? []);
+  // The moments of the hard cuts, at which a key of the camera's speed may step.
+  const cuts = timeline.flatMap((k) => (k && typeof k === 'object' && k.kind === 'cut' ? [k.at] : []));
   if (cam.drift) checkKeys(`${where} camera.drift`, cam.drift, ['speed', 'heading', 'wander', 'period', 'speeds']);
   if (cam.drift?.speeds !== undefined && cam.drift.speed !== undefined) {
     fail(`${where} camera.drift`, 'speeds says how fast the camera drifts at every moment of the shot; leave speed out');
@@ -1799,7 +1811,7 @@ export function shot(o: {
       ramp: num(w, 'ramp', p.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
       turn: num(w, 'turn', p.turn ?? 1.6, 0.1, 30),
       // Written only when they are given: a path without them is the data it always was.
-      ...(p.speeds === undefined ? {} : { speeds: cameraSpeeds(w, p.speeds) }),
+      ...(p.speeds === undefined ? {} : { speeds: cameraSpeeds(w, p.speeds, cuts) }),
     };
     const length = pathLength(cameraPath);
     if (!(length > 1e-6)) fail(w, 'the path has no length');
@@ -1822,7 +1834,7 @@ export function shot(o: {
       wander: num(where, 'camera.drift.wander', cam.drift?.wander ?? D.drift.wander, 0, 400),
       period: num(where, 'camera.drift.period', cam.drift?.period ?? D.drift.period, 0.5, 600),
       // Written only when they are given: a drift without them is the data it always was.
-      ...(cam.drift?.speeds === undefined ? {} : { speeds: cameraSpeeds(`${where} camera.drift`, cam.drift.speeds) }),
+      ...(cam.drift?.speeds === undefined ? {} : { speeds: cameraSpeeds(`${where} camera.drift`, cam.drift.speeds, cuts) }),
     },
     pushIn: {
       from: num(where, 'camera.pushIn.from', cam.pushIn?.from ?? D.pushIn.from, 0.1, 20),
@@ -1882,7 +1894,7 @@ export function shot(o: {
     camera,
     physics,
     layers: o.layers,
-    timeline: flatten<Key>(o.timeline ?? []),
+    timeline,
     intended: flatten<IntendedSpec>(o.intended ?? []),
     // A shot that does not ask for the contrast review is the data it always was.
     ...(contrast ? { contrast } : {}),

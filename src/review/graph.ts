@@ -13,7 +13,7 @@ import { FPS } from '../core/time.ts';
 import { CAMERA_SUBJECT } from '../scene/types.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 import { relativeSteps } from './detect.ts';
-import { DRAWN, type MotionSeries } from './series.ts';
+import { atSeam, DRAWN, type MotionSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
 /** What a graph needs of a finding to mark it: a finding of the motion review or of the physics review. */
@@ -57,6 +57,8 @@ const GRID = '#2c2c2a';
 const AXIS = '#383835';
 const SERIES = ['#3987e5', '#d95926'];
 const WARN = '#fab219';
+/** A hard cut: a dashed line of the chrome's ink. */
+const CUT = '#c3c2b7';
 
 interface Line {
   readonly name: string;
@@ -117,7 +119,8 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
     what = 'camera';
     const speed = nan();
     for (let f = 1; f < F; f++) {
-      speed[f] = Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * series.camera.zoom[f]!;
+      // Across a hard cut the camera does not travel: it is somewhere else at once.
+      if (!atSeam(series, f)) speed[f] = Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * series.camera.zoom[f]!;
     }
     panels.push({ title: 'speed of the camera at depth 0, px per frame', lines: [{ name: 'speed', data: speed }], fromZero: true, height: 300, peak: true });
     panels.push({ title: 'position, units', lines: [{ name: 'x', data: series.camera.x }, { name: 'y', data: series.camera.y }], fromZero: false, height: 120, peak: false });
@@ -143,7 +146,7 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
         y[f] = s.y[f]!;
         rot[f] = s.rot[f]!;
         scale[f] = s.scale[f]!;
-        if (f > 0 && (s.flags[f - 1]! & DRAWN) !== 0) stage[f] = Math.hypot(s.x[f]! - s.x[f - 1]!, s.y[f]! - s.y[f - 1]!) * zoom[f]!;
+        if (f > 0 && (s.flags[f - 1]! & DRAWN) !== 0 && !atSeam(series, f)) stage[f] = Math.hypot(s.x[f]! - s.x[f - 1]!, s.y[f]! - s.y[f - 1]!) * zoom[f]!;
       }
       const lines: Line[] = [{ name: 'on the stage (camera frozen)', data: stage }];
       const attached = n.node.type === 'label' || n.parent >= 0;
@@ -151,7 +154,7 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
         // Against the place of what it is attached to: what the strobing check measures.
         const rel = relativeSteps(series, s);
         const data = nan();
-        for (let f = 1; f < F; f++) if (!hidden[f] && !hidden[f - 1]) data[f] = Math.hypot(rel.dx[f]!, rel.dy[f]!);
+        for (let f = 1; f < F; f++) if (!hidden[f] && !hidden[f - 1] && !atSeam(series, f)) data[f] = Math.hypot(rel.dx[f]!, rel.dy[f]!);
         lines.push({ name: n.node.type === 'label' ? `relative to "${c.nodes[n.targetIndex]!.id}"` : `relative to "${c.nodes[n.parent]!.id}"`, data });
       }
       panels.push({ title: 'speed, px per frame', lines, fromZero: true, height: 300, peak: true });
@@ -312,6 +315,22 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
       ctx.lineTo(gx, y1);
       ctx.stroke();
     }
+    // Hard cuts: a dashed line between the last frame of a picture and the first of the next.
+    const cuts = (c.cuts ?? []).filter((f) => f > from && f <= to);
+    if (cuts.length > 0) {
+      ctx.save();
+      ctx.strokeStyle = CUT;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 5]);
+      for (const f of cuts) {
+        const gx = Math.round(xOf(f - 0.5)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(gx, plotTop);
+        ctx.lineTo(gx, y1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     // Findings: a band over their frames.
     for (const f of mine) {
       const a = xOf(Math.max(from, f.from));
@@ -410,10 +429,12 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
     text(`${tickText(t, step)} s`, gx, axisY + 20, 13, INK2, 'center', 600);
     text(`f${Math.round(t * FPS)}`, gx, axisY + 37, 12, MUTED, 'center', 500);
   }
-  if (mine.length > 0 || hidden.subarray(from, to + 1).includes(1)) {
+  const cutShown = (c.cuts ?? []).some((f) => f > from && f <= to);
+  if (mine.length > 0 || hidden.subarray(from, to + 1).includes(1) || cutShown) {
     const notes: string[] = [];
     if (mine.length > 0) notes.push('yellow band: a finding of the review');
     if (hidden.subarray(from, to + 1).includes(1)) notes.push('dark band: not drawn');
+    if (cutShown) notes.push('dashed line: a hard cut');
     text(notes.join('     '), left + plotW, 51, 13, MUTED, 'right', 500);
   }
 

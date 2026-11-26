@@ -301,7 +301,7 @@ cameraTo({ at: 11, zoom: 4000, dur: 3, profile: 'out' }),          // ... that s
 | Option of `cameraTo` | Default | Meaning |
 |---|---|---|
 | `at` | required | seconds: when the move starts |
-| `dur` | `1.2` | seconds it takes |
+| `dur` | `1.2` | seconds it takes, 0.05 at least; 0 on the frame of a cut (see A hard cut inside a shot) |
 | `zoom` | the zoom it has | the zoom the camera has when the key ends, as a factor of the authored view: `2` shows the focus plane twice as large, `0.5` half as large. 0.01 to 10000 |
 | `to` | where it looks | `[x, y]`: the place the camera looks at when the key ends, in units of the focus plane |
 | `profile`, `ramp` | `'ease'`, `0.3` | how the speed is spread, as for a move: `'ease'` from rest to rest, `'steady'` at one speed, `'in'`, `'out'` with one eased end |
@@ -346,7 +346,7 @@ zoomTo({ at: 15, to: 1, dur: 2 }),                                 // and back t
 |---|---|---|
 | `at` | required | seconds: when the zoom starts |
 | `to` | required | the zoom it reaches, as a factor of the authored view: `1.15` shows the focus plane 15 % larger, `1` is the authored view again. 0.01 to 10000 |
-| `dur` | `3` | seconds it takes |
+| `dur` | `3` | seconds it takes, 0.05 at least; 0 on the frame of a cut |
 | `profile`, `ramp` | `'ease'`, `0.3` | how the speed is spread, as for a camera key |
 
 - **The camera looks where it looks without the key,** at every frame. Its drift, its path and its wander run on at their own speed; the key changes how large the picture is, about the middle of the frame, and never where the camera looks. So the push goes toward the middle of the view: frame the subject with the camera itself (its `at`, or a loop about the subject).
@@ -373,7 +373,7 @@ shot({
 | Option of `backgroundTo` | Default | Meaning |
 |---|---|---|
 | `at` | required | seconds: when the change starts |
-| `dur` | `2` | seconds it takes, 0.1 at least |
+| `dur` | `2` | seconds it takes, 0.1 at least; 0 on the frame of a cut |
 | `inner`, `outer` | as they are | palette references: the colours of the gradient at its centre and at its edge when the key ends |
 | `center`, `radius` | as they are | the centre of the gradient in fractions of the frame, and its radius in frame widths, when the key ends |
 | `atmosphere` | as it is | palette reference: the colour far layers fade toward when the key ends |
@@ -387,7 +387,30 @@ shot({
 - A shot without a `backgroundTo` is drawn as it always was. Before the first key the background is exactly what the shot says.
 - A background key is no node's intent: it has no target, no sound and makes no event. Like every key it may start before the shot (a negative `at`): the change is then under way at frame 0.
 - The motion review counts a background that changes as life in every part of the frame, while it changes fast enough to be seen; `skink3 motion` prints when that is ("background: changes at 3.20-5.80 s"). A change of a few dark colours over many seconds is too slow to count.
-- For another set and another subject, cut to another shot. There are no transitions between shots yet.
+- For another set and another subject at once, under one take of narration, cut inside the shot (see A hard cut inside a shot), or cut to another shot. There are no dissolves between shots yet.
+
+### A hard cut inside a shot
+
+One take of narration may run over two pictures, or three, joined by a cut on a word: a street cut to a room, a wide view cut to a close one. `cut({ at })` is that cut. On its frame, the first frame at or after `at`, the picture changes at once, as between two shots, and nothing dissolves.
+
+```ts
+// timeline
+cut({ at: 4.2 }),
+fadeTo('street', { at: 4.2, to: 0, dur: 0 }),                                 // the first set goes ...
+fadeTo('room', { at: 4.2, to: 1, dur: 0 }),                                   // ... and the second is there, whole
+fadeTo('dust', { at: 4.2, to: 1, dur: 0 }),                                   // an emitter that ran unseen from the start (opacity 0)
+backgroundTo({ at: 4.2, dur: 0, inner: 'deep.ink', outer: 'deep.night', atmosphere: 'mid.mist' }),
+cameraTo({ at: 4.2, dur: 0, zoom: 2.4, to: [600, -80] }),                     // the camera is on the second set at once
+perspectiveTo('ground', { at: 4.2, dur: 0, tilt: 70 }), blurTo('far', { at: 4.2, dur: 0, to: 12 }),
+```
+
+- **Keys of no time.** On the frame of a cut, and there alone, six keys may take `dur: 0`: `cameraTo`, `zoomTo`, `backgroundTo`, `perspectiveTo`, `blurTo` and `fadeTo` (of a node, a label, a link, an emitter or a layer of a globe). Each takes its value on that frame and keeps it; keys chain from it as ever. A key of no time at any other moment is refused, with the moment of the cut it would need; so is one shorter than its least duration (0.05 s, 0.1 s for `backgroundTo`). A fade of no time is part of the cut: it makes no sound and takes no `sound`.
+- **Two sets in one shot.** Put each set in a group: the second at `opacity: 0`, faded in on the cut, the first faded out. An emitter of the second set runs from the start of the shot at `opacity: 0` (with its `prewarm`), so that it is full on the cut. A match cut puts the new thing at the place and the size of the old one.
+- **The camera starts again.** The push-in starts again from its `from` at each cut, at the speed it has over the shot, so the picture before a cut is what it would be without it; a camera key of no time puts the camera where the second picture needs it, and the drift goes on from there. The keys of the camera's speed (`drift.speeds`, `path.speeds`) may step at a cut: two keys at its moment, the speed before it and the speed after it.
+- **Springs start again** at rest on the frame of a cut: what swung in the first picture does not swing into the second.
+- **The reviews.** The motion review judges each side of a cut as a shot of its own: nothing that changes across it is a `jump`, an `abrupt-start` or an `abrupt-stop`, a move that runs into it or out of it is a flow, as at the ends of a shot, and a hold of the frame ends there. The steps across a cut are left out of the life of the background, and `skink3 motion` says where the cuts are; `skink3 graph` draws each as a dashed line. The physics is not cut: bodies go on across it, and a body faded out on a cut is not seen after it.
+- **A sampled backdrop** (`sampledBackdrop`) takes the frames on both sides of a cut as anchors of its own, so it never blends across one.
+- A cut lies inside the shot, one to a frame, and each picture lasts 0.1 s at least. A cut makes no sound: place one on it with `sfx`. A shot without a cut is the data and the picture it was.
 
 ### Physics style
 
@@ -411,7 +434,7 @@ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 
 
 **A `blur` softens everything its layer draws,** a perspective layer included: a soft ground under a sharp layer of lines is a layer of its own. It is in the units of the layer (0 to 200), so under a zoom of the camera it grows with the picture, up to 400 px of a 1080p frame. A layer that is seen after a zoom of 40 and should be blurred by 8 units of the frame there takes `blur: 8 / 40`. To soften one node or one group there is `soft` (see A soft edge).
 
-**A pull of focus.** `blurTo(layerId, { at, to, dur?, profile?, ramp? })` changes the blur of a layer at a moment: from what it is then to `to` (units, 0 to 200; 0 is sharp) over `dur` (1.2 s), along its profile (`'ease'`, or `'steady'`, `'in'`, `'out'` with `ramp`), and it stays there; keys chain, each from the blur reached at its moment. A layer without keys keeps the blur it was given, or that its depth and the camera's `focus` give it, on every frame. Two keys at one moment move the focus from one layer to another, as a lens is pulled from what is near to what is far:
+**A pull of focus.** `blurTo(layerId, { at, to, dur?, profile?, ramp? })` changes the blur of a layer at a moment: from what it is then to `to` (units, 0 to 200; 0 is sharp) over `dur` (1.2 s; 0 on the frame of a cut), along its profile (`'ease'`, or `'steady'`, `'in'`, `'out'` with `ramp`), and it stays there; keys chain, each from the blur reached at its moment. A layer without keys keeps the blur it was given, or that its depth and the camera's `focus` give it, on every frame. Two keys at one moment move the focus from one layer to another, as a lens is pulled from what is near to what is far:
 
 ```ts
 layer({ id: 'far', depth: 0.6, blur: 9, nodes: [/* the hills */] }),
@@ -1150,8 +1173,8 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `turnTo(groupId, { at, about, ... })` | a group that lies in a plane | `about` (`'x'` or `'y'`), and the options of a turn | turns the plane on a hinge, out of its plane (see A perspective layer) |
 | `scaleTo(id, { at, to: [sx, sy], ... })` | placed | `pivot` (`[0, 0]`), `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | changes the width and the height along the node's own axes, for good, about `pivot` (see Size along one axis) |
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
-| `fadeTo(id, { at, to, ... })` | placed, label, link, emitter | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes; an emitter's particles fade as one picture (see Particles that fade) |
-| `fillTo(shapeId, { at, to, ... })` | shape | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key) |
+| `fadeTo(id, { at, to, ... })` | placed, label, link, emitter, a layer of a globe | `dur` (0.5; 0 on the frame of a cut) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes; an emitter's particles fade as one picture (see Particles that fade); a layer of a globe by its `id` (see A globe) |
+| `fillTo(shapeId, { at, to, ... })` | shape, a layer of a globe | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key); a layer of a globe by its `id` |
 | `colorTo(lineId, { at, to, ... })` | stroke, link | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the colour of the line to the palette colour `to`, as `fillTo` does a fill (see A colour key) |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
@@ -1162,6 +1185,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `solidTo(strokeId, { at, ... })` | dashed stroke | `to` (1), `dur` (0.6) | closes the gaps of the dashes (`to: 1`) or opens them again (`to: 0`) |
 | `reshape(id, { at, points, ... })` | region, stroke | `dur` (1.2), `smooth`, `profile` (`'ease'`), `ramp` (0.3) | runs every point of the outline to a new place: one form turns into another (see An outline that changes) |
 | `drive(id, { dur, by })` | any node but an emitter | `at` (0), `by` or `samples` | the node follows a function of time that the scene computes: its place, rotation, scale, opacity, depth, and the points of a region or a stroke (see A node that follows a function of time) |
+| `cut({ at })` | the whole picture | | a hard cut inside the shot: on its frame keys may take no time, the push-in and springs start again, and the reviews judge each side on its own (see A hard cut inside a shot) |
 | `blurTo(layerId, { at, to, ... })` | the focus of a layer | `dur` (1.2), `profile` (`'ease'`), `ramp` (0.3) | changes the blur of the layer to `to` (units): a pull of focus; keys chain (see A pull of focus, under `layer`) |
 | `perspectiveTo(layerId, { at, ... })` | the camera of a perspective layer | `dur` (1.6), `aim`, `distance`, `tilt`, `turn`, `lens`, `profile` (`'ease'`), `ramp` (0.3) | moves the camera of that layer: it tilts, goes round, moves in, looks elsewhere; keys chain (see A perspective layer) |
 | `bendTo(linkId, { at, to, ... })` | link | `dur` (0.8), `overshoot` (0.25) | changes the bend of the link: it sags, pulls taut, swings (see A link that sags and pulls taut) |
@@ -1587,7 +1611,7 @@ perspectiveTo('room', { at: 7, dur: 3, distance: 1300 }),
 
 With `perspective: true` a node at z 0 is drawn exactly where a flat layer draws it; a node twice as far from the camera is half as large and half as far from the middle. The camera of the shot (its drift, its path, `cameraTo`, `zoomTo`) moves the picture of the layer as it moves any layer, by the layer's `depth`.
 
-**`perspectiveTo(layerId, { at, dur?, aim?, distance?, tilt?, turn?, lens?, profile?, ramp? })`** moves the camera of the layer at a moment. Give at least one of `aim`, `distance`, `tilt`, `turn`, `lens`; what is left out stays. `dur` is 1.6 s unless given (0.05 at least), `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each takes over from where the camera is at its moment, also when the key before it is still under way.
+**`perspectiveTo(layerId, { at, dur?, aim?, distance?, tilt?, turn?, lens?, profile?, ramp? })`** moves the camera of the layer at a moment. Give at least one of `aim`, `distance`, `tilt`, `turn`, `lens`; what is left out stays. `dur` is 1.6 s unless given (0.05 at least, or 0 on the frame of a cut), `profile` is `'ease'` (also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Keys chain: each takes over from where the camera is at its moment, also when the key before it is still under way.
 
 - `tilt` and `turn` change the angle on the scene in one move: from a level view to a look straight down, or round a thing while its near parts slide across its far ones.
 - `distance` is a dolly: the camera moves in or out, and what is near grows faster than what is far. `lens` is a zoom: everything grows alike. Both run as ratios: a move from 1600 to 400 passes 800 half-way.
@@ -1695,6 +1719,14 @@ travel('craft', { at: 0.5, path: ROUND, orient: true, speeds: [[0, 1], [1.5, 40]
 - **The view.** `view: [lon, lat]` is the place in the middle of the disc at the start; `[0, 90]` looks down on the north pole, `[0, -90]` on the south one. The view is orthographic: the disc shows one half of the body, the edge (the limb) is where the surface turns away.
 - **The turn.** `spin` is in degrees per second, east (as the Earth turns: what faces the viewer moves from left to right as the viewer sees it, counter-clockwise round the north pole seen from above it); a negative spin turns west. Keys `[[seconds, degrees per second], ...]` (at least two, the first at 0, in order) change it smoothly, as the `speeds` of a travel do: `[[0, 0], [2, 5]]` starts at rest and turns 5 degrees a second after 2 s. At most 360 degrees a second. The globe's `rotation` turns the whole disc, light and all, in the frame, as for any node; `spin` turns its surface under the light.
 - **Layers.** Each `{ rings, fill, opacity?, drift?, soft? }` is painted in order over the disc: `rings` is a list of outlines, each a list of `[lon, lat]`, outer rings counter-clockwise seen from outside and holes clockwise (as skink3-geo writes them), filled non-zero, so a hole in a ring is open and two clouds that overlap make one. An edge is followed along the sphere (a ring may cross the 180th meridian or go round a pole). `drift` turns a layer east over the body, in degrees per second, on top of the spin (clouds that drift); `soft` blurs its edges by that share of the radius (0..0.2). An opaque layer gets a hairline of its own colour along its edges, which closes the seams where polygons that were thinned apart meet.
+- **Keys on a layer.** A layer with an `id` (unique in the shot, as a node's) takes `fadeTo` and `fillTo` as a shape does: one band of the surface brightens on a word and dims again, while the globe holds or turns. Keys chain; nothing else (a move, a turn, a size) is keyed on a layer. A layer faded below 0.9 loses, gradually, the hairline of its own colour that closes the seams between its polygons. The motion review judges a keyed layer's opacity and fill for a jump as a shape's, while its globe is seen and some of the layer faces the viewer, and counts its change as life where the globe is. A globe whose layers have no keys is drawn as it was.
+
+```ts
+globe({ id: 'planet', r: 380, fill: 'dark.navy', layers: BANDS.map((rings, k) => ({ id: `band-${k}`, rings, fill: 'mid.teal' })) }),
+// timeline
+fillTo('band-2', { at: 3, to: 'light.cream', dur: 0.5 }), fillTo('band-2', { at: 4.5, to: 'mid.teal', dur: 0.8 }),
+```
+
 - **Clouds and patches.** `globeBlob({ at, r, points?, wobble?, stretch?, seed? })` returns a ring of `[lon, lat]` round a place: a soft, uneven patch `r` degrees of arc across its half, `points` (28) points, waves `wobble` (0.25) deep, `stretch` (1) times wider east to west than north to south, from the seeded stream of `seed` (1), the same every time.
 - **The light.** `light: { from?, lit?, night, amount?, soft? }`: the sun lights the body from `from` degrees (as a relief's light: 0 from the right, -90 from the top; -135 by default), and `lit` is the share of the disc's width in the light (0 a new moon, 0.5 a half, 1 full; 0.7). The rest is the night side, in `night` at `amount` (0.8), past a terminator as soft as `soft` (0.05 of the radius). A crescent is a small `lit`. The light stays where it is while the body turns: the surface moves through the day into the night. Left out, the body is lit all over and has no night. `shade` (0.25) darkens the disc toward its edge, least where the light falls, so that it reads as a ball.
 - **Lights on the night side.** `lights: { points, color, size?, amount? }`: places `[lon, lat]` or `[lon, lat, weight]` (the towns of the Earth, weight its people in millions) drawn as small glowing dots, `size` (1.5) units across their half times the square root of the weight (up to four times), at `amount` (0.9). They shine only on the night side, fading in past the terminator and out toward the edge, and need a `light`.
@@ -1912,7 +1944,8 @@ Things to know when you write a scene:
 - A particle that fades (`fade`) is judged, and counts as life, only while it is seen: its opacity times the emitter's at least 0.05; one whose opacity runs by 0.004 a frame or more is life however slowly it drifts. An emitter's `opacity` (`fadeTo`) is judged for a jump, on the channel `opacity`, while some of its particles are seen. A `rateTo` has no finding of its own: its particles are judged as any.
 - A node that follows a `drive` is judged on its samples like any other node, and the camera of a perspective layer under the subject `(perspective:<layer id>)` (see A node that follows a function of time, A perspective layer).
 - A pull of focus (`blurTo`) is judged under the subject `(focus:<layer id>)`, on the channel `focus`: how far the blur radius changes in a frame, at the zoom of the layer, as the travel of a blurred edge. A pull over a few frames is a `jump` or an `abrupt-start`; one at one speed that starts and stops at 3 px a frame or more is an `abrupt-start` and an `abrupt-stop`. An eased pull of a second or more is far below that. A pull is the camera's, so it is not the life of the background: it does not keep a `dead-area` away.
-- A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn (see A globe).
+- A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn; a keyed layer by its id, for a pop of its opacity or its fill (see A globe).
+- A hard cut (`cut`) is a seam: each side is judged as a shot of its own, and nothing that changes across it is a finding (see A hard cut inside a shot).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
@@ -2373,6 +2406,7 @@ const bake = await bakeShot(c);         // in memory; ensureBake(c, cacheDir) us
 | what is drawn at a frame | `evaluate(c, bake, frame, lang).layers[i].items`, a tree in draw order; `flatItems(items)` opens the groups. A leaf has `kind` (`'shape'`, `'eye'`, `'link'`, `'label'`, `'particles'`), `node` (the compiled node: `node.id`), and for shapes and eyes `xf` (as above) and `alpha` (its opacity down the tree); an eye also has `look` and `open`. A node that is hidden is simply not in the list |
 | a layer on screen | `evaluate(...).layers[i].view`: `{ zoom, tx, ty }`, screen = layer × zoom + (tx, ty) |
 | the style defaults | `PHYSICS_DEFAULTS`, `CAMERA_DEFAULTS` |
+| the hard cuts | `c.cuts`: the first frame of each picture after the first, in order (left out without a cut); `sampleMotion(...).seams` marks them |
 
 `evaluate` wraps what it draws in four kinds of items besides the leaves: `'group'` (a node that is not fully opaque, with its `opacity`), `'clip'` (nodes drawn inside the outline of a shape), `'stretch'` (a node that is being squashed) and `'plane'` (what lies in a plane of a perspective layer, with the `map` of that plane at the frame). `flatItems` opens all four; what it takes out of a plane it gives as the layer sees it (`seenThrough(item, map)`).
 
@@ -2390,4 +2424,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No transitions between shots, no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size) and no heights on a globe. See the roadmap in the README.
+No dissolves or wipes between shots (a hard cut inside one shot is `cut`), no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size) and no heights on a globe. See the roadmap in the README.

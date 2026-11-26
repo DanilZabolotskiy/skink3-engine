@@ -201,6 +201,8 @@ export default shot({
 - **Weight and taste.** Whether a fall is too fast for its size, or a pile too stiff: that is for the motion review and for a person.
 - **The limits themselves.** A finding close to its limit is a question, not a verdict; the numbers in the report say how close it is.
 
+A hard cut (`cut`) changes no physics: rigid bodies, their contacts and the particles go on across it, and the review reads them as ever; a body faded out on a cut (`fadeTo` of no time) is not seen after it. Springs start again at rest on a cut; they are the motion review's.
+
 ## When the physics changes
 
 **The physics checks grow with the physics.** Any change to the physics of the engine updates this review and its tests in the same piece of work:

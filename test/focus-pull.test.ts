@@ -85,7 +85,7 @@ test('blurTo: a key of the timeline without a node; what it refuses', () => {
     assert.throws(() => blurTo('far', { at: 1, to: 4, ...opts } as never), (e: unknown) => e instanceof IntentError && message.test(e.message), String(message));
   };
   bad({ to: -1 }, /to must be a number in 0\.\.200/);
-  bad({ dur: 0 }, /dur must be a number in 0\.05\.\.600/);
+  bad({ dur: 0.01 }, /dur must be a number in 0\.05\.\.600/); // 0 is taken on the frame of a hard cut (test/cut.test.ts)
   bad({ profile: 'settle' }, /profile must be one of ease, steady, in, out/);
   bad({ profile: 'steady', ramp: 0.2 }, /ramp applies to the profiles ease, in and out/);
   bad({ zoom: 2 }, /blurTo\("far"\): unknown option "zoom" \(allowed: at, to, dur, profile, ramp\)/);

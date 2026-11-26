@@ -10,7 +10,7 @@ import type { Vec2 } from '../core/math.ts';
 import { Noise } from '../core/noise.ts';
 import { buildDriveTrack, type DriveSeg, type DriveTrack } from '../motion/drive.ts';
 import { Rng } from '../core/rng.ts';
-import { frameCount } from '../core/time.ts';
+import { FPS, frameCount } from '../core/time.ts';
 import { HIGHLIGHT_HUE, SHADOW_HUE } from '../look/color.ts';
 import { lightVector } from '../look/light.ts';
 import { resolveColor, toneHues, type Palette, type ToneHues } from '../look/palette.ts';
@@ -22,6 +22,7 @@ import type {
   BumpKey,
   CameraToKey,
   CountToKey,
+  CutKey,
   DrawOnKey,
   DriveKey,
   FadeToKey,
@@ -178,6 +179,20 @@ export interface CNode {
    * A stroke is then a line on its surface, any other node a thing placed on it by [lon, lat]. Left out: not on one.
    */
   readonly globe?: { readonly index: number; readonly spec: GlobeSpec; readonly r: number };
+  /**
+   * A globe whose layers are keyed (fadeTo, fillTo on a layer's id): for each layer, its opacity and its fill over
+   * time, or null for a layer that keeps what it was given. Left out: a globe with no keyed layer, and any other node.
+   */
+  readonly globeLayers?: readonly (GlobeLayerTrack | null)[];
+}
+
+/** A layer of a globe whose opacity or fill is keyed. */
+export interface GlobeLayerTrack {
+  /** Its id, as the timeline and the reviews name it. */
+  readonly id: string;
+  readonly opacity: OpacityTrack;
+  /** Its fill over time; null for a layer whose opacity alone is keyed. */
+  readonly fill: FillTrack | null;
 }
 
 export interface CLayer {
@@ -236,6 +251,11 @@ export interface CompiledShot {
   readonly clips: boolean;
   /** The camera keys and the zoom keys of the shot, or null: the camera does only what the shot's `camera` says. */
   readonly cameraTrack: CameraTrack | null;
+  /**
+   * The hard cuts of the shot (cut), in order: the first frame of each picture after the first. Left out in a shot
+   * without any.
+   */
+  readonly cuts?: readonly number[];
   /** The background keys of the shot, or null: the background is what the shot says on every frame. */
   readonly backgroundTrack: BackgroundTrack | null;
   /** True when some layer of the shot is a perspective layer. */
@@ -331,6 +351,18 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     for (const node of layer.nodes) visit(node, li, -1);
   });
 
+  // The layers of globes that have an id: a fadeTo or a fillTo may name them as it names a node.
+  const globeLayerIds = new Map<string, { globe: number; layer: number }>();
+  for (const d of drafts) {
+    if (d.node.type !== 'shape' || !d.node.globe) continue;
+    d.node.globe.layers.forEach((l, k) => {
+      if (l.id === undefined) return;
+      if (idIndex.has(l.id) || globeLayerIds.has(l.id)) fail(`${where}: duplicate id "${l.id}" (a layer of the globe "${d.node.id}"); ids must be unique within the shot`);
+      globeLayerIds.set(l.id, { globe: d.index, layer: k });
+    });
+  }
+  const layerFades = new Map<string, FadeToKey[]>();
+  const layerFills = new Map<string, FillToKey[]>();
   const known = (): string => [...idIndex.keys()].join(', ');
   const ref = (owner: SceneNode, prop: string, id: string, sameLayer = true): number => {
     const index = idIndex.get(id);
@@ -392,9 +424,25 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     if (list) list.push(item);
     else map.set(index, [item]);
   };
-  for (const key of spec.timeline as readonly Key[]) {
-    if (!key || typeof key !== 'object' || typeof key.kind !== 'string') fail(`${where}: the timeline holds something that is not a key (use moveTo, popIn, ...)`);
-    if (key.sound !== undefined) voiced = true;
+  // The hard cuts: the first frame of each picture after the first. A key of no time (dur: 0) is held to one of them,
+  // and takes its value exactly on that frame.
+  const cutFrames = hardCuts(where, spec, frames);
+  const onCut = (key: Key): Key => {
+    if (!('dur' in key) || key.dur !== 0) return key;
+    const f = cutFrame(key.at);
+    const what = 'layer' in key ? `${key.kind}("${key.layer}")` : key.target === null ? key.kind : `${key.kind}("${key.target}")`;
+    if (!cutFrames.includes(f)) {
+      fail(`${where}: ${what} at ${key.at} s takes no time (dur: 0); that is for the frame of a hard cut: add cut({ at: ${key.at} }) to the timeline, or give the key a duration`);
+    }
+    if (key.sound !== undefined) fail(`${where}: ${what} at ${key.at} s takes no time: it is a part of the cut, which makes no sound; leave sound out, and place a sound on the cut with sfx()`);
+    return { ...key, at: f / FPS } as Key;
+  };
+  for (const given of spec.timeline as readonly Key[]) {
+    if (!given || typeof given !== 'object' || typeof given.kind !== 'string') fail(`${where}: the timeline holds something that is not a key (use moveTo, popIn, ...)`);
+    if (given.sound !== undefined) voiced = true;
+    // A cut is read before the loop: it moves nothing itself.
+    if (given.kind === 'cut') continue;
+    const key = onCut(given) as Exclude<Key, CutKey>;
     if (key.kind === 'sfx') {
       // A sound placed by hand: it animates nothing. With a node, it comes from where that node is.
       if (key.at > spec.seconds) fail(`${where}: sfx("${key.sound}") is placed at ${key.at} s, after the shot ends (${spec.seconds} s)`);
@@ -440,6 +488,18 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (li < 0) fail(`${where}: blurTo names the layer "${key.layer}", which does not exist (layers: ${spec.layers.map((layer) => layer.id).join(', ')})`);
       if (spec.layers[li]!.sampledBackdrop !== undefined) fail(`${where}: blurTo("${key.layer}"): the layer samples a backdrop (sampledBackdrop), whose pictures are drawn at one blur; pull the focus of another layer, or leave sampledBackdrop out`);
       push(blurKeys, li, key);
+      continue;
+    }
+    const onGlobe = globeLayerIds.get(key.target);
+    if (onGlobe) {
+      // A layer of a globe: its opacity and its fill are keyed, and nothing else.
+      const owner = drafts[onGlobe.globe]!.node.id;
+      if (key.at > spec.seconds) fail(`${where}: ${key.kind}("${key.target}") starts at ${key.at} s, after the shot ends (${spec.seconds} s)`);
+      if (key.kind === 'fadeTo') {
+        if (key.sound !== undefined) fail(`${where}: fadeTo("${key.target}") fades a layer of the globe "${owner}", which makes no event to sound; leave sound out`);
+        layerFades.set(key.target, [...(layerFades.get(key.target) ?? []), key]);
+      } else if (key.kind === 'fillTo') layerFills.set(key.target, [...(layerFills.get(key.target) ?? []), key]);
+      else fail(`${where}: ${key.kind} cannot target "${key.target}": it is a layer of the globe "${owner}", which takes fadeTo and fillTo; move, turn or scale the globe itself`);
       continue;
     }
     const index = idIndex.get(key.target);
@@ -982,8 +1042,22 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       }
     }
 
+    // A globe whose layers are keyed carries their tracks; any other is the data it was.
+    let globeLayers: (GlobeLayerTrack | null)[] | null = null;
+    if (node.type === 'shape' && node.globe && node.globe.layers.some((l) => l.id !== undefined && (layerFades.has(l.id) || layerFills.has(l.id)))) {
+      globeLayers = node.globe.layers.map((l, k) => {
+        if (l.id === undefined || !(layerFades.has(l.id) || layerFills.has(l.id))) return null;
+        const fills = layerFills.get(l.id);
+        return {
+          id: l.id,
+          opacity: buildOpacityTrack(l.opacity, layerFades.get(l.id) ?? []),
+          fill: fills ? buildFillTrack(colors[`globe.layer${k}`]!, fills.map((f) => ({ at: f.at, dur: f.dur, profile: f.profile, ramp: f.ramp, to: col(node, `fillTo("${l.id}") at ${f.at} s: to`, f.to) }))) : null,
+        };
+      });
+    }
     return {
       ...(onGlobe ? { globe: { index: d.parent, spec: onGlobe.globe!, r: onGlobe.shape.kind === 'circle' ? onGlobe.shape.r : 1 } } : {}),
+      ...(globeLayers ? { globeLayers } : {}),
       index: d.index,
       id: node.id,
       node,
@@ -1098,7 +1172,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       const refs = [n.clipIndex, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
       if (refs.some(i => i >= 0 && inside(i) !== captured)) fail(`${why}: "${n.id}" has a reference across the sampled group boundary`);
     }
-    return [{ layer: li, group: root, frames: [...new Set([0, ...option.frames, frames - 1])], ...(liveGlow ? { liveGlow: true as const } : {}) }];
+    // A hard cut is never blended over: the frames on both sides of it are pictures of their own.
+    const anchors = cutFrames.length === 0 ? [...new Set([0, ...option.frames, frames - 1])] : [...new Set([0, ...option.frames, ...cutFrames.flatMap((f) => [f - 1, f]), frames - 1])].sort((a, b) => a - b);
+    return [{ layer: li, group: root, frames: anchors, ...(liveGlow ? { liveGlow: true as const } : {}) }];
   });
 
   // A plane that stands things on a ground: the ground is a relief among its own children.
@@ -1133,6 +1209,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     ...FRAME_REGIONS.map((r) => `(frame:${r})`),
     ...spec.layers.filter((layer) => layer.perspective).map((layer) => perspectiveSubject(layer.id)),
     ...spec.layers.filter((_, li) => blurKeys.has(li)).map((layer) => focusSubject(layer.id)),
+    ...globeLayerIds.keys(),
   ]);
   for (const x of spec.intended ?? []) {
     if (!x || typeof x !== 'object' || !Array.isArray(x.nodes) || !FINDING_KINDS_ALL.includes(x.kind)) {
@@ -1221,7 +1298,9 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     ...(sampledBackdrops.length ? { sampledBackdrops } : {}),
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
-    cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys) : null,
+    cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 || cutFrames.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys, cutFrames) : null,
+    // A shot without a hard cut is the data it always was.
+    ...(cutFrames.length > 0 ? { cuts: cutFrames } : {}),
     backgroundTrack,
     spatial: perspTracks.some((track) => track !== null),
     risen: nodes.some((n) => n.rise !== null || n.pos?.lifts === true || (n.node.type === 'shape' && n.node.stands === true)),
@@ -1238,6 +1317,37 @@ function detailLevels(nodes: readonly CNode[]): number[] | null {
   for (const n of nodes) {
     const above = n.parent >= 0 ? out[n.parent]! : -1;
     out.push(n.node.type === 'group' && n.node.detail !== undefined ? n.node.detail.min : above);
+  }
+  return out;
+}
+
+/** The frame a key at `at` seconds takes its value on: the first frame at or after that moment. */
+export function cutFrame(at: number): number {
+  return Math.ceil(at * FPS - 1e-6);
+}
+
+/** The shortest picture between two hard cuts, or between a cut and an end of the shot, in frames: a tenth of a second. */
+export const CUT_MIN_FRAMES = 6;
+
+/**
+ * The hard cuts of a shot (cut), as frames in order: the first frame of each picture after the first. A cut lies
+ * inside the shot, two cuts do not share a frame, and each picture lasts a tenth of a second at least.
+ */
+function hardCuts(where: string, spec: ShotSpec, frames: number): number[] {
+  const out: number[] = [];
+  for (const key of spec.timeline as readonly Key[]) {
+    if (!key || typeof key !== 'object' || key.kind !== 'cut') continue;
+    const f = cutFrame(key.at);
+    if (key.at > spec.seconds || f >= frames) fail(`${where}: cut at ${key.at} s comes after the last frame of the shot (${spec.seconds} s)`);
+    if (out.includes(f)) fail(`${where}: two cuts fall on frame ${f} (${(f / FPS).toFixed(3)} s); a frame is cut once`);
+    out.push(f);
+  }
+  out.sort((a, b) => a - b);
+  const bounds = [0, ...out, frames];
+  for (let i = 1; i < bounds.length; i++) {
+    if (bounds[i]! - bounds[i - 1]! < CUT_MIN_FRAMES) {
+      fail(`${where}: the picture from frame ${bounds[i - 1]} to frame ${bounds[i]! - 1} between cuts lasts ${bounds[i]! - bounds[i - 1]!} frame(s); a picture lasts ${CUT_MIN_FRAMES} frames (0.1 s) at least: move the cut, or leave it out`);
+    }
   }
   return out;
 }

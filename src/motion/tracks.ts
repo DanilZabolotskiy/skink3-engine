@@ -313,7 +313,8 @@ export function sampleLevel(track: LevelTrack, t: number): number {
     else break;
   }
   if (!seg) return track.base;
-  const u = (t - seg.at) / seg.dur;
+  // A key of no time (a pull of focus at a hard cut) is there at once.
+  const u = seg.dur > 0 ? (t - seg.at) / seg.dur : 1;
   if (u >= 1) return seg.to;
   const [a, b] = profileRamps(seg.profile, seg.ramp);
   return seg.from + (seg.to - seg.from) * rampProgress(u, a, b);
@@ -591,7 +592,8 @@ export function sampleOpacity(track: OpacityTrack, t: number): number {
     else break;
   }
   if (!seg) return track.base;
-  const u = (t - seg.at) / seg.dur;
+  // A fade of no time (at a hard cut) is there at once.
+  const u = seg.dur > 0 ? (t - seg.at) / seg.dur : 1;
   if (u >= 1) return seg.to;
   return seg.from + (seg.to - seg.from) * ease('inOutSine', u);
 }

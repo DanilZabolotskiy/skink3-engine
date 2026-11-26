@@ -44,21 +44,28 @@ export function drawGlobe(ctx: CanvasRenderingContext2D, item: ShapeItem, tone: 
   ctx.save();
   ctx.clip(disc);
   g.layers.forEach((layer, k) => {
+    // A keyed layer (fadeTo, fillTo on its id) is drawn at its opacity and in its fill of this frame.
+    const keyed = item.globeLayers?.[k] ?? null;
+    const opacity = keyed ? keyed.opacity : layer.opacity;
+    if (keyed && opacity <= 1e-4) return;
     const loops = visibleRings(layer.rings, layer.holes, globeView(g, t, layer.drift), r);
     if (loops.length === 0) return;
     const path = new Path2D();
     for (const loop of loops) addLoop(path, loop);
-    const colour = tone(colors[`globe.layer${k}`]!);
+    const colour = tone(keyed ? keyed.fill : colors[`globe.layer${k}`]!);
     ctx.save();
-    ctx.globalAlpha = layer.opacity;
+    ctx.globalAlpha = opacity;
     ctx.fillStyle = colour;
     if (layer.soft > 0) {
       ctx.filter = blur(layer.soft * r * 0.5);
       ctx.fill(path, 'nonzero');
     } else {
       ctx.fill(path, 'nonzero');
-      if (layer.opacity >= 1) {
-        // A hairline of its own colour closes the seams between polygons that meet, each thinned alone.
+      // A hairline of its own colour closes the seams between polygons that meet, each thinned alone. A keyed layer
+      // loses it gradually as it fades from 1 to 0.9, so that it neither pops nor darkens the edge of a faded layer.
+      const hairline = keyed ? Math.min(1, Math.max(0, (opacity - 0.9) / 0.1)) : layer.opacity >= 1 ? 1 : 0;
+      if (hairline > 0) {
+        ctx.globalAlpha = opacity * hairline;
         ctx.strokeStyle = colour;
         ctx.lineWidth = 1.2 / px;
         ctx.lineJoin = 'round';

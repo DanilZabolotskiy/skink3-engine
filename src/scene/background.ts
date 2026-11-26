@@ -54,7 +54,8 @@ export function sampleBackground(track: BackgroundTrack, t: number): BackgroundS
     else break;
   }
   if (!seg) return track.base;
-  const u = (t - seg.at) / seg.dur;
+  // A key of no time (at a hard cut) is there at once.
+  const u = seg.dur > 0 ? (t - seg.at) / seg.dur : 1;
   if (u >= 1) return seg.to;
   const [a, b] = profileRamps(seg.profile, seg.ramp);
   const p = rampProgress(u, a, b);
@@ -111,6 +112,6 @@ export function backgroundStep(track: BackgroundTrack, t0: number, t1: number): 
   }
   if (!seg) return 0;
   const [a, b] = profileRamps(seg.profile, seg.ramp);
-  const at = (t: number): number => rampProgress(Math.min(1, Math.max(0, (t - seg.at) / seg.dur)), a, b);
+  const at = (t: number): number => (seg.dur > 0 ? rampProgress(Math.min(1, Math.max(0, (t - seg.at) / seg.dur)), a, b) : t >= seg.at ? 1 : 0);
   return Math.abs(at(t1) - at(t0)) * backgroundChange(seg.from, seg.to);
 }

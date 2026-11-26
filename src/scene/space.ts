@@ -76,7 +76,8 @@ export function perspAt(track: PerspTrack, t: number): PerspSpec {
     if (t >= s.at) seg = s;
     else break;
   }
-  return seg ? between(seg, (t - seg.at) / seg.dur) : track.base;
+  // A key of no time (at a hard cut) is there at once.
+  return seg ? between(seg, seg.dur > 0 ? (t - seg.at) / seg.dur : 1) : track.base;
 }
 
 /** The track of a layer's camera keys. Keys chain: each takes over from where the camera is at its moment. */

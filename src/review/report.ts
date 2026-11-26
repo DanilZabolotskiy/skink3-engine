@@ -78,6 +78,12 @@ export interface MotionReport {
    * background lives under the zoom. Left out in a shot without zoom keys.
    */
   readonly zooms?: readonly { readonly from: number; readonly to: number; readonly zoomFrom: number; readonly zoomTo: number; readonly driftPx: number }[];
+  /**
+   * A shot with hard cuts (cut): the first frame of each picture after the first. The steps across them are left out
+   * of every number above, and the box the camera stays in is that of the picture in which it is largest. Left out in
+   * a shot without any.
+   */
+  readonly cuts?: readonly number[];
   /** The warnings, worst first. */
   readonly findings: readonly Finding[];
   /** Number of warnings by kind (kinds without any are left out). */
@@ -138,30 +144,36 @@ export function buildReport(series: MotionSeries): MotionReport {
 
   /** The travel of the camera into a frame, in px at depth 0. */
   const cameraStep = (f: number): number => Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * series.camera.zoom[f]!;
+  // A step across a hard cut is no travel of the camera: it is left out of every number of the background.
+  const seam = (f: number): boolean => series.seams !== undefined && series.seams[f] === 1;
   const drift: number[] = [];
-  for (let f = 1; f < series.frames; f++) drift.push(cameraStep(f));
+  for (let f = 1; f < series.frames; f++) if (!seam(f)) drift.push(cameraStep(f));
   const r3 = (v: number): number => Math.round(v * 1000) / 1000;
 
-  // The camera's path: how far it goes, and the box its centre stays in.
+  // The camera's path: how far it goes, and the box its centre stays in; in a shot with cuts, the largest box of
+  // one picture.
   let travel = 0;
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  let zoomSum = 0;
-  for (let f = 0; f < series.frames; f++) {
-    zoomSum += series.camera.zoom[f]!;
-    x0 = Math.min(x0, series.camera.x[f]!);
-    x1 = Math.max(x1, series.camera.x[f]!);
-    y0 = Math.min(y0, series.camera.y[f]!);
-    y1 = Math.max(y1, series.camera.y[f]!);
+  let spanX = 0;
+  let spanY = 0;
+  const bounds = [0, ...(c.cuts ?? []), series.frames];
+  for (let p = 1; p < bounds.length; p++) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let zoomSum = 0;
+    for (let f = bounds[p - 1]!; f < bounds[p]!; f++) {
+      zoomSum += series.camera.zoom[f]!;
+      x0 = Math.min(x0, series.camera.x[f]!);
+      x1 = Math.max(x1, series.camera.x[f]!);
+      y0 = Math.min(y0, series.camera.y[f]!);
+      y1 = Math.max(y1, series.camera.y[f]!);
+    }
+    // The box in px: the camera's range in units at the mean zoom of the picture.
+    const meanZoom = zoomSum / (bounds[p]! - bounds[p - 1]!);
+    spanX = Math.max(spanX, x1 * meanZoom - x0 * meanZoom);
+    spanY = Math.max(spanY, y1 * meanZoom - y0 * meanZoom);
   }
-  // The box in px: the camera's range in units at the mean zoom of the shot.
-  const meanZoom = zoomSum / series.frames;
-  x0 *= meanZoom;
-  x1 *= meanZoom;
-  y0 *= meanZoom;
-  y1 *= meanZoom;
   for (const d of drift) travel += d;
   const sortedDrift = drift.slice().sort((a, b) => a - b);
   const pct = (p: number): number => (sortedDrift.length === 0 ? 0 : sortedDrift[Math.min(sortedDrift.length - 1, Math.floor(p * sortedDrift.length))]!);
@@ -174,6 +186,7 @@ export function buildReport(series: MotionSeries): MotionReport {
       const v = series.views[li]!;
       const steps: number[] = [];
       for (let f = 1; f < series.frames; f++) {
+        if (seam(f)) continue;
         steps.push(
           zoomSegs
             ? Math.hypot(series.camera.x[f]! - series.camera.x[f - 1]!, series.camera.y[f]! - series.camera.y[f - 1]!) * layer.parallax * v.zoom[f]!
@@ -195,7 +208,7 @@ export function buildReport(series: MotionSeries): MotionReport {
       const to = Math.min(last, Math.floor((seg.at + seg.dur) * FPS + 1e-9));
       if (to <= from) continue;
       const steps: number[] = [];
-      for (let f = from + 1; f <= to; f++) steps.push(cameraStep(f));
+      for (let f = from + 1; f <= to; f++) if (!seam(f)) steps.push(cameraStep(f));
       zooms.push({ from, to, zoomFrom: r3(series.camera.zoom[from]!), zoomTo: r3(series.camera.zoom[to]!), driftPx: r3(median(steps)) });
     }
   }
@@ -225,7 +238,7 @@ export function buildReport(series: MotionSeries): MotionReport {
     background = [];
     let start = -1;
     for (let f = 1; f <= series.frames; f++) {
-      const changes = f < series.frames && series.background[f]! >= T.aliveBackground;
+      const changes = f < series.frames && series.background[f]! >= T.aliveBackground && !seam(f);
       if (changes && start < 0) start = f - 1;
       if (!changes && start >= 0) {
         background.push({ from: start, to: f - 1 });
@@ -254,12 +267,13 @@ export function buildReport(series: MotionSeries): MotionReport {
       driftMinPx: r3(pct(0.05)),
       driftMaxPx: r3(pct(0.95)),
       travelPx: r3(travel),
-      spanPx: [r3(Math.max(0, x1 - x0)), r3(Math.max(0, y1 - y0))],
+      spanPx: [r3(Math.max(0, spanX)), r3(Math.max(0, spanY))],
     },
     layers,
     particles,
     ...(background === null ? {} : { background }),
     ...(zooms === null ? {} : { zooms }),
+    ...(c.cuts ? { cuts: [...c.cuts] } : {}),
     findings,
     byKind,
     honoured,
@@ -343,6 +357,7 @@ export function formatMotionReport(report: MotionReport, c: CompiledShot): strin
   lines.push(
     `camera path: ${cam.travelPx.toFixed(0)} px long, inside a box of ${cam.spanPx[0].toFixed(0)} x ${cam.spanPx[1].toFixed(0)} px; drift between ${cam.driftMinPx.toFixed(2)} and ${cam.driftMaxPx.toFixed(2)} px per frame`,
   );
+  if (report.cuts) lines.push(`cuts: ${report.cuts.map((f) => `${seconds(f)} s (frame ${f})`).join(', ')}; each side is judged as a shot of its own, and the numbers here leave the steps across a cut out`);
   if (report.layers.length > 1) lines.push(`layers, farthest first: ${report.layers.map((l) => `${l.id} ${l.driftPx.toFixed(2)}`).join(', ')} px per frame`);
   if (report.particles.length > 0) {
     lines.push(

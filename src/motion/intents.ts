@@ -487,6 +487,22 @@ export interface BlurToKey extends Voiced {
   readonly ramp: number;
 }
 
+/**
+ * A hard cut inside a shot: at the first frame at or after `at` the picture
+ * changes at once, as between two shots. On that frame the keys of the camera,
+ * of the background, of a perspective layer, of a layer's focus and the fades
+ * may take no time (`dur: 0`); the push-in of the camera starts again, springs
+ * start again at rest, and the motion review judges each side of it as a shot
+ * of its own.
+ */
+export interface CutKey {
+  readonly kind: 'cut';
+  /** A cut has no node. */
+  readonly target: null;
+  readonly at: number;
+  readonly sound?: undefined;
+}
+
 /** A sound placed at a moment by hand: on a word, on a cut. It always sounds. */
 export interface SfxKey {
   readonly kind: 'sfx';
@@ -531,6 +547,7 @@ export type Key =
   | DriveKey
   | PerspectiveToKey
   | BlurToKey
+  | CutKey
   | SfxKey;
 
 export class IntentError extends Error {}
@@ -538,6 +555,18 @@ export class IntentError extends Error {}
 function num(where: string, name: string, value: unknown, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
     throw new IntentError(`${where}: ${name} must be a number in ${min}..${max}, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/**
+ * The duration of a key that may take no time at a hard cut: 0 (the key takes its value on the frame of a cut, which
+ * the shot holds it to), or a number of seconds in min..max.
+ */
+function durOrCut(where: string, value: unknown, min: number, max: number): number {
+  if (value === 0) return 0;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new IntentError(`${where}: dur must be a number in ${min}..${max}, or 0 on the frame of a hard cut (cut), got ${JSON.stringify(value)}`);
   }
   return value;
 }
@@ -1007,7 +1036,7 @@ export function fadeTo(id: string, opts: { at: number; to: number; dur?: number;
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, 1),
-    dur: num(w, 'dur', opts.dur ?? 0.5, 0.05, 60),
+    dur: durOrCut(w, opts.dur ?? 0.5, 0.05, 60),
     ...voiced(w, opts),
   };
 }
@@ -1456,12 +1485,33 @@ export function cameraTo(opts: { at: number; dur?: number; zoom?: number; to?: V
     kind: 'cameraTo',
     target: null,
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
+    dur: durOrCut(w, opts.dur ?? 1.2, 0.05, 600),
     ...(opts.zoom === undefined ? {} : { zoom: num(w, 'zoom', opts.zoom, 0.01, 10000) }),
     ...(opts.to === undefined ? {} : { to: point(w, 'to', opts.to) }),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
+}
+
+/**
+ * A hard cut inside one shot: one take of narration over two pictures. At the
+ * first frame at or after `at` the picture changes at once. Keys of the camera
+ * (cameraTo, zoomTo), of the background (backgroundTo), of a perspective layer
+ * (perspectiveTo), of a layer's focus (blurTo) and fades (fadeTo) may take no
+ * time on that frame (`dur: 0`): the second picture is there whole. The
+ * push-in of the camera starts again from its `from`, springs start again at
+ * rest, keys of the camera's speed may step there, and the motion review
+ * judges each side as a shot of its own: nothing that changes across the cut
+ * is a jump or an abrupt start or stop. A cut makes no sound.
+ *
+ *   cut({ at: 4.2 }), cameraTo({ at: 4.2, dur: 0, zoom: 3, to: [600, 0] }), fadeTo('room', { at: 4.2, to: 0, dur: 0 })
+ */
+export function cut(opts: { at: number }): CutKey {
+  const w = 'cut';
+  only(w, opts, ['at']);
+  const at = num(w, 'at', opts.at, 0, MAX_T);
+  if (at <= 0) throw new IntentError(`${w}: at must be after the start of the shot; a shot starts with its first picture`);
+  return { kind: 'cut', target: null, at };
 }
 
 /**
@@ -1490,7 +1540,7 @@ export function zoomTo(opts: { at: number; to: number; dur?: number; profile?: E
     kind: 'zoomTo',
     target: null,
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    dur: num(w, 'dur', opts.dur ?? 3, 0.05, 600),
+    dur: durOrCut(w, opts.dur ?? 3, 0.05, 600),
     to: num(w, 'to', opts.to, 0.01, 10000),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
@@ -1714,7 +1764,7 @@ export function perspectiveTo(
     target: null,
     layer: layerId,
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    dur: num(w, 'dur', opts.dur ?? 1.6, 0.05, 600),
+    dur: durOrCut(w, opts.dur ?? 1.6, 0.05, 600),
     ...(opts.aim === undefined ? {} : { aim: [num(w, 'aim[0]', opts.aim[0], -1e6, 1e6), num(w, 'aim[1]', opts.aim[1], -1e6, 1e6), num(w, 'aim[2]', opts.aim[2], -1e6, 1e6)] as Vec3 }),
     ...(opts.distance === undefined ? {} : { distance: num(w, 'distance', opts.distance, 1, 1e6) }),
     ...(opts.tilt === undefined ? {} : { tilt: num(w, 'tilt', opts.tilt, -90, 90) }),
@@ -1749,7 +1799,7 @@ export function blurTo(
     layer: layerId,
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, 200),
-    dur: num(w, 'dur', opts.dur ?? 1.2, 0.05, 600),
+    dur: durOrCut(w, opts.dur ?? 1.2, 0.05, 600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
@@ -1797,8 +1847,8 @@ export function backgroundTo(opts: {
     kind: 'backgroundTo',
     target: null,
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
-    // A tenth of a second at least: a background does not change within a frame.
-    dur: num(w, 'dur', opts.dur ?? 2, 0.1, 600),
+    // A tenth of a second at least: a background does not change within a frame, unless at a hard cut.
+    dur: durOrCut(w, opts.dur ?? 2, 0.1, 600),
     ...(opts.inner === undefined ? {} : { inner: ref('inner') }),
     ...(opts.outer === undefined ? {} : { outer: ref('outer') }),
     ...(opts.center === undefined ? {} : { center: point(w, 'center', opts.center) }),

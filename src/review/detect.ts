@@ -26,6 +26,10 @@
 // largest change of a channel of its colour in one frame: a colour has no
 // place and no speed to start or stop with.
 //
+// A layer of a globe whose opacity or fill is keyed (fadeTo, fillTo on its
+// id) is judged as a shape's opacity and fill are, for a jump, while its globe
+// is seen and some of the layer faces the viewer.
+//
 // A layer whose focus is pulled (blurTo) is judged under the subject
 // "(focus:<layer id>)", for a jump and for a start or a stop without an ease,
 // on how far its blur radius changes in a frame: the travel of a blurred edge
@@ -59,6 +63,12 @@
 // the space of its parent (a label: relative to its target). A defect of a
 // parent is therefore reported once, on the parent, and not again on
 // everything it carries.
+//
+// A hard cut (cut) is a seam: the step from the frame before it to its frame
+// is no motion of anything, so nothing is judged across it, and each side is
+// judged as a shot of its own, as the ends of a shot are: a move that runs
+// into the cut, or out of it, is a flow, and a run of strobing frames ends
+// there.
 
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
@@ -70,7 +80,7 @@ import { CAMERA_SUBJECT, STAGE_H, STAGE_W, type MotionFindingKind } from '../sce
 import { globeTurn } from '../scene/globe.ts';
 import { restForms } from '../scene/outline.ts';
 import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
-import { IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
+import { atSeam, IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
 export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold' | 'focus';
@@ -198,6 +208,8 @@ function ownSteps(series: MotionSeries, s: PlacedSeries, st: Steps): void {
     seen[f] = visibleAt(s, f - 1) && visibleAt(s, f) ? 1 : 0;
     faintless[f] = s.alpha[f - 1]! >= T.visibleAlpha || s.alpha[f]! >= T.visibleAlpha ? 1 : 0;
     inFrame[f] = ((s.flags[f - 1]! | s.flags[f]!) & IN_FRAME) !== 0 ? 1 : 0;
+    // A step across a hard cut is not seen: each side of the cut is judged on its own.
+    if (atSeam(series, f)) seen[f] = faintless[f] = inFrame[f] = 0;
     const u = s.unit[f]!;
     const a = (s.ownX[f]! - s.ownX[f - 1]!) * u;
     const b = (s.ownY[f]! - s.ownY[f - 1]!) * u;
@@ -561,7 +573,7 @@ function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out:
   for (let f = 1; f < F; f++) {
     let ratio = 0;
     let step = 0;
-    if (visibleAt(s, f - 1) && visibleAt(s, f) && (s.flags[f]! & IN_FRAME) !== 0) {
+    if (visibleAt(s, f - 1) && visibleAt(s, f) && (s.flags[f]! & IN_FRAME) !== 0 && !atSeam(series, f)) {
       const dx = rel.dx[f]!;
       const dy = rel.dy[f]!;
       step = Math.hypot(dx, dy);
@@ -587,7 +599,7 @@ function tooFast(series: MotionSeries, s: PlacedSeries, ownLargest: number, out:
     let j = i;
     let frames = runs[i]!.to - runs[i]!.from + 1;
     let best = runs[i]!;
-    while (j + 1 < runs.length && runs[j + 1]!.from - runs[j]!.to <= FPS / 2) {
+    while (j + 1 < runs.length && runs[j + 1]!.from - runs[j]!.to <= FPS / 2 && !seamBetween(series, runs[j]!.to, runs[j + 1]!.from)) {
       j++;
       frames += runs[j]!.to - runs[j]!.from + 1;
       if (runs[j]!.peak > best.peak) best = runs[j]!;
@@ -621,6 +633,21 @@ function widthSteps(width: Float32Array, zoom: ArrayLike<number>, frames: number
 }
 
 // --- Everything on placed nodes, links, emitters and the camera -----------------------------------
+
+/** The steps that may be judged when everything is seen: all but the first and those across a hard cut. */
+function seamless(series: MotionSeries): Uint8Array {
+  const all = new Uint8Array(series.frames).fill(1);
+  all[0] = 0;
+  if (series.seams) for (let f = 1; f < series.frames; f++) if (series.seams[f]) all[f] = 0;
+  return all;
+}
+
+/** True when a hard cut falls after frame a and at or before frame b. */
+export function seamBetween(series: MotionSeries, a: number, b: number): boolean {
+  if (!series.seams) return false;
+  for (let f = a + 1; f <= b; f++) if (series.seams[f]) return true;
+  return false;
+}
 
 /** A colour that pops: the fill of a shape, or the colour of a line, changed a channel by `step` of its range in frame f. */
 function colourJump(subject: string, line: boolean, f: number, step: number): Finding {
@@ -779,7 +806,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
     const from = series.placed[n.fromIndex]!;
     const to = series.placed[n.toIndex]!;
     for (let f = 1; f < F; f++) {
-      if (((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) === 0) continue;
+      if (((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) === 0 || atSeam(series, f)) continue;
       const step = Math.abs(l.presence[f]! - l.presence[f - 1]!);
       if (step < T.jumpOpacity) continue;
       // An end node that pops is reported on that node.
@@ -793,7 +820,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
     if (l.fill) {
       const zoom = series.views[n.layer]!.zoom;
       for (let f = 1; f < F; f++) {
-        if (l.presence[f - 1]! < T.visibleAlpha || l.presence[f]! < T.visibleAlpha || ((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) === 0) continue;
+        if (l.presence[f - 1]! < T.visibleAlpha || l.presence[f]! < T.visibleAlpha || ((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) === 0 || atSeam(series, f)) continue;
         if (Math.max(l.half[f - 1]!, l.half[f]!) * zoom[f]! < T.minRadiusPx) continue;
         const step = l.fill[f]!;
         if (step >= T.jumpFill) out.push(colourJump(l.id, true, f, step));
@@ -806,7 +833,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
       const inFrame = new Uint8Array(F);
       const ok = new Uint8Array(F);
       for (let f = 1; f < F; f++) {
-        seen[f] = l.presence[f - 1]! >= T.visibleAlpha && l.presence[f]! >= T.visibleAlpha ? 1 : 0;
+        seen[f] = l.presence[f - 1]! >= T.visibleAlpha && l.presence[f]! >= T.visibleAlpha && !atSeam(series, f) ? 1 : 0;
         inFrame[f] = ((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) !== 0 ? 1 : 0;
         ok[f] = seen[f] && inFrame[f] ? 1 : 0;
       }
@@ -853,11 +880,26 @@ export function detectMotion(series: MotionSeries): Finding[] {
     }
   }
 
+  // The keyed layers of globes: a pop of the opacity or of the fill, while the layer is seen.
+  for (const g of series.globeLayers ?? []) {
+    for (let f = 1; f < F; f++) {
+      if (!(g.seen[f] || g.seen[f - 1]) || atSeam(series, f)) continue;
+      const step = Math.abs(g.alpha[f]! - g.alpha[f - 1]!);
+      if (step >= T.jumpOpacity && Math.max(g.alpha[f - 1]!, g.alpha[f]!) >= T.jumpOpacity) {
+        out.push(
+          finding('jump', g.id, 'opacity', f - 1, f, step, T.jumpOpacity, 'opacity in one frame',
+            `opacity: the layer of the globe "${g.node.id}" changed by ${step.toFixed(2)} between frames ${f - 1} and ${f} (from ${g.alpha[f - 1]!.toFixed(2)} to ${g.alpha[f]!.toFixed(2)})`),
+        );
+      }
+      if (g.fill[f]! >= T.jumpFill) out.push(colourJump(g.id, false, f, g.fill[f]!));
+    }
+  }
+
   // Emitters: their particles fade as one picture: a third of full opacity in one frame, while some are seen, is a pop.
   for (const e of series.emitters) {
     if (!e.alpha) continue;
     for (let f = 1; f < F; f++) {
-      if (e.count[f - 1]! === 0 && e.count[f]! === 0) continue;
+      if ((e.count[f - 1]! === 0 && e.count[f]! === 0) || atSeam(series, f)) continue;
       const step = Math.abs(e.alpha[f]! - e.alpha[f - 1]!);
       if (step < T.jumpOpacity || Math.max(e.alpha[f - 1]!, e.alpha[f]!) < T.jumpOpacity) continue;
       out.push(
@@ -875,8 +917,8 @@ export function detectMotion(series: MotionSeries): Finding[] {
     for (let f = 0; f < F; f++) {
       const hot = e.count[f]! >= T.fastMinParticles && e.fast[f]! / e.count[f]! >= T.fastParticleShare;
       if (hot) {
-        // Runs half a second apart are one stream.
-        if (start >= 0 && f - last > FPS / 2) {
+        // Runs half a second apart are one stream; a hard cut between them parts them.
+        if (start >= 0 && (f - last > FPS / 2 || seamBetween(series, last, f))) {
           runs.push([start, last]);
           start = f;
         }
@@ -916,8 +958,10 @@ export function detectMotion(series: MotionSeries): Finding[] {
     let start = -1;
     for (let f = 0; f <= F; f++) {
       const hot = f < F && h.amount[f]! >= T.hazeMinPx && h.step[f]! >= T.fastMinPx;
+      // A hard cut ends a run: the run after it starts on its frame.
+      const cut = f < F && atSeam(series, f);
       if (hot && start < 0) start = f;
-      if (!hot && start >= 0) {
+      if ((!hot || cut) && start >= 0 && !(cut && start === f)) {
         if (f - start >= T.fastFrames) {
           const step = h.step[Math.floor((start + f - 1) / 2)]!;
           out.push(
@@ -925,17 +969,17 @@ export function detectMotion(series: MotionSeries): Finding[] {
               `its finer ripples drift ${h.ratio.toFixed(2)} of their own size per frame (${step.toFixed(1)} px): the haze strobes; give it a lower speed or a larger scale`),
           );
         }
-        start = -1;
+        start = cut && hot ? f : -1;
       }
     }
   }
 
   // The camera: jumps and abrupt starts and stops. Its steady drift is a flow.
+  // Across a hard cut it jumps by design: the steps across one are not judged.
   {
     const pos = chan('position', F);
     const scl = chan('scale', F);
-    const all = new Uint8Array(F).fill(1);
-    all[0] = 0;
+    const all = seamless(series);
     for (let f = 1; f < F; f++) {
       const z = series.camera.zoom[f]!;
       pos.a[f] = (series.camera.x[f]! - series.camera.x[f - 1]!) * z;
@@ -959,8 +1003,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
     const pos = chan('position', F);
     const rot = chan('rotation', F);
     const scl = chan('scale', F);
-    const all = new Uint8Array(F).fill(1);
-    all[0] = 0;
+    const all = seamless(series);
     for (let f = 1; f < F; f++) {
       pos.a[f] = p.slideX[f]!;
       pos.b[f] = p.slideY[f]!;
@@ -983,8 +1026,7 @@ export function detectMotion(series: MotionSeries): Finding[] {
   // A pull of focus: how far the blur radius of its layer changes in a frame.
   for (const p of series.focus ?? []) {
     const ch = chan('focus', F);
-    const all = new Uint8Array(F).fill(1);
-    all[0] = 0;
+    const all = seamless(series);
     for (let f = 1; f < F; f++) {
       ch.a[f] = p.step[f]!;
       ch.d[f] = Math.abs(ch.a[f]!);

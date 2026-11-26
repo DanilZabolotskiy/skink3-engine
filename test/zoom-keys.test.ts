@@ -82,7 +82,7 @@ test('zoom keys: zoomTo is a key of the timeline without a node, and it refuses 
   bad({ at: 1, to: 2, zoom: 2 }, /zoomTo: unknown option "zoom" \(allowed: at, to, dur, profile, ramp\)/);
   bad({ at: 1, to: 2, sound: 'chime' }, /zoomTo: unknown option "sound"/);
   bad({ at: 1, to: 0 }, /to must be a number in 0\.01\.\.10000/);
-  bad({ at: 1, to: 2, dur: 0 }, /dur must be a number in 0\.05\.\.600/);
+  bad({ at: 1, to: 2, dur: 0.01 }, /dur must be a number in 0\.05\.\.600/); // 0 is taken on the frame of a hard cut (test/cut.test.ts)
   bad({ at: 1, to: 2, profile: 'settle' }, /profile must be one of ease, steady, in, out/);
   bad({ at: 1, to: 2, profile: 'steady', ramp: 0.2 }, /ramp applies to the profiles ease, in and out/);
   assert.throws(() => make([zoomTo({ at: 7, to: 2 })]), /zoomTo starts at 7 s, after the shot ends \(6 s\)/);

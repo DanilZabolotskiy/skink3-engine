@@ -575,6 +575,11 @@ export interface ShapeItem {
   readonly fill?: string;
   /** A globe: the moment, in seconds, its turn and the drift of its layers are drawn at. Left out: any other shape. */
   readonly globeAt?: number;
+  /**
+   * A globe whose layers are keyed (fadeTo, fillTo on a layer's id): for each layer its opacity and its fill
+   * (#RRGGBB) at this frame, or null for a layer drawn as it was given. Left out: a globe without keyed layers.
+   */
+  readonly globeLayers?: readonly ({ readonly opacity: number; readonly fill: string } | null)[];
   /** A body that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
   readonly foot?: Foot;
   /**
@@ -1067,6 +1072,13 @@ function hazeAt(n: CNode, xf: Xf, t: number): Omit<HazeItem, 'before'> | null {
 export function awaitsRelease(n: CNode, t: number): boolean {
   const node = n.node;
   return node.type === 'shape' && node.body !== null && node.body.kind === 'dynamic' && node.body.appear === 'release' && t < node.body.release - 1e-9;
+}
+
+/** The opacity and the fill of the keyed layers of a globe at time t; nothing for a globe whose layers are not keyed. */
+export function globeLayersAt(n: CNode, t: number): { globeLayers?: readonly ({ readonly opacity: number; readonly fill: string } | null)[] } {
+  const keyed = n.globeLayers;
+  if (!keyed) return {};
+  return { globeLayers: keyed.map((g, k) => (g ? { opacity: sampleOpacity(g.opacity, t), fill: g.fill ? sampleFill(g.fill, t) : n.colors[`globe.layer${k}`]! } : null)) };
 }
 
 /** How far a blink leaves an eye open at time t: 1 between blinks. */
@@ -2088,7 +2100,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t } : {}) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t, ...globeLayersAt(n, t) } : {}) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;

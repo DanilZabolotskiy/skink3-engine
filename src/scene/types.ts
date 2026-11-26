@@ -199,6 +199,11 @@ export interface GlobeSpec {
 /** A layer of a globe's surface: rings filled at once. */
 export interface GlobeLayerSpec {
   /**
+   * An id, unique among the ids of the shot: fadeTo and fillTo then key the layer's opacity and fill over time. Left
+   * out: the layer keeps the opacity and the fill it was given.
+   */
+  readonly id?: string;
+  /**
    * Each ring as points x, y, z on the unit sphere in turn (x toward 0° E on the equator, z north), dense enough to be
    * joined straight, running counter-clockwise round its smaller side, seen from outside.
    */

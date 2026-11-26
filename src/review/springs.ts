@@ -3,8 +3,8 @@
 // spring) and ends when it is back within half a pixel of it.
 
 import { FPS } from '../core/time.ts';
-import { finding, type Finding } from './detect.ts';
-import { visibleAt, type MotionSeries, type SpringSeries } from './series.ts';
+import { finding, seamBetween, type Finding } from './detect.ts';
+import { atSeam, visibleAt, type MotionSeries, type SpringSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
 export interface SpringResponse {
@@ -53,7 +53,8 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
     ex[f] = (s.x[f]! - s.restX[f]!) * zoom[f]!;
     ey[f] = (s.y[f]! - s.restY[f]!) * zoom[f]!;
     mag[f] = Math.hypot(ex[f]!, ey[f]!);
-    if (f > 0) target[f] = Math.hypot(s.restX[f]! - s.restX[f - 1]!, s.restY[f]! - s.restY[f - 1]!) * zoom[f]!;
+    // Across a hard cut the target moves by no motion: the spring starts again at rest there.
+    if (f > 0 && !atSeam(series, f)) target[f] = Math.hypot(s.restX[f]! - s.restX[f - 1]!, s.restY[f]! - s.restY[f - 1]!) * zoom[f]!;
   }
 
   // Stretches away from the rest place, joined across the short quiet of a zero crossing.
@@ -62,7 +63,7 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
   let last = -1;
   for (let f = 0; f < F; f++) {
     if (mag[f]! < T.springSettlePx) continue;
-    if (start >= 0 && f - last > MERGE_GAP) {
+    if (start >= 0 && (f - last > MERGE_GAP || seamBetween(series, last, f))) {
       spans.push([start, last]);
       start = -1;
     }
@@ -103,7 +104,8 @@ function analyse(series: MotionSeries, s: SpringSeries, findings: Finding[]): Sp
     const targetRests = stopped < b - 1;
     // While the target still moves, the spring is driven; its free swings are those that follow.
     const visible = lobes.slice(1).filter((l) => l.peak >= T.springVisiblePx && (!targetRests || l.at > stopped));
-    const cut = b >= F - 1;
+    // A response that the end of the shot, or a hard cut, cuts short is not judged for how it settles.
+    const cut = b >= F - 1 || atSeam(series, b + 1);
     const lastSwing = visible.length > 0 ? visible[visible.length - 1]!.at : null;
     const ring = !targetRests ? null : lastSwing === null ? 0 : Math.max(0, lastSwing - stopped) / FPS;
     const settle = targetRests && !cut ? (b - stopped) / FPS : null;

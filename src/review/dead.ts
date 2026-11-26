@@ -5,7 +5,7 @@
 // turns, grows, fades, blinks or changes its outline, a pulse runs along a link, a link or a stroke
 // is being drawn, the dashes of a stroke close, a light runs along a stroke, a
 // link sags or pulls taut, a link or a stroke grows thick or thins, a shape
-// changes its fill, a particle travels, a heat haze moves the picture under
+// changes its fill, a keyed layer of a globe fades or changes its fill, a particle travels, a heat haze moves the picture under
 // it, or the background itself changes (which is seen everywhere). The camera is left out on purpose: its
 // drift slides the whole picture, and a picture that only slides is still a
 // hold. The camera of a perspective layer is left out in the same way: a
@@ -14,12 +14,17 @@
 //
 // The frame is cut into a grid of 3 x 2 regions. A thing is counted in every
 // region that the circle around it touches, which errs toward "alive".
+//
+// A hard cut (cut) is no life: what changes across it changes at once, by
+// design. Each side of it is judged as a shot of its own, so a hold ends at the
+// cut, and the first frame after it takes the value of the second, as the
+// first frame of the shot does.
 
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { FRAME_REGIONS, FRAME_SUBJECT } from '../scene/types.ts';
 import { finding, type Finding } from './detect.ts';
-import { DRAWN, REGION_COLS, REGION_ROWS, regionsOf, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
+import { atSeam, DRAWN, REGION_COLS, REGION_ROWS, regionsOf, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
 const REGIONS = REGION_COLS * REGION_ROWS;
@@ -119,11 +124,25 @@ export function aliveRegions(series: MotionSeries): Uint8Array {
   for (const h of series.hazes ?? []) {
     for (let f = 1; f < F; f++) alive[f] = alive[f]! | h.regions[f]!;
   }
+  // A keyed layer of a globe lives where its globe is, while it changes visibly and is seen.
+  for (const g of series.globeLayers ?? []) {
+    const s = series.placed[g.node.index]!;
+    const view = series.views[g.node.layer]!;
+    const node = g.node.node;
+    const r = node.type === 'shape' && node.shape.kind === 'circle' ? node.shape.r : 1;
+    for (let f = 1; f < F; f++) {
+      if (!g.seen[f] || (Math.abs(g.alpha[f]! - g.alpha[f - 1]!) < T.aliveOpacity && g.fill[f]! < T.aliveFill)) continue;
+      const zoom = view.zoom[f]!;
+      alive[f] = alive[f]! | regionsOf(s.x[f]! * zoom + view.tx[f]!, s.y[f]! * zoom + view.ty[f]!, r * s.scale[f]! * zoom);
+    }
+  }
   // A background that changes is seen in every part of the frame.
   if (series.background) {
     for (let f = 1; f < F; f++) if (series.background[f]! >= T.aliveBackground) alive[f] = (1 << REGIONS) - 1;
   }
   if (F > 1) alive[0] = alive[1]!;
+  // Across a hard cut nothing is alive by changing: the first frame of a picture takes the value of its second.
+  if (series.seams) for (let f = 1; f < F; f++) if (series.seams[f]) alive[f] = f + 1 < F && !series.seams[f + 1] ? alive[f + 1]! : 0;
   return alive;
 }
 
@@ -137,6 +156,11 @@ export function detectDead(series: MotionSeries): Finding[] {
     let start = -1;
     for (let f = 0; f <= F; f++) {
       const dead = f < F && (alive[f]! & mask) === 0;
+      // A hard cut ends a hold: the picture after it is judged on its own.
+      if (start >= 0 && f < F && atSeam(series, f)) {
+        if ((f - start) / FPS > limit) runs.push([start, f - 1]);
+        start = -1;
+      }
       if (dead && start < 0) start = f;
       if (!dead && start >= 0) {
         if ((f - start) / FPS > limit) runs.push([start, f - 1]);

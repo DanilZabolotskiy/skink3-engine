@@ -88,12 +88,14 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
   const lastRest: Vec2[] = new Array<Vec2>(nSprings).fill([0, 0]);
   /** Swaying sticks: the lean the spring was following at the previous frame. */
   const swayTarget = new Float64Array(nSprings);
+  // A hard cut starts every spring again at rest: the picture after it is a shot of its own.
+  const cuts = new Set(c.cuts ?? []);
   const stepping: PoseSource = {
     body: bodyPose,
     spring: (slot, frame, rest) => {
       let sys = systems[slot];
       let value: Vec2;
-      if (!sys) {
+      if (!sys || cuts.has(frame)) {
         sys = new SecondOrder(c.nodes[c.springs[slot]!]!.springParams!, rest);
         systems[slot] = sys;
         value = rest;
@@ -126,7 +128,7 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
       const tip: Vec2 = [pivot[0] + Math.cos(rest) * lever, pivot[1] + Math.sin(rest) * lever];
       let sys = systems[slot];
       let lean = 0;
-      if (!sys || !shown) {
+      if (!sys || !shown || cuts.has(frame)) {
         // At rest at the start, and while the stick has no size: what happens unseen leaves no swing behind.
         sys = new SecondOrder(params, [0]);
         systems[slot] = sys;

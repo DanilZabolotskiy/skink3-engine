@@ -52,6 +52,11 @@ export interface CameraTrack {
   readonly segs: readonly CameraSeg[];
   /** The zoom keys (zoomTo). Left out in a shot without any. */
   readonly zooms?: readonly ZoomSeg[];
+  /**
+   * The frames of the hard cuts of the shot (cut), in order: the first frame of each picture after the first. The
+   * push-in starts again from its `from` at each, at the speed it has over the shot. Left out in a shot without any.
+   */
+  readonly cuts?: readonly number[];
 }
 
 /** Where the drift, or the path, has carried the camera from its first place by a frame (which may fall between two frames). */
@@ -105,7 +110,8 @@ export function cameraKeyed(spec: CameraSpec, track: CameraTrack, frame: number,
     const b = carried(spec, frame, frames);
     return { zoom: 1, x: o[0] + b[0], y: o[1] + b[1] };
   }
-  const u = (t - seg.at) / seg.dur;
+  // A key of no time (at a hard cut) is there at once.
+  const u = seg.dur > 0 ? (t - seg.at) / seg.dur : 1;
   if (u >= 1) {
     const now = carried(spec, frame, frames);
     const then = carried(spec, (seg.at + seg.dur) * FPS, frames);
@@ -134,7 +140,7 @@ export function zoomKeyed(zooms: readonly ZoomSeg[], t: number): number {
     else break;
   }
   if (!seg) return 1;
-  const u = (t - seg.at) / seg.dur;
+  const u = seg.dur > 0 ? (t - seg.at) / seg.dur : 1;
   if (u >= 1) return seg.to;
   const [a, b] = profileRamps(seg.profile, seg.ramp);
   return seg.from * (seg.to / seg.from) ** rampProgress(Math.max(0, u), a, b);
@@ -145,19 +151,37 @@ export function zoomKeyed(zooms: readonly ZoomSeg[], t: number): number {
  * a camera key takes over from where the camera is at its moment, a zoom key
  * from the zoom the zoom keys have reached at its moment.
  */
-export function buildCameraTrack(spec: CameraSpec, frames: number, keys: readonly CameraToKey[], zoomKeys: readonly ZoomToKey[] = []): CameraTrack {
+export function buildCameraTrack(spec: CameraSpec, frames: number, keys: readonly CameraToKey[], zoomKeys: readonly ZoomToKey[] = [], cuts: readonly number[] = []): CameraTrack {
   const segs: CameraSeg[] = [];
   for (const k of keys.slice().sort((p, q) => p.at - q.at)) {
     const now = cameraKeyed(spec, { segs }, k.at * FPS, frames);
     segs.push({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, zoomFrom: now.zoom, zoomTo: k.zoom ?? now.zoom, from: [now.x, now.y], to: k.to ?? [now.x, now.y] });
   }
-  // A shot without zoom keys has the track it always had.
-  if (zoomKeys.length === 0) return { segs };
+  // A shot without zoom keys and cuts has the track it always had.
+  const parts = cuts.length === 0 ? {} : { cuts: [...cuts] };
+  if (zoomKeys.length === 0) return { segs, ...parts };
   const zooms: ZoomSeg[] = [];
   for (const k of zoomKeys.slice().sort((p, q) => p.at - q.at)) {
     zooms.push({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, from: zoomKeyed(zooms, k.at), to: k.to });
   }
-  return { segs, zooms };
+  return { segs, zooms, ...parts };
+}
+
+/**
+ * The picture a frame belongs to in a shot with hard cuts: its first frame and the frame after its last. Without
+ * cuts, the whole shot.
+ */
+export function cutPart(cuts: readonly number[] | undefined, frame: number, frames: number): { from: number; to: number } {
+  let from = 0;
+  let to = frames;
+  for (const f of cuts ?? []) {
+    if (f <= frame) from = f;
+    else {
+      to = f;
+      break;
+    }
+  }
+  return { from, to };
 }
 
 /**
@@ -212,7 +236,10 @@ export function cameraAt(spec: CameraSpec, noise: Noise, frame: number, frames: 
   // Two decorrelated noise lines; the vertical wander is smaller than the horizontal one.
   const wx = spec.drift.wander * noise.n1(t / spec.drift.period + 3.1);
   const wy = spec.drift.wander * 0.6 * noise.n1(t / spec.drift.period + 57.9);
-  const u = frames > 1 ? frame / (frames - 1) : 0;
+  let u = frames > 1 ? frame / (frames - 1) : 0;
+  // A hard cut starts the push-in again from `from`, at the speed it has over the shot: what comes before the cut is
+  // as it would be without it.
+  if (track?.cuts && frames > 1) u = (frame - cutPart(track.cuts, frame, frames).from) / (frames - 1);
   // Exponential interpolation: the push-in has a constant apparent speed.
   const zoom = spec.pushIn.from * (spec.pushIn.to / spec.pushIn.from) ** u;
   // The zoom keys: a factor of the zoom, on top of whatever places the view.

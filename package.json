@@ -27,7 +27,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test",
-    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts && node bin/skink3.mjs check examples/flow/scene.ts && node bin/skink3.mjs check examples/atlas/scene.ts && node bin/skink3.mjs check examples/drive/scene.ts && node bin/skink3.mjs check examples/space/scene.ts && node bin/skink3.mjs check examples/air/scene.ts && node bin/skink3.mjs check examples/town/scene.ts && node bin/skink3.mjs check examples/globe/scene.ts && node bin/skink3.mjs check examples/world/scene.ts && node bin/skink3.mjs check examples/world/country.ts",
+    "check": "tsc --noEmit && node --test && node bin/skink3.mjs check examples/demo/scene.ts && node bin/skink3.mjs check examples/flow/scene.ts && node bin/skink3.mjs check examples/atlas/scene.ts && node bin/skink3.mjs check examples/drive/scene.ts && node bin/skink3.mjs check examples/space/scene.ts && node bin/skink3.mjs check examples/air/scene.ts && node bin/skink3.mjs check examples/town/scene.ts && node bin/skink3.mjs check examples/globe/scene.ts && node bin/skink3.mjs check examples/world/scene.ts && node bin/skink3.mjs check examples/world/country.ts && node bin/skink3.mjs check examples/cut/scene.ts && node bin/skink3.mjs check examples/bands/scene.ts",
     "demo:check": "node bin/skink3.mjs check examples/demo/scene.ts",
     "demo:bake": "node bin/skink3.mjs bake examples/demo/scene.ts",
     "demo:still": "node bin/skink3.mjs still examples/demo/scene.ts --frame 450",

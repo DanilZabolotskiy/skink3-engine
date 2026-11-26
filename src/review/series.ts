@@ -41,7 +41,7 @@ import {
   type PoseSource,
 } from '../scene/evaluate.ts';
 import { formAt, formStep } from '../scene/form.ts';
-import { globeSpins, globeTurn } from '../scene/globe.ts';
+import { globeSpins, globeTurn, globeView, visibleRings } from '../scene/globe.ts';
 import { outlineTravel, restForms } from '../scene/outline.ts';
 import { eyeOf, perspAt, project } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type GroupNode } from '../scene/types.ts';
@@ -226,6 +226,26 @@ export interface PerspectiveSeries {
   readonly grow: Float32Array;
 }
 
+/**
+ * A layer of a globe whose opacity or fill is keyed (fadeTo, fillTo on the layer's id): its opacity, how far its fill
+ * changes, and whether it is seen, frame by frame.
+ */
+export interface GlobeLayerSeries {
+  /** The globe, the id of the layer and its place among the globe's layers. */
+  readonly node: CNode;
+  readonly id: string;
+  readonly layer: number;
+  /** The layer's own opacity at every frame. */
+  readonly alpha: Float32Array;
+  /** How far its fill changes from the frame before to each frame, as a share of the range of a channel. */
+  readonly fill: Float32Array;
+  /**
+   * 1 at a frame at which the layer changes and is seen: its globe is drawn, in frame and large enough to judge, and
+   * some of the layer faces the viewer. At a frame at which it does not change it is not looked at, and is 0.
+   */
+  readonly seen: Uint8Array;
+}
+
 /** A layer whose focus is pulled (blurTo): how its blur changes from the frame before to each frame. */
 export interface FocusSeries {
   /** Index of the layer in the shot, and its id. */
@@ -269,6 +289,18 @@ export interface MotionSeries {
   readonly hazes?: readonly HazeSeries[];
   /** The layers whose focus is pulled. Left out in a shot without one. */
   readonly focus?: readonly FocusSeries[];
+  /** The keyed layers of globes. Left out in a shot without one. */
+  readonly globeLayers?: readonly GlobeLayerSeries[];
+  /**
+   * A shot with hard cuts (cut): 1 at the first frame of each picture after the first, where the step from the frame
+   * before is a cut, not a motion. Each side of it is judged as a shot of its own. Left out in a shot without any.
+   */
+  readonly seams?: Uint8Array;
+}
+
+/** True when the step from frame f - 1 to frame f is a hard cut. */
+export function atSeam(series: MotionSeries, f: number): boolean {
+  return series.seams !== undefined && series.seams[f] === 1;
 }
 
 export interface SampleOptions {
@@ -1001,7 +1033,36 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     for (let f = 1; f < frames; f++) step[f] = (sampleRise(layer.focus, f / FPS) - sampleRise(layer.focus, (f - 1) / FPS)) * views[li]!.zoom[f]!;
     focus.push({ layer: li, id: layer.spec.id, step });
   });
-  const more = { ...(perspectives.length > 0 ? { perspectives } : {}), ...(hazes.length > 0 ? { hazes } : {}), ...(focus.length > 0 ? { focus } : {}) };
+  // The keyed layers of globes: their opacity, the change of their fill, and whether they are seen while they change.
+  const globeLayers: GlobeLayerSeries[] = [];
+  for (const n of c.nodes) {
+    const s = placed[n.index];
+    if (!n.globeLayers || !s || n.node.type !== 'shape' || !n.node.globe) continue;
+    const spec = n.node.globe;
+    const r = n.node.shape.kind === 'circle' ? n.node.shape.r : 1;
+    n.globeLayers.forEach((g, k) => {
+      if (!g) return;
+      const layer = spec.layers[k]!;
+      const series: GlobeLayerSeries = { node: n, id: g.id, layer: k, alpha: f32(), fill: f32(), seen: new Uint8Array(frames) };
+      for (let f = 0; f < frames; f++) {
+        const t = f / FPS;
+        series.alpha[f] = sampleOpacity(g.opacity, t);
+        if (f > 0 && g.fill) series.fill[f] = fillStep(g.fill, (f - 1) / FPS, t);
+        const changes = f > 0 && (series.alpha[f] !== series.alpha[f - 1] || series.fill[f]! > 0);
+        if (!changes || !visibleAt(s, f) || (s.flags[f]! & IN_FRAME) === 0) continue;
+        if (r * s.scale[f]! * views[n.layer]!.zoom[f]! < T.minRadiusPx) continue;
+        series.seen[f] = visibleRings(layer.rings, layer.holes, globeView(spec, t, layer.drift), r).length > 0 ? 1 : 0;
+      }
+      globeLayers.push(series);
+    });
+  }
+  // The hard cuts: a step from frame f - 1 to frame f that crosses one is no motion of anything.
+  let seams: Uint8Array | null = null;
+  if (c.cuts) {
+    seams = new Uint8Array(frames);
+    for (const f of c.cuts) seams[f] = 1;
+  }
+  const more = { ...(perspectives.length > 0 ? { perspectives } : {}), ...(hazes.length > 0 ? { hazes } : {}), ...(focus.length > 0 ? { focus } : {}), ...(seams ? { seams } : {}), ...(globeLayers.length > 0 ? { globeLayers } : {}) };
 
   if (c.backgroundTrack) {
     const background = f32();
