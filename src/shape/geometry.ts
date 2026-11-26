@@ -24,6 +24,8 @@ export interface CapsuleSpec {
 
 export interface PolygonSpec {
   readonly kind: 'polygon';
+  /** Independent straight-edged contours of a flat fill. Its points are their common bounding rectangle. */
+  readonly rings?: readonly (readonly Vec2[])[];
   /** Outer corners of a convex polygon, before rounding. For a region: the points its outline runs through, clockwise on screen. */
   readonly points: readonly Vec2[];
   /** Corner radius. 0 for a region. */
@@ -516,14 +518,54 @@ export function cornerOutline(spec: ShapeSpec): readonly Vec2[] {
 
 const outlineCache = new WeakMap<ShapeSpec, Vec2[]>();
 
+/** The same vertices as the flat outline, partitioned for shapes with multiple closed contours. */
+interface CompoundOutline extends Array<Vec2> {
+  readonly rings: readonly (readonly Vec2[])[];
+}
+
+function compound(rings: readonly (readonly Vec2[])[]): CompoundOutline {
+  return Object.assign(rings.flat(), { rings });
+}
+
+export function transformOutline(spec: ShapeSpec, transform: (p: Vec2) => Vec2): Vec2[] {
+  if (spec.kind === 'polygon' && spec.rings) return compound(spec.rings.map(ring => ring.map(transform)));
+  return outlineOf(spec).map(transform);
+}
+
 /** The 96-point outline of a shape, computed once per spec object. */
 export function outlineOf(spec: ShapeSpec): readonly Vec2[] {
   let pts = outlineCache.get(spec);
   if (!pts) {
-    pts = outline(spec, 96);
+    if (spec.kind === 'polygon' && spec.rings) {
+      pts = compound(spec.rings);
+    } else pts = outline(spec, 96);
     outlineCache.set(spec, pts);
   }
   return pts;
+}
+
+/** Ordinary outlines retain their even-odd test; compound fills sum the winding of their individual contours. */
+export function containsPoint(poly: readonly Vec2[], x: number, y: number): boolean {
+  const rings = (poly as Partial<CompoundOutline>).rings;
+  if (!rings) {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i]!;
+      const b = poly[j]!;
+      if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
+    }
+    return hit;
+  }
+  let winding = 0;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[j]!;
+      const b = ring[i]!;
+      if ((a[1] > y) === (b[1] > y)) continue;
+      if (x < a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1])) winding += b[1] > a[1] ? 1 : -1;
+    }
+  }
+  return winding !== 0;
 }
 
 /** How far the shape reaches from its origin in a direction (a unit vector in local space). */

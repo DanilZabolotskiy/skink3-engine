@@ -28,7 +28,7 @@ import type { CompiledShot } from '../scene/compile.ts';
 import { evaluate, itemFill, itemPath, itemShape, stretchPoint, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
 import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
-import { outlineOf } from '../shape/geometry.ts';
+import { containsPoint, transformOutline } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 
 /** Frames between two samples of the review: ten a second. */
@@ -103,16 +103,6 @@ interface Surface {
   readonly alpha: number;
 }
 
-function inside(poly: readonly Vec2[], x: number, y: number): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i]!;
-    const b = poly[j]!;
-    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
-  }
-  return hit;
-}
-
 const labs = new Map<string, { l: number; a: number; b: number }>();
 
 function lab(hex: string): { l: number; a: number; b: number } {
@@ -146,7 +136,7 @@ function leavesOf(state: FrameState): Leaf[] {
         // What lies in a plane of a perspective layer: through the picture the camera has of that plane.
         else if (item.kind === 'plane') walk(item.items, clips, (p) => place(planePoint(item.map, p)));
         else if (item.kind === 'clip') {
-          const outline = outlineOf(itemShape(item)).map((p) => place(xfApply(item.xf, p)));
+          const outline = transformOutline(itemShape(item), (p) => place(xfApply(item.xf, p)));
           walk(item.items, item.level ? [...clips, outline, item.level.map((p) => place(p as Vec2))] : [...clips, outline], place);
         } else {
           // A content with a level is drawn below its surface only.
@@ -220,8 +210,19 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
   const tone = (hex: string): string => atmosphereTone(hex, atmosphere, leaf.tint);
   switch (item.kind) {
     case 'shape': {
-      const ring = outlineOf(itemShape(item)).map((p) => screen(xfApply(item.xf, p)));
-      return [{ part: 'outline', color: tone(itemFill(item)), probes: edgeProbes(ring, PROBES), mode: 'edge', ground: null }];
+      const shape = itemShape(item);
+      const place = (p: Vec2): Vec2 => screen(xfApply(item.xf, p));
+      let probes: Probe[];
+      if (shape.kind === 'polygon' && shape.rings) {
+        // Sample actual boundaries of a bounded set of contours; gaps between them have no edge.
+        const count = Math.min(PROBES, shape.rings.length);
+        probes = [];
+        for (let i = 0; i < count; i++) {
+          const ring = shape.rings[Math.floor(i * shape.rings.length / count)]!;
+          probes.push(...edgeProbes(ring.map(place), Math.floor(PROBES / count)));
+        }
+      } else probes = edgeProbes(transformOutline(shape, place), PROBES);
+      return [{ part: 'outline', color: tone(itemFill(item)), probes, mode: 'edge', ground: null }];
     }
     case 'stroke': {
       const probes: Probe[] = [];
@@ -295,7 +296,7 @@ function surfaceOf(c: CompiledShot, state: FrameState, leaf: Leaf): Surface | nu
   let color: string;
   let alpha: number;
   if (item.kind === 'shape') {
-    poly = outlineOf(itemShape(item)).map((p) => screen(xfApply(item.xf, p)));
+    poly = transformOutline(itemShape(item), (p) => screen(xfApply(item.xf, p)));
     color = itemFill(item);
     alpha = item.alpha;
   } else if (item.kind === 'label') {
@@ -359,7 +360,7 @@ export function reviewContrast(c: CompiledShot, bake: Bake, opts: { lang?: strin
     let surfaces: Surface[] | null = null;
     const ground = (): Surface[] => (surfaces ??= leaves.map((leaf) => surfaceOf(c, state, leaf)).filter((s): s is Surface => s !== null && s.alpha >= COVER_ALPHA));
     const holds = (s: Surface, x: number, y: number): boolean =>
-      x >= s.x0 && x <= s.x1 && y >= s.y0 && y <= s.y1 && inside(s.poly, x, y) && s.leaf.clips.every((clip) => inside(clip, x, y));
+      x >= s.x0 && x <= s.x1 && y >= s.y0 && y <= s.y1 && containsPoint(s.poly, x, y) && s.leaf.clips.every((clip) => containsPoint(clip, x, y));
     /** The topmost surface at a place among those the test lets through. */
     const topAt = (x: number, y: number, ok: (order: number) => boolean): Surface | null => {
       const list = ground();
@@ -381,7 +382,7 @@ export function reviewContrast(c: CompiledShot, bake: Bake, opts: { lang?: strin
           // Not seen there: something drawn after the node lies over it, or the node is cut away by its clip.
           const [ix, iy] = probe.inner ?? probe.at;
           if (topAt(ix, iy, (order) => order > leaf.order)) continue;
-          if (!leaf.clips.every((clip) => inside(clip, ix, iy))) continue;
+          if (!leaf.clips.every((clip) => containsPoint(clip, ix, iy))) continue;
           let behind: string;
           let id: string;
           if (held.ground !== null) {

@@ -45,7 +45,7 @@ import { globeSpins, globeTurn } from '../scene/globe.ts';
 import { outlineTravel, restForms } from '../scene/outline.ts';
 import { eyeOf, perspAt, project } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type GroupNode } from '../scene/types.ts';
-import { outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
+import { containsPoint, transformOutline, outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 import { T } from './thresholds.ts';
 
@@ -291,16 +291,6 @@ function median(sorted: readonly number[]): number {
   return n % 2 === 1 ? sorted[(n - 1) / 2]! : (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2;
 }
 
-function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i]!;
-    const b = poly[j]!;
-    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
-  }
-  return hit;
-}
-
 
 
 
@@ -316,7 +306,7 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
     let hit = polys.get(index);
     if (!hit) {
       const node = c.nodes[index]!.node;
-      const poly = node.type === 'shape' ? outlineOf(shapeOf(c.nodes[index]!, t)).map((p) => xfApply(world[index]!, p)) : [];
+      const poly = node.type === 'shape' ? transformOutline(shapeOf(c.nodes[index]!, t), (p) => xfApply(world[index]!, p)) : [];
       let x0 = Infinity;
       let y0 = Infinity;
       let x1 = -Infinity;
@@ -361,7 +351,7 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
     for (const p of points) {
       let hidden = false;
       for (const ci of clips) {
-        if (!insidePolygon(polyOf(ci).poly, p[0], p[1])) {
+        if (!containsPoint(polyOf(ci).poly, p[0], p[1])) {
           hidden = true;
           break;
         }
@@ -369,7 +359,7 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
       for (let k = 0; !hidden && k < later.length; k++) {
         const cover = polyOf(later[k]!);
         if (p[0] < cover.x0 || p[0] > cover.x1 || p[1] < cover.y0 || p[1] > cover.y1) continue;
-        hidden = insidePolygon(cover.poly, p[0], p[1]);
+        hidden = containsPoint(cover.poly, p[0], p[1]);
       }
       if (!hidden) {
         seen = true;

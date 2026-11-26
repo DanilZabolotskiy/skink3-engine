@@ -14,6 +14,7 @@ import {
   patches,
   relief,
   scatter,
+  selectByCell,
   smoothLine,
   trees,
   water,
@@ -31,6 +32,18 @@ import { dark, differing, draw, items, make, refused } from './fixtures/bodies.t
 
 const SQUARE: Vec2[] = [[-400, -300], [400, -300], [400, 300], [-400, 300]];
 const POND: Vec2[] = [[-120, -80], [120, -80], [120, 80], [-120, 80]];
+
+test('world-space selection preserves the chosen sites and their painter order', () => {
+  const sites: Vec2[] = [[0, 0], [-5, -6], [5, 6], [5, 4], [-5, -5], [15, 5]];
+  const selected = selectByCell(sites, 10, point => point);
+  assert.deepEqual(selected, [sites[2], sites[4], sites[5]]);
+  assert.equal(selected[0], sites[2]);
+  assert.deepEqual(selectByCell([sites[0]!, sites[0]!], 1, point => point), [sites[0]]);
+  assert.deepEqual(selectByCell([], 1, point => point), []);
+  for (const size of [0, -1, Infinity, NaN]) assert.throws(() => selectByCell(sites, size, point => point), /size/);
+  assert.throws(() => selectByCell(sites, Number.MIN_VALUE, point => point), /cell index/);
+  assert.throws(() => selectByCell([[Infinity, 0] as Vec2], 5, point => point), /positions/);
+});
 
 /** Every node of a list and of its children, depth first. */
 function all(nodes: readonly SceneNode[]): SceneNode[] {

@@ -19,6 +19,7 @@ import {
   moveTo,
   pathTable,
   popIn,
+  pulse,
   reviewMotion,
   scaleTo,
   SceneError,
@@ -35,6 +36,26 @@ import {
 // A stroke: a line along a free-form path, drawn on over time, solid or dashed.
 
 const WIDTH = 960;
+
+test('visible curve subdivisions preserve the full path and timed reveal and pulses', async () => {
+  const opts = { id: 'route', points: [[-260,0],[-100,-90],[80,70],[280,0]], color: 'accent.coral', width: 12, smooth: 1 } as const;
+  const original = stroke(opts);
+  assert.deepEqual(stroke({...opts,curveSteps:32}), original);
+  assert.throws(() => stroke({...opts,curveSteps:3 as 2}), /curveSteps/);
+  const coarse = stroke({...opts,curveSteps:2});
+  assert.deepEqual(coarse.path, original.path);
+  const keys = [drawOn('route',{at:0,dur:1}),pulse('route',{at:0,dur:1,length:80})];
+  for (const frame of [10,35,60]) {
+    async function current(node: typeof original) {
+      const c=compileShot(make([node],keys));
+      const state=evaluate(c,await bakeShot(c),frame,'en');
+      const line=flatItems(state.layers[0]!.items).find(item=>item.kind==='stroke');
+      assert.ok(line?.kind==='stroke');
+      return [line.drawn,line.pulses];
+    }
+    assert.deepEqual(await current(coarse),await current(original));
+  }
+});
 
 function make(nodes: LayerSpec['nodes'], timeline: Key[] = [], seconds = 4): ShotSpec {
   return shot({

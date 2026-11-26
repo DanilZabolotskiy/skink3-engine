@@ -11,7 +11,7 @@ import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemShape, labelLayout, textLayout, type LabelItem, type LeafItem, type TextItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W } from '../scene/types.ts';
-import { outlineOf } from '../shape/geometry.ts';
+import { containsPoint, transformOutline } from '../shape/geometry.ts';
 
 export interface FitIssue {
   readonly lang: string;
@@ -60,7 +60,7 @@ const seconds = (frame: number): string => (frame / FPS).toFixed(2);
 /** The outline of a drawn node in the space of its layer, or null if it has none. */
 function nodeOutline(item: LeafItem): Vec2[] | null {
   if (item.kind === 'shape' && item.node.node.type === 'shape') {
-    return outlineOf(itemShape(item)).map((p) => xfApply(item.xf, p));
+    return transformOutline(itemShape(item), (p) => xfApply(item.xf, p));
   }
   if (item.kind === 'eye' && item.node.node.type === 'eye') {
     const r = item.node.node.r * item.xf.scale;
@@ -74,16 +74,6 @@ function nodeOutline(item: LeafItem): Vec2[] | null {
   return null;
 }
 
-function inside(poly: readonly Vec2[], x: number, y: number): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i]!;
-    const b = poly[j]!;
-    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
-  }
-  return hit;
-}
-
 /** True when the box (already shrunk by the tolerance) and the outline share some area. */
 function covers(box: Box, poly: readonly Vec2[]): boolean {
   if (box.x1 <= box.x0 || box.y1 <= box.y0) return false;
@@ -93,11 +83,11 @@ function covers(box: Box, poly: readonly Vec2[]): boolean {
   const cx = (box.x0 + box.x1) / 2;
   const cy = (box.y0 + box.y1) / 2;
   return (
-    inside(poly, cx, cy) ||
-    inside(poly, box.x0, box.y0) ||
-    inside(poly, box.x1, box.y0) ||
-    inside(poly, box.x0, box.y1) ||
-    inside(poly, box.x1, box.y1)
+    containsPoint(poly, cx, cy) ||
+    containsPoint(poly, box.x0, box.y0) ||
+    containsPoint(poly, box.x1, box.y0) ||
+    containsPoint(poly, box.x0, box.y1) ||
+    containsPoint(poly, box.x1, box.y1)
   );
 }
 

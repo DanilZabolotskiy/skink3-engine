@@ -691,6 +691,14 @@ region({ id: 'island', fill: 'deep.ink', backdrop: true,
 
 Relief: a field of heights, a grid of them laid over a rect `w` by `h` (a digital elevation model over a map), drawn as the light falls on it. Slopes turned to the light turn toward `bright`, slopes turned from it toward `dark`, and flat ground is left as it is.
 
+`samplePixels` sets the width in output pixels of each relief shading sample. The default is `1`. Use `2` or `4` for a distant terrain with broad shading. The renderer samples the current camera on every frame and interpolates the shading to the output resolution. Grounded objects, paths, shadows and the elevation lookup use the original height grid. Inspect the nearest slope, the silhouette of the ground and its motion at delivery resolution.
+
+`fillRings({ id, rings, fill, at?, opacity? })` paints a group of straight-edged contours with one flat colour. Each contour is a separate local-space list of at least three points. Gaps stay open, overlapping rings of the same winding share the colour, and opposite winding cuts a hole. A collection can hold up to 4,000 points. On a grounded plane the individual contours follow its elevations. Group collections by their colour and animation; keep detailed buildings or trees at the places where their vertical silhouette matters. This primitive supports transforms, opacity, palette transitions and clipping. Its flat fill has no extrusion, cast shadow or rigid body.
+
+For a distant group of small features, `selectByCell(items, size, position)` chooses one existing feature per occupied square of side `size` in scene units. The feature nearest each cell centre wins, ties keep the earliest input, and the returned features keep their input order. Call it once during scene construction and independently for each group with its own animation. Keep landmarks, labels and animation targets separately. Thin low-contrast texture before changing the outlines of inhabited areas, routes and open spaces. A comparison across near and far camera positions shows which gaps and silhouettes remain visible.
+
+`stroke({ curveSteps: 2, ... })` draws a curve with fewer pieces between consecutive points of its current path. Available subdivisions are `1`, `2`, `4`, `8`, `16` and the default `32`. A long line draped over a height grid already contains intermediate ground samples, so a few subdivisions can suffice. The lower subdivision count applies to the visible line, its side and its halo. Reveals, pulses, travel distances and opening positions still use the full arc-length table. Check curved ends and dash spacing in the nearest view. Globe lines already split into visible screen-space runs retain their own sampling.
+
 ```ts
 // The hills of a map, from a grid of 400 by 300 heights in metres, shaded on the land alone.
 relief({ id: 'hills', w: 2400, h: 1800, heights: { cols: 400, rows: 300, values: DEM }, vertical: 0.6,

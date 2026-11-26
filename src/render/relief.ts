@@ -32,6 +32,7 @@ const shadings = new WeakMap<ReliefSpec, Shading>();
 
 interface ReliefRaster {
   readonly image: ImageData;
+  readonly samplePixels: number;
   readonly x: number;
   readonly y: number;
   readonly clip: boolean;
@@ -92,7 +93,12 @@ function paintRaster(raw: CanvasRenderingContext2D, m: DOMMatrix, x: number, y: 
     raw.rect(x, y, w, h);
     if (raster.clip) raw.clip();
     raw.setTransform(1, 0, 0, 1, 0, 0);
-    raw.drawCanvas(picture, raster.x, raster.y);
+    const s = raster.samplePixels;
+    if (s === 1) raw.drawCanvas(picture, raster.x, raster.y);
+    else {
+      raw.imageSmoothingEnabled = true;
+      raw.drawCanvas(picture, raster.x * s, raster.y * s, raster.image.width * s, raster.image.height * s);
+    }
     raw.restore();
   } finally {
     picture.dispose();
@@ -404,12 +410,14 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const { xf } = item;
   // From the field's own space to the pixels of the canvas.
   const m = ctx.getTransform().translate(xf.x, xf.y).rotate((xf.rot * 180) / Math.PI).scale(xf.scale, xf.scale);
-  const width = raw.canvas.width;
-  const height = raw.canvas.height;
+  const samplePixels = spec.samplePixels ?? 1;
+  const width = Math.ceil(raw.canvas.width / samplePixels);
+  const height = Math.ceil(raw.canvas.height / samplePixels);
 
   const { cols, rows, heights } = spec;
   const raise = item.raise;
-  const [a, b, c, d, e, f, g, hh, i] = [m.m11, m.m12, m.m21, m.m22, m.m41, m.m42, m.m14, m.m24, m.m44];
+  // Divide the projected screen coordinates; the homogeneous denominator and the ground's world coordinates stay intact.
+  const [a, b, c, d, e, f, g, hh, i] = [m.m11 / samplePixels, m.m12 / samplePixels, m.m21 / samplePixels, m.m22 / samplePixels, m.m41 / samplePixels, m.m42 / samplePixels, m.m14, m.m24, m.m44];
   const colors = item.node.colors;
   const darkHex = tone(colors['relief.dark']!);
   const brightHex = tone(colors['relief.bright']!);
@@ -461,13 +469,13 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   let cx1 = -Infinity;
   let cy1 = -Infinity;
   for (const [x, y] of corners) {
-    const w = m.m14 * x + m.m24 * y + m.m44;
+    const w = g * x + hh * y + i;
     if (!(w > 1e-6)) {
       behind = true;
       break;
     }
-    const X = (m.m11 * x + m.m21 * y + m.m41) / w;
-    const Y = (m.m12 * x + m.m22 * y + m.m42) / w;
+    const X = (a * x + c * y + e) / w;
+    const Y = (b * x + d * y + f) / w;
     cx0 = Math.min(cx0, X);
     cy0 = Math.min(cy0, Y);
     cx1 = Math.max(cx1, X);
@@ -600,7 +608,7 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
       }
     }
   }
-  const made = { image: new ImageData(data, bw, bh), x: bx0, y: by0, clip: !behind && !ray };
+  const made = { image: new ImageData(data, bw, bh), x: bx0, y: by0, samplePixels, clip: !behind && !ray };
   paintRaster(raw, m, x0, y0, fw, fh, made);
   rememberRaster(entry, made);
 }

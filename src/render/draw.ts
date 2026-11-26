@@ -12,7 +12,7 @@ import { litParts } from '../look/light.ts';
 import type { ToneHues } from '../look/palette.ts';
 import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE } from '../physics/cache.ts';
-import { pathAt, pathTable, type PathTable } from '../motion/paths.ts';
+import { pathAt, pathTable, SAMPLES, type PathTable } from '../motion/paths.ts';
 import type { CNode } from '../scene/compile.ts';
 import { itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode, StrokeNode } from '../scene/types.ts';
@@ -1018,12 +1018,15 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
     ctx.restore();
     return;
   }
-  if (item.part) {
+  if (item.part || node.curveSteps) {
     // One stretch of a wall. Its line reaches a little into the stretches beside it, so that the side of none of them shows in the line.
     const reach = 0.75 * itemWidth(item);
-    const points = stretchPoints(table, Math.max(0, item.part[0] - reach), Math.min(item.part[1] + reach, upTo));
+    const from = item.part ? Math.max(0, item.part[0] - reach) : 0;
+    const to = item.part ? Math.min(item.part[1] + reach, upTo) : upTo;
+    const points = stretchPoints(table, from, to, node.curveSteps);
     ctx.moveTo(points[0]![0], points[0]![1]);
     for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]![0], points[i]![1]);
+    if (!item.part && whole && node.path.closed) ctx.closePath();
     ctx.stroke();
     ctx.restore();
     return;
@@ -1047,7 +1050,7 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
 }
 
 /** The points of a line between two lengths along it: its two ends there, and every sample between them. */
-function stretchPoints(table: PathTable, from: number, to: number): Vec2[] {
+function stretchPoints(table: PathTable, from: number, to: number, curveSteps?: number): Vec2[] {
   const { xs, ys, cum } = table;
   const m = cum.length;
   // The point at a length that lies between the samples i - 1 and i.
@@ -1064,6 +1067,13 @@ function stretchPoints(table: PathTable, from: number, to: number): Vec2[] {
     else hi = mid;
   }
   const out: Vec2[] = [at(from, hi)];
+  if (curveSteps) {
+    const stride = SAMPLES / curveSteps;
+    for (let j = Math.ceil(hi / stride) * stride; j < m - 1 && cum[j]! < to - 1e-12; j += stride) out.push([xs[j]!, ys[j]!]);
+    const end = pathAt(table, to);
+    out.push([end.x, end.y]);
+    return out;
+  }
   let i = hi;
   while (i < m - 1 && cum[i]! < to - 1e-12) {
     out.push([xs[i]!, ys[i]!]);
@@ -1150,8 +1160,8 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   const table = pathTable(itemPath(item));
   const upTo = table.length * item.drawn;
   let points: Vec2[] = [[table.xs[0]!, table.ys[0]!]];
-  if (item.part) points = stretchPoints(table, item.part[0], Math.min(item.part[1], upTo));
-  const m = item.part ? 0 : table.cum.length;
+  if (item.part || node.curveSteps) points = stretchPoints(table, item.part?.[0] ?? 0, Math.min(item.part?.[1] ?? upTo, upTo), node.curveSteps);
+  const m = item.part || node.curveSteps ? 0 : table.cum.length;
   for (let i = 1; i < m; i++) {
     if (table.cum[i]! <= upTo) {
       points.push([table.xs[i]!, table.ys[i]!]);

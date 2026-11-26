@@ -12,7 +12,7 @@ import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
 import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
-import { outlineOf, shapeExtent } from '../shape/geometry.ts';
+import { containsPoint, transformOutline, outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
   drawCast,
   drawEye,
@@ -434,18 +434,8 @@ function drawGlow(
   }
 }
 
-function insidePolygon(poly: readonly Vec2[], x: number, y: number): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i]!;
-    const b = poly[j]!;
-    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) hit = !hit;
-  }
-  return hit;
-}
-
 function outlineInLayer(item: ShapeItem | ClipItem): Vec2[] {
-  return outlineOf(itemShape(item)).map((p) => xfApply(item.xf, p));
+  return transformOutline(itemShape(item), (p) => xfApply(item.xf, p));
 }
 
 /**
@@ -486,12 +476,12 @@ function seenShares(items: readonly Item[]): Map<LeafItem, number> {
     }
     let seen = 0;
     for (const p of points) {
-      if (g.clips.some((poly) => !insidePolygon(poly, p[0], p[1]))) continue;
+      if (g.clips.some((poly) => !containsPoint(poly, p[0], p[1]))) continue;
       // Of a content with a level only the part below its surface is there.
-      if (g.item.level && !insidePolygon(g.item.level, p[0], p[1])) continue;
+      if (g.item.level && !containsPoint(g.item.level, p[0], p[1])) continue;
       let hidden = 0;
       for (const cover of covers) {
-        if (cover.order > g.order && cover.alpha > hidden && insidePolygon(cover.poly, p[0], p[1])) hidden = cover.alpha;
+        if (cover.order > g.order && cover.alpha > hidden && containsPoint(cover.poly, p[0], p[1])) hidden = cover.alpha;
       }
       seen += 1 - hidden;
     }

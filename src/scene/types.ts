@@ -219,6 +219,8 @@ export interface GlobeLayerSpec {
  * relief.tint<i> for each tint.
  */
 export interface ReliefSpec {
+  /** Width in output pixels of a shading sample. Geometry and grounding always use the full height grid. */
+  readonly samplePixels?: 2 | 4;
   /** Points of the grid across and down; the first row is the top of the rect, the first point of a row its left. */
   readonly cols: number;
   readonly rows: number;
@@ -472,6 +474,8 @@ export interface LinkNode {
  * scale, a parent) and its points are in its own space.
  */
 export interface StrokeNode extends NodeBase {
+  /** Subdivisions of each authored curve span for the visible stroke. Motion uses the full path table. */
+  readonly curveSteps?: 1 | 2 | 4 | 8 | 16;
   readonly type: 'stroke';
   /** The points the line runs through, open or closed, joined as the path of a travel is. */
   readonly path: PathSpec;

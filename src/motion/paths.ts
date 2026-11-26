@@ -32,7 +32,7 @@ export interface PathTable {
 }
 
 /** Samples per span between two points. */
-const SAMPLES = 32;
+export const SAMPLES = 32;
 
 const tables = new WeakMap<object, PathTable>();
 

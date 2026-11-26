@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { circle, compileShot, group, pathHeightAt, polygon, rect, region, relief, travel, type LayerSpec, type ShapeItem, type Vec2, type Vec3 } from '../src/index.ts';
+import { circle, compileShot, fillRings, group, pathHeightAt, perspectiveTo, polygon, rect, region, relief, travel, type LayerSpec, type ShapeItem, type Vec2, type Vec3 } from '../src/index.ts';
+import { containsPoint, outlineOf } from '../src/shape/geometry.ts';
 import { at, dark, differing, draw, items, make, refused, type Rgb } from './fixtures/bodies.ts';
 
 // What a map seen in perspective needs: clips to long coasts, soft groups kept inside them, bodies taller than the
@@ -11,6 +12,48 @@ const seen = (tilt: number, distance = 1600): object => ({ perspective: { aim: [
 
 /** A floor through the middle of the space, with what lies on it. */
 const floor = (children: LayerSpec['nodes'], extra: object = {}): ReturnType<typeof group> => group({ id: 'floor', plane: 'floor', children, ...extra });
+
+test('flat contours preserve gaps and opposite-winding holes', async () => {
+  const ring = (x: number, r: number): Vec2[] => [[x-r,-r],[x+r,-r],[x+r,r],[x-r,r]];
+  const mask = fillRings({ id: 'patches', fill: 'light.snow', rings: [ring(-200,100), ring(-200,40).reverse(), ring(200,100)] });
+  const pixels = await draw(make([mask]));
+  for (const x of [-200, 0, 500]) assert.ok(dark(at(pixels, x, 0)));
+  for (const x of [-270, 200]) assert.ok(!dark(at(pixels, x, 0)));
+  const outline = outlineOf(mask.shape);
+  for (const x of [-200, 0, 500]) assert.equal(containsPoint(outline,x,0),false);
+  for (const x of [-270, 200]) assert.equal(containsPoint(outline,x,0),true);
+  const partial=fillRings({id:'overlap',fill:'light.snow',rings:[ring(0,100),ring(60,100)]});
+  assert.equal(containsPoint(outlineOf(partial.shape),30,0),true);
+  assert.throws(() => fillRings({id:'bad',fill:'light.snow',rings:[[[0,0],[4,0]]]}), /three points/);
+});
+
+test('grounded contours follow the same moving camera and terrain as individual footprints', async () => {
+  const values=Array.from({length:25},(_,i)=>60+14*(i%5)+6*Math.floor(i/5));
+  const terrain=relief({id:'ground',w:1200,h:1000,heights:{cols:5,rows:5,values},dark:'deep.abyss',bright:'light.snow'});
+  const rings:Vec2[][]=[[[-280,-120],[-80,-120],[-80,140],[-280,140]],[[70,-180],[280,-180],[230,160],[70,160]]];
+  const keys=[perspectiveTo('stage',{at:0,aim:[110,-45,0],dur:1})];
+  const scene=(nodes:LayerSpec['nodes'])=>make([floor([terrain,...nodes],{ground:'ground'})],keys,seen(42));
+  const compound=scene([fillRings({id:'patches',rings,fill:'light.snow'})]);
+  const individual=scene(rings.map((points,i)=>region({id:'patch'+i,points,smooth:0,fill:'light.snow',lit:false})));
+  for(const frame of [0,23,59]) {
+    const first=await draw(compound,frame),second=await draw(individual,frame);
+    let error=0;for(let i=0;i<first.length;i+=4)if(Math.abs(first[i]!-second[i]!)>16)error++;
+    assert.ok(error<250,`frame ${frame}: ${error} pixels outside edge tolerance`);
+  }
+});
+
+test('coarse terrain samples retain projection, clipping and the default description', async () => {
+  const options = { id:'field', w:900, h:650, heights:{cols:2,rows:2,values:[20,20,20,20]}, dark:'deep.abyss', bright:'light.snow', tints:[[0,'light.snow'],[50,'light.snow']] } as const;
+  assert.deepEqual(relief({...options,samplePixels:1}), relief(options));
+  assert.throws(() => relief({...options,samplePixels:3 as 2}), /samplePixels/);
+  for (const samplePixels of [1,2,4] as const) {
+    const shape = region({id:'mask',points:[[-250,-200],[250,-200],[250,200],[-250,200]],smooth:0,fill:'deep.abyss',lit:false});
+    const spec = make([floor([shape,relief({...options,clipTo:'mask',samplePixels})])],[],seen(45));
+    const pixels=await draw(spec);
+    assert.ok(!dark(at(pixels,0,0)) && dark(at(pixels,600,0)));
+    assert.equal(differing(pixels,await draw(spec)),0);
+  }
+});
 
 /** A wavy island of n points, about 2 * 520 units across: an outline of the kind skia fails to clip to. */
 function island(n: number, scale = 1): Vec2[] {

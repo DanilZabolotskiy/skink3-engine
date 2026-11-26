@@ -72,6 +72,27 @@ function fn<T>(where: string, name: string, value: unknown): T | undefined {
 
 // ---------------------------------------------------------------- geometry
 
+/** One existing feature nearest the centre of each occupied world-space cell, in original painter order. */
+export function selectByCell<T>(items: readonly T[], size: number, position: (item: T) => Vec2): T[] {
+  if (!Number.isFinite(size) || size <= 0) throw new RangeError('selectByCell: size must be finite and positive');
+  const cells = new Map<string, { index: number; distance: number }>();
+  for (const [index, item] of items.entries()) {
+    const [x, y] = position(item);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new RangeError('selectByCell: positions must be finite');
+    const u = x / size;
+    const v = y / size;
+    const col = Math.floor(u);
+    const row = Math.floor(v);
+    if (!Number.isSafeInteger(col) || !Number.isSafeInteger(row)) throw new RangeError('selectByCell: position exceeds the cell index range');
+    const key = `${col},${row}`;
+    const distance = (u - col - 0.5) ** 2 + (v - row - 0.5) ** 2;
+    const previous = cells.get(key);
+    if (!previous || distance < previous.distance) cells.set(key, { index, distance });
+  }
+  const chosen = new Set(Array.from(cells.values(), entry => entry.index));
+  return items.filter((_, index) => chosen.has(index));
+}
+
 /** Whether a point lies inside a closed outline (even-odd: a ring that winds round twice holds nothing there). */
 export function inside(p: Vec2, ring: Ring): boolean {
   const [x, y] = p;

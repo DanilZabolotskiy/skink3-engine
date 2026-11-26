@@ -1,7 +1,7 @@
 # Quick reference for scene authors
 
 - After `/**/`: defaults.
-- Units: a 1920 x 1080 stage, origin centred, y down; `[x, y]` in the parent's space; seconds, 60 fps; degrees clockwise, 0 right.
+- 1920 x 1080, origin centred, y down; parent `[x,y]`, seconds at 60 fps, clockwise degrees, 0 right.
 
 ## A scene module
 
@@ -9,7 +9,7 @@
 import { circle, definePalette, hsv, layer, moveTo, popIn, Rng, shot } from 'skink3-engine';
 
 const palette = definePalette({ deep: { night: hsv(250, 0.9, 0.2) }, dark: { indigo: hsv(258, 0.8, 0.5) }, mid: { mist: hsv(250, 0.5, 0.7) }, accent: { amber: hsv(40, 0.9, 1) }, light: { cream: hsv(52, 0.3, 1) } });
-new Rng(7, 'scatter').range(-800, 800); // seeded by both; + int, pick, shuffle, gauss, stream
+new Rng(7, 'scatter').range(-800, 800); // + int, pick, shuffle, gauss, stream
 const scene = shot({
   id: 'minimal', seconds: 4, seed: 1, palette, strings: { en: { 'label.dot': 'A dot' } },
   background: { inner: 'dark.indigo', outer: 'deep.night' }, atmosphere: 'mid.mist',
@@ -55,7 +55,7 @@ blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed:
 region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000: a country (skink3-geo worldOnStage)
 group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
-stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash: [dash, gap] (0: dots), drawn, pulseColor, least (on screen)
+stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash [length,gap], drawn, pulseColor, least, curveSteps
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + count; runInk: '2.0 · [Aug 2026]': runs in that ink
 text({ id: 'title', text: 'label.dot', ink: 'light.cream', /**/ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // + box: a colour, count, runInk
 circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast, step, rows, shape: 'arch', sill, inset, color (walls too)
@@ -65,7 +65,7 @@ globe({ id: 'earth', r: 300, fill: 'dark.indigo', layers: [{ rings: [globeBlob({
 globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed: 1 }); // a cloud
 ```
 
-- Shapes take `circle`'s options and, opt-in, `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: hills (`reliefHeight`; + `backdrop`). All but `region` are convex.
+- Shape options include `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: `reliefHeight`, `samplePixels`, `backdrop`.
 - `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: an arc or ring (degrees).
 - `globe`: layer `drift` (deg/s), `soft`; `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride the turn, hide behind it, head along `rotation`; a `[lon, lat]` `stroke` lies on it.
 - `label`: tail at `target`'s edge on `side`; text wraps, then shrinks, never cut. `text`: free-standing; as a shape's child, on it; in a `parallax: 0` layer, the frame's.
@@ -191,5 +191,5 @@ PHYSICS-REVIEW.md: **The findings**, **Reading the pictures**, **Thresholds**.
 constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CONTRAST_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
 errors: SceneError IntentError PaletteError
 functions: hexToHsv lightness mix resolveColor checkPalette ease moveTimes profilePeak rampProgress pathLength pathTable pathAt pathHeightAt frameToSeconds secondsToFrame Noise
-maps: water woods trees flecks parcels houses logRoad locator inside distTo scatter oval smoothLine patches
+maps: water woods trees flecks parcels houses logRoad locator inside distTo scatter selectByCell oval smoothLine patches fillRings
 ```

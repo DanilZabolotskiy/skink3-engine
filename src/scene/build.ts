@@ -648,6 +648,29 @@ export function region(o: ShapeOptions & { points: readonly Vec2[] | readonly Ve
   return solid ? { ...node, points3: solid, ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }) } : node;
 }
 
+/** Disconnected contours painted as one flat shape. Opposite winding cuts a hole in a surrounding contour. */
+export function fillRings(o: { id: string; rings: readonly (readonly Vec2[])[]; fill: ColorRef; at?: Vec2; opacity?: number; backdrop?: boolean; clipTo?: string }): ShapeNode {
+  const where = `fillRings("${o?.id}")`;
+  checkKeys(where, o, ['id', 'rings', 'fill', 'at', 'opacity', 'backdrop', 'clipTo']);
+  if (!Array.isArray(o.rings) || !o.rings.length) fail(where, 'rings must contain at least one contour');
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  let total = 0;
+  const rings = o.rings.map((ring: readonly Vec2[]) => {
+    if (!Array.isArray(ring) || ring.length < 3) fail(where, 'each contour needs at least three points');
+    total += ring.length;
+    if (total > REGION_MAX_FLAT_POINTS) fail(where, `rings must fit within ${REGION_MAX_FLAT_POINTS} points`);
+    return ring.map(p => {
+      const point = vec(where, 'point', p);
+      left = Math.min(left, point[0]); right = Math.max(right, point[0]);
+      top = Math.min(top, point[1]); bottom = Math.max(bottom, point[1]);
+      return point;
+    });
+  });
+  if (!(left < right && top < bottom)) fail(where, 'contours must cover an area');
+  const points: Vec2[] = [[left, top], [right, top], [right, bottom], [left, bottom]];
+  return shapeNode(where, { ...o, lit: false }, { kind: 'polygon', points, radius: 0, rings }, null);
+}
+
 /** A rounded rectangle centred on its position. */
 export function rect(o: ShapeOptions & { w: number; h: number; radius?: number }): ShapeNode {
   const where = `rect("${o?.id}")`;
@@ -687,6 +710,8 @@ export function relief(o: {
   w: number;
   h: number;
   heights: { cols: number; rows: number; values: ArrayLike<number> };
+  /** Output pixels across one relief shading sample. Default 1. */
+  samplePixels?: 1 | 2 | 4;
   vertical?: number;
   sun?: { from?: number; high?: number };
   dark: ColorRef;
@@ -697,7 +722,8 @@ export function relief(o: {
   backdrop?: boolean;
 }): ShapeNode {
   const where = `relief("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
+  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'samplePixels', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
+  if (o.samplePixels !== undefined && o.samplePixels !== 1 && o.samplePixels !== 2 && o.samplePixels !== 4) fail(where, 'samplePixels must be 1, 2 or 4');
   const g = o.heights;
   if (g === null || typeof g !== 'object') fail(where, 'heights must be { cols, rows, values }');
   checkKeys(`${where} heights`, g, ['cols', 'rows', 'values']);
@@ -721,6 +747,7 @@ export function relief(o: {
   return {
     ...base,
     relief: {
+      ...(o.samplePixels === 2 || o.samplePixels === 4 ? { samplePixels: o.samplePixels } : {}),
       cols,
       rows,
       heights,
@@ -1088,6 +1115,8 @@ export function link(o: {
  * or a group.
  */
 export function stroke(o: {
+  /** Visible subdivisions per curve span; motion and reveal still use the full path. Default 32. */
+  curveSteps?: 1 | 2 | 4 | 8 | 16 | 32;
   id: string;
   /** The points of the line: [x, y] each; listed in a perspective layer, [x, y, z] each: points of its space. */
   points: readonly Vec2[] | readonly Vec3[];
@@ -1136,7 +1165,8 @@ export function stroke(o: {
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side', 'openings']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'curveSteps', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side', 'openings']);
+  if (o.curveSteps !== undefined && ![1, 2, 4, 8, 16, 32].includes(o.curveSteps)) fail(where, 'curveSteps must be 1, 2, 4, 8, 16 or 32');
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
   // Points of three numbers: a line of the space of a perspective layer. Its path is then the line seen straight on.
   const solid = spacePoints(where, o.points);
@@ -1165,6 +1195,7 @@ export function stroke(o: {
     ...order(where, o.depth),
     ...voice(where, o.sound),
     type: 'stroke',
+    ...(o.curveSteps === undefined || o.curveSteps === 32 ? {} : { curveSteps: o.curveSteps }),
     id: idOf(where, o.id),
     path,
     width,

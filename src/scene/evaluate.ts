@@ -31,7 +31,7 @@ import {
   sampleWidth,
 } from '../motion/tracks.ts';
 import type { Bake } from '../physics/cache.ts';
-import { isRegion, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
+import { isRegion, transformOutline, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
 import { hull, ringOf, roofFaces, sideRing, spanOf, wallOpenings, type RoofFace, type Upright } from '../shape/solid.ts';
 import { textBlock, type TextBlock } from '../text/block.ts';
 import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
@@ -328,7 +328,7 @@ function lowered(stand: Vec3 | undefined, base: number): Vec3 | undefined {
 
 /** A node of a plane drawn point by point on its ground, not as a whole: a region and a stroke. */
 function followsPointwise(n: CNode): boolean {
-  return n.node.type === 'stroke' || (n.node.type === 'shape' && n.node.shape.kind === 'polygon' && n.node.shape.smooth !== undefined && !n.node.relief);
+  return n.node.type === 'stroke' || (n.node.type === 'shape' && n.node.shape.kind === 'polygon' && (n.node.shape.smooth !== undefined || n.node.shape.rings !== undefined) && !n.node.relief);
 }
 
 /** A relief of the ground of its plane: it is drawn raised, and is not lifted as a whole. */
@@ -1031,7 +1031,7 @@ function hazeAt(n: CNode, xf: Xf, t: number): Omit<HazeItem, 'before'> | null {
   const amount = Math.max(0, sampleLevel(n.haze.amount, t));
   if (amount <= 1e-4) return null;
   // Its outline as the shape is drawn: through its place, then through a squash, then through a change along its axes.
-  let outline = outlineOf(shapeOf(n, t)).map((p) => xfApply(xf, p));
+  let outline = transformOutline(shapeOf(n, t), (p) => xfApply(xf, p));
   const squash = n.stretch ? sampleStretch(n.stretch, t) : null;
   if (squash) {
     const s = { at: [xf.x + squash.pivot[0] * xf.scale, xf.y + squash.pivot[1] * xf.scale] as Vec2, height: squash.height };
@@ -1798,6 +1798,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     const laid = c.grounds && n.plane >= 0 && followsPointwise(n) ? groundOf(n.plane) : null;
     if (laid && n.node.type === 'shape') {
       const spec = shape ?? n.node.shape;
+      if (spec.kind === 'polygon' && spec.rings) {
+        const projectRing = (points: readonly Vec2[]): Vec2[] => laidOn(points, true, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]);
+        return { shape: { ...spec, points: projectRing(spec.points), rings: spec.rings.map(projectRing) } };
+      }
       if (spec.kind === 'polygon') return { shape: { ...spec, points: laidOn(spec.points, true, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]) } };
     }
     return shape ? { shape } : {};
@@ -1818,13 +1822,19 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     return { raise: [x, y, stand[2] / xf.scale] };
   };
   // A stroke on a plane with a ground lies on it point by point.
-  const strokeLaid = (n: CNode): { path?: PathSpec } => {
+  let splitPaths: Map<number, PathSpec> | undefined;
+  const strokeLaid = (n: CNode, split: boolean): { path?: PathSpec } => {
+    const previous = split ? splitPaths?.get(n.index) : undefined;
+    if (previous) return { path: previous };
     const keyed = n.outline || n.form ? strokePathOf(n, t) : null;
     const laid = c.grounds && n.plane >= 0 ? groundOf(n.plane) : null;
     if (!laid || n.node.type !== 'stroke') return keyed ? { path: keyed } : {};
     const path = keyed ?? n.node.path;
     if (path.heights) return keyed ? { path: keyed } : {};
-    return { path: { ...path, points: laidOn(path.points, path.closed, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]) } };
+    const projected = { ...path, points: laidOn(path.points, path.closed, placeOf(n.index), places!.lifted[n.parent] ?? 0, laid[0], laid[1]) };
+    // Depth-sorted stretches share their parent's complete path and arc-length table within this frame.
+    if (split) (splitPaths ??= new Map()).set(n.index, projected);
+    return { path: projected };
   };
   // A shape without a fillTo is the item it always was.
   const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
@@ -2057,7 +2067,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           // A line on a globe: the parts of it that face the viewer.
           const runs = n.globe ? surfaceRuns(surfaceLine(node.path), globeView(n.globe.spec, t), n.globe.r, Math.min(1, drawn)) : null;
           if (runs && runs.length === 0) break;
-          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
+          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n, !!part), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {

@@ -36,6 +36,14 @@ function buildPath(spec: ShapeSpec): Path2D {
       break;
     }
     case 'polygon': {
+      if (spec.rings) {
+        for (const ring of spec.rings) {
+          p.moveTo(ring[0]![0], ring[0]![1]);
+          for (let i = 1; i < ring.length; i++) p.lineTo(ring[i]![0], ring[i]![1]);
+          p.closePath();
+        }
+        break;
+      }
       if (isRegion(spec)) {
         // A region: the curve through its points.
         const segs = regionSegments(spec);
