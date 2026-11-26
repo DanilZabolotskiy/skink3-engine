@@ -14,7 +14,7 @@ import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable, SAMPLES, type PathTable } from '../motion/paths.ts';
 import type { CNode } from '../scene/compile.ts';
-import { itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import { itemColor, itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
@@ -945,17 +945,26 @@ function drawPulses(
   }
 }
 
+/**
+ * The colour of the pulses of a link (#RRGGBB): its pulseColor. A link whose colour is keyed (colorTo) and whose pulses
+ * have no colour of their own, the colour of the line, sends them in the colour the line has at this frame.
+ */
+function linkPulseColor(item: LinkItem): string {
+  const node = item.node.node as LinkNode;
+  return item.color !== undefined && node.pulseColor === node.color ? item.color : item.node.colors['pulseColor']!;
+}
+
 /** A link and the pulses travelling along it. */
 export function drawLink(ctx: CanvasRenderingContext2D, item: LinkItem, paint: Paint): void {
   // The width the link has at this frame: the lights along it are as large as the line is now.
   const width = itemWidth(item);
   ctx.save();
-  ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
+  ctx.strokeStyle = paint.tone('base', itemColor(item));
   ctx.lineWidth = width;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   strokeQuad(ctx, item.curve, 0, item.reveal);
-  const pulse = item.node.colors['pulseColor']!;
+  const pulse = linkPulseColor(item);
   drawPulses(ctx, item, width * 1.5, width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
   ctx.restore();
 }
@@ -970,14 +979,14 @@ export function drawLinkGlow(ctx: CanvasRenderingContext2D, item: LinkItem, pain
   const width = itemWidth(item);
   ctx.save();
   if (node.glow > 0) {
-    ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
+    ctx.strokeStyle = withAlpha(paint.tone('glow', itemColor(item)), node.glow * item.alpha);
     ctx.lineWidth = width;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     strokeQuad(ctx, item.curve, 0, item.reveal);
   }
   if (item.pulses.length > 0) {
-    const pulse = paint.tone('base', item.node.colors['pulseColor']!);
+    const pulse = paint.tone('base', linkPulseColor(item));
     drawPulses(ctx, item, width * 2.1, width * 1.5, pulse, pulse, item.alpha);
   }
   ctx.restore();
@@ -1237,7 +1246,7 @@ function strokeSide(ctx: CanvasRenderingContext2D, item: StrokeItem, foot: Foot,
   }
   const closed = !item.part && item.drawn >= 1 - 1e-9 && node.path.closed;
   const path = sidePath(points, closed, foot, false);
-  const tone = sideTone(item.node.colors, item.node.colors['color']!, paint);
+  const tone = sideTone(item.node.colors, itemColor(item), paint);
   ctx.fillStyle = tone;
   ctx.strokeStyle = tone;
   ctx.lineWidth = itemWidth(item);
@@ -1304,7 +1313,7 @@ function fillWallOpenings(ctx: CanvasRenderingContext2D, item: StrokeItem, foot:
   raw.translate(xf.x, xf.y);
   raw.rotate(xf.rot);
   raw.scale(xf.scale, xf.scale);
-  raw.fillStyle = colors['openings'] ? paint.tone('base', colors['openings']) : colors['side'] ? paint.tone('shadow2', colors['side']) : paint.tone('shadow3', colors['color']!);
+  raw.fillStyle = colors['openings'] ? paint.tone('base', colors['openings']) : colors['side'] ? paint.tone('shadow2', colors['side']) : paint.tone('shadow3', itemColor(item));
   fillTraced(easel, (to) => traceColumns(to, columns, o, foot, fullRise(item.node), foot.uh < 0));
   raw.restore();
 }
@@ -1349,11 +1358,11 @@ function sideEdges(points: readonly Vec2[], closed: boolean, foot: Foot): Path2D
 /** A stroke: a line along a path, solid or dashed, as far as it is drawn, and the lights that run along it. A wall that stands up is drawn over its side. */
 export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
   if (item.foot) strokeSide(ctx, item, item.foot, paint);
-  ctx.strokeStyle = paint.tone('base', item.node.colors['color']!);
+  ctx.strokeStyle = paint.tone('base', itemColor(item));
   strokeLine(ctx, item);
   if (item.pulses) {
     const width = itemWidth(item);
-    const pulse = item.node.colors['pulseColor'] ?? item.node.colors['color']!;
+    const pulse = item.node.colors['pulseColor'] ?? itemColor(item);
     drawStrokePulses(ctx, item, width * 1.5, width * 0.95, paint.tone('pulse', pulse), paint.tone('pulseHead', pulse), 1);
   }
 }
@@ -1365,11 +1374,11 @@ export function drawStroke(ctx: CanvasRenderingContext2D, item: StrokeItem, pain
 export function drawStrokeGlow(ctx: CanvasRenderingContext2D, item: StrokeItem, paint: Paint): void {
   const node = item.node.node as StrokeNode;
   if (node.glow > 0) {
-    ctx.strokeStyle = withAlpha(paint.tone('glow', item.node.colors['color']!), node.glow * item.alpha);
+    ctx.strokeStyle = withAlpha(paint.tone('glow', itemColor(item)), node.glow * item.alpha);
     strokeLine(ctx, item);
   }
   if (item.pulses) {
-    const pulse = paint.tone('base', item.node.colors['pulseColor'] ?? item.node.colors['color']!);
+    const pulse = paint.tone('base', item.node.colors['pulseColor'] ?? itemColor(item));
     const width = itemWidth(item);
     drawStrokePulses(ctx, item, width * 2.1, width * 1.5, pulse, pulse, item.alpha);
   }
@@ -1453,7 +1462,8 @@ export function drawEye(ctx: CanvasRenderingContext2D, item: EyeItem, paint: Pai
   const { xf } = item;
   const r = node.r;
   const pr = r * 0.54;
-  const travel = (r - pr) * 0.86;
+  // An eye with a reach of its own may look farther. Without one the pupil stays inside the white.
+  const travel = node.reach === undefined ? (r - pr) * 0.86 : r * node.reach;
   const l = vrot(paint.light, -xf.rot);
   const white = paint.tone('base', item.node.colors['white']!);
   ctx.save();
@@ -1466,13 +1476,28 @@ export function drawEye(ctx: CanvasRenderingContext2D, item: EyeItem, paint: Pai
   ctx.fill();
   const px = item.look[0] * travel;
   const py = item.look[1] * travel;
+  // The white clips the pupil only while the pupil reaches past it: inside it, it is drawn as it always was.
+  const cut = node.reach !== undefined && Math.hypot(px, py) + pr > r;
+  if (cut) ctx.clip();
   ctx.fillStyle = paint.tone('base', item.node.colors['pupil']!);
   ctx.beginPath();
   ctx.arc(px, py, pr, 0, TAU);
   ctx.fill();
+  let gx = px + l[0] * pr * 0.42;
+  let gy = py + l[1] * pr * 0.42;
+  const gr = pr * 0.3;
+  if (cut) {
+    // A pupil that the white cuts keeps its glint where some of the pupil still lies between it and the white.
+    const most = r - gr * 1.6;
+    const d = Math.hypot(gx, gy);
+    if (d > most) {
+      gx *= most / d;
+      gy *= most / d;
+    }
+  }
   ctx.fillStyle = white;
   ctx.beginPath();
-  ctx.arc(px + l[0] * pr * 0.42, py + l[1] * pr * 0.42, pr * 0.3, 0, TAU);
+  ctx.arc(gx, gy, gr, 0, TAU);
   ctx.fill();
   ctx.restore();
 }

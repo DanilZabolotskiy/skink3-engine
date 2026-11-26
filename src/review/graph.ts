@@ -168,7 +168,7 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
       if (s.width && changes(s.width, from, to, 0.05)) {
         panels.push({ title: 'width of the line in its layer, units', lines: [{ name: 'width', data: s.width }], fromZero: true, height: 120, peak: false });
       }
-      // A shape whose fill is keyed: how fast its colour changes.
+      // A shape whose fill is keyed, or a stroke whose colour is: how fast its colour changes.
       if (s.fill && changes(s.fill, from, to, 0.001)) {
         panels.push({ title: 'change of its fill per frame, share of the range of a channel', lines: [{ name: 'fill', data: s.fill }], fromZero: true, height: 120, peak: false });
       }

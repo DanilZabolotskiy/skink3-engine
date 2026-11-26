@@ -60,7 +60,7 @@ label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'd
 text({ id: 'title', text: 'label.dot', ink: 'light.cream', /**/ size: 38, maxWidth: 600, maxLines: 3, weight: 800, align: 'center' }); // + box: a colour, count, runInk
 circle({ id: 'hut', fill: 'mid.mist', r: 50, rise: 70, roof: { kind: 'cone', height: 40 }, openings: { width: 12, height: 34 } }); // or 'gable', 'hip' (+ ridge; region: run), 'dome'; + contrast, step, rows, shape: 'arch', sill, inset, color (walls too)
 group({ id: 'town', sort: 'depth', cast: { color: 'deep.night' }, detail: { min: 10 } }); // far to near; shadows (+ opacity, length, dir, soft, over: 'flat', ground: true; dressings too), plain under min px
-eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 });
+eye({ id: 'pupil', r: 13, white: 'light.cream', pupil: 'deep.night', lookAt: 'hex', /**/ blink: true, open: 1 }); // + reach: to 0.8 (0.4)
 globe({ id: 'earth', r: 300, fill: 'dark.indigo', layers: [{ rings: [globeBlob({ at: [10, 40], r: 8 })], fill: 'mid.mist' }], light: { night: 'deep.night' }, /**/ view: [0, 0], spin: 0, shade: 0.25 }); // rings: [lon, lat]; spin: deg/s east, or keys; + lights, air
 globeBlob({ at: [10, 40], r: 8, /**/ points: 28, wobble: 0.25, stretch: 1, seed: 1 }); // a cloud
 ```
@@ -92,20 +92,21 @@ turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // absolute deg
 scaleTo('hex', { at: 3, to: 1.5, /**/ dur: 0.6, overshoot: 0.15 }); // times the authored size; it lasts. to: [sx, sy], pivot: its own axes. + profile: no overshoot
 fadeTo('hex', { at: 4, to: 0.3, /**/ dur: 0.5 });
 fillTo('hex', { at: 5, to: 'accent.amber', /**/ dur: 0.6, profile: 'ease' });
+colorTo('wire', { at: 5, to: 'accent.amber' }); // a link or stroke
 popIn('c', { at: 0.3, /**/ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /**/ dur: 0.35 });
-bump('c', { at: 2, /**/ amount: 0.14 }); // a kick of the size, 0.7 s
+bump('c', { at: 2, /**/ amount: 0.14 }); // a size kick, 0.7 s
 squash('buddy', { at: 5, /**/ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
 countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text or label, "{n}" in its string; + ratio: true
 levelTo('drink', { at: 2, to: 0.8, /**/ dur: 1.5, profile: 'ease' }); // 0 empty, 1 full
 riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8, profile: 'ease' });
 hazeTo('air', { at: 2, to: 6, /**/ dur: 1.5, profile: 'ease' });
 drawOn('wire', { at: 1, /**/ dur: 0.6 }); // hidden before at. A stroke: + to (a share), profile, ramp
-solidTo('route', { at: 5, /**/ to: 1, dur: 0.6 }); // closes the gaps of its dashes
+solidTo('route', { at: 5, /**/ to: 1, dur: 0.6 }); // closes its dashes
 bendTo('wire', { at: 3, to: 0, /**/ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
 widthTo('wire', { at: 4, to: 20, /**/ dur: 0.6, overshoot: 0.15 }); // a link's or stroke's width
 reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /**/ dur: 1.2, profile: 'ease' }); // a region or a stroke, point for point; + smooth; matchPoints, reachedAt: any two outlines
-drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /**/ at: 0 }); // a function of time: at, rotation, scale, opacity, depth, points; or samples
+drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /**/ at: 0 }); // by time: at, rotation, scale, opacity, depth, points; or samples
 pulse('wire', { at: 2, /**/ dur: 0.7, bump: 0.14 }); // bumps the far node at at + dur. A stroke: + from, to (shares), profile, length, node
 openTo('pupil', { at: 1, to: 1, /**/ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });

@@ -229,6 +229,18 @@ export interface FillToKey extends Voiced {
   readonly ramp: number;
 }
 
+/** Change the colour of a line (a stroke or a link) to another colour of the palette over time: a colour key. */
+export interface ColorToKey extends Voiced {
+  readonly kind: 'colorTo';
+  readonly target: string;
+  readonly at: number;
+  /** Palette reference: the colour of the line when the key ends. */
+  readonly to: string;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 export interface PulseKey extends Voiced {
   readonly kind: 'pulse';
   readonly target: string;
@@ -494,6 +506,7 @@ export type Key =
   | RiseToKey
   | HazeToKey
   | FillToKey
+  | ColorToKey
   | PulseKey
   | OpenToKey
   | BlinkKey
@@ -1223,8 +1236,15 @@ export function hazeTo(
  *
  *   fillTo('lamp', { at: 2, to: 'accent.amber' })
  */
-export function fillTo(id: string, opts: { at: number; to: string; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number }): FillToKey {
-  const w = `fillTo("${id}")`;
+export function fillTo(id: string, opts: ColourKeyOptions): FillToKey {
+  return { kind: 'fillTo', ...colourKey(`fillTo("${id}")`, id, opts) };
+}
+
+/** The options of a colour key (fillTo, colorTo). */
+type ColourKeyOptions = { at: number; to: string; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number };
+
+/** A colour key's options, checked, with their defaults. */
+function colourKey(w: string, id: string, opts: ColourKeyOptions): Omit<FillToKey, 'kind'> {
   only(w, opts, ['at', 'to', 'dur', 'profile', 'ramp']);
   if (typeof opts.to !== 'string' || !/^[a-z]+\.\S+$/.test(opts.to)) {
     throw new IntentError(`${w}: to must be a palette reference "role.name" such as "accent.amber", got ${JSON.stringify(opts.to)}. Raw colour values are not accepted in scenes`);
@@ -1232,7 +1252,6 @@ export function fillTo(id: string, opts: { at: number; to: string; dur?: number;
   const profile = profileOf(w, opts.profile, RAMPED, 'ease');
   if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
   return {
-    kind: 'fillTo',
     target: target(w, id),
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: opts.to,
@@ -1240,6 +1259,21 @@ export function fillTo(id: string, opts: { at: number; to: string; dur?: number;
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };
+}
+
+/**
+ * Change the colour of a line over time, a stroke or a link, from the colour
+ * it has to another colour of the palette: a road of light dims where it is
+ * stopped, a wire warms up. `to` is a palette reference, as for the line's own
+ * `color`. Everything drawn from that colour follows it: the line, its glow,
+ * the side of a wall that has no `side` of its own, and the lights that run
+ * along it when they have no colour of their own. It eases, blends round the
+ * colour wheel and chains as `fillTo` does on a shape.
+ *
+ *   colorTo('route', { at: 2, to: 'dark.indigo', dur: 0.8 })
+ */
+export function colorTo(id: string, opts: ColourKeyOptions): ColorToKey {
+  return { kind: 'colorTo', ...colourKey(`colorTo("${id}")`, id, opts) };
 }
 
 /** The bump a pulse gives on arrival, unless its key says otherwise. */

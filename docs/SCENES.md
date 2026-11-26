@@ -797,7 +797,7 @@ A curved line between two nodes of the same layer. It follows them as they move.
 | Option | Default | Meaning |
 |---|---|---|
 | `from`, `to` | required | ids of shapes, groups or eyes in the same layer |
-| `color` | required | |
+| `color` | required | palette reference; `colorTo` changes it over time |
 | `pulseColor` | `color` | colour of the pulses |
 | `bend` | `0.12` | sideways bulge as a fraction of the length; negative bends the other way; 0 is straight |
 | `width` | `7` | thickness in units, 0.5 to 80; `widthTo` changes it over time |
@@ -853,7 +853,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 | Option | Default | Meaning |
 |---|---|---|
 | `points` | required | at least two points `[x, y]` the line runs through, the first being where it starts |
-| `color` | required | palette reference |
+| `color` | required | palette reference; `colorTo` changes it over time |
 | `width` | `7` | thickness in units, 0.5 to 200; `widthTo` changes it over time |
 | `least` | none | 0.5 to 200: the least width the line has on screen, in units of the frame, at any zoom (see A line that keeps its width on screen) |
 | `closed` | `false` | back to the first point after the last (at least three points) |
@@ -1054,11 +1054,26 @@ countTo('year', { at: 2, to: 1309, dur: 2 }),                          // the la
 - A `countTo` makes no event. The motion review counts a running number as life in the frame.
 - Digits do not roll like an odometer: a digit is replaced by the next.
 
-### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, sound?, depth? })`
+### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, reach?, sound?, depth? })`
 
 A light disc with a pupil. `lookAt` is the id of a node in the same layer that the pupil follows. Eyes blink now and then (`blink: false` turns it off); eyes that share a parent blink together.
 
 `open` (0..1, default 1) sets the lids at the start. At 0 the eye is shut, and a shut eye is not drawn at all, so a thing can look lifeless until its eyes open. `openTo` opens and closes the lids, and `blink` asks for a blink at a chosen moment (see the timeline). For a character whose blinks must not land on a staged moment, set `blink: false` and place the blinks yourself.
+
+#### How far a pupil looks
+
+The pupil goes toward its `lookAt`: a target 160 units off or farther takes it as far as it goes, a nearer one less far. Left out, `reach` keeps it wholly inside the white: its middle goes about 0.4 of the eye's radius from the middle of the eye. For a look hard to one side (up at something high, away at an exit), give the eye a larger `reach`:
+
+```ts
+eye({ id: 'left', at: [-30, -10], r: 26, white: 'light.snow', pupil: 'deep.abyss', lookAt: 'exit', reach: 0.7 }),
+```
+
+- `reach` is 0 to 0.8: how far the middle of the pupil may go from the middle of the eye, as a share of the radius. Past about 0.46 the pupil reaches the edge of the white, and the white cuts it: what is left is a pupil pressed against the edge, and the farther it goes the less of it shows. 0.6 to 0.7 reads as a hard look, with nine tenths and four fifths of the pupil left; at 0.8 two thirds are.
+- While the pupil lies inside the white nothing cuts it, and it is drawn as an eye without a `reach` draws its pupil there: an eye with a `reach` that looks ahead is drawn exactly as one without.
+- The glint stays on the pupil: when the white cuts the pupil on the side of the light, the glint comes in from the edge, so some pupil is left between them.
+- The lids cut the pupil with the white: a half-shut eye that looks up shows its pupil under the lid.
+- It is set once per eye. Eyes that look together get the same `reach`; a face that turns toward a thing (`turnTo`, `moveTo` of its group) still says more than its pupils do.
+- The motion review does not measure pupils, whatever their reach (see Motion review); their target is judged as any node is.
 
 A simple creature is a blob with two eyes as children, optionally with `capsule` sticks that `sway`. That is all a character needs under the simple-forms rule; see `examples/demo/scene.ts`.
 
@@ -1115,6 +1130,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `scaleTo(id, { at, to, ... })` | placed, label | `dur` (0.6), `overshoot` (0.15), `profile`, `ramp` (0.3) | a lasting change of size: grows or shrinks to `to` times the authored size, shoots past it and settles. For things that grow in steps. With a `profile` it has no overshoot and runs as a move with that profile does: for a thing that comes nearer or falls away (see Size on a profile) |
 | `fadeTo(id, { at, to, ... })` | placed, label, link | `dur` (0.5) | fades to the opacity `to` (0..1), smoothly. For things that switch on or off softly, and for translucent shapes |
 | `fillTo(shapeId, { at, to, ... })` | shape | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the fill to the palette colour `to`, round the colour wheel; keys chain (see A colour key) |
+| `colorTo(lineId, { at, to, ... })` | stroke, link | `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3) | eases the colour of the line to the palette colour `to`, as `fillTo` does a fill (see A colour key) |
 | `bump(id, { at, ... })` | placed, label | `amount` (0.14) | a quick swell that rings out in about 0.7 s: a reaction, a beat |
 | `drawOn(id, { at, ... })` | link, stroke | `dur` (0.6); a stroke also `to` (1), `profile` (`'ease'`), `ramp` (0.3) | draws the link on from its `from` end, or the stroke from its first point. **It is hidden before `at`**. Once per link; the keys of a stroke chain (see `stroke`) |
 | `countTo(id, { at, to, ... })` | a text or a label with `count` | `dur` (1), `profile` (`'ease'`), `ramp` (0.3), `ratio` (false) | runs the number of a counter to `to`; keys chain (see A counter) |
@@ -1462,8 +1478,26 @@ fillTo('lamp', { at: 5, to: 'accent.coral', dur: 1.2, profile: 'steady' }),
 - `profile` is `'ease'` (default), `'in'`, `'out'` or `'steady'`, with a `ramp` as a move has; `'settle'` is refused. `dur` is 0.05 to 600 s.
 - **Keys chain:** each starts from the colour the fill has at its moment, also when the one before is still under way.
 - Everything drawn from the fill follows it: the shadow crescent, the rim, the highlight, the halo of its glow and the lift of the background. A shape keyed to a colour is drawn exactly as a shape made in that colour.
-- It targets a shape. A group, a stroke, a link and a text have no fill of their own and are refused.
+- It targets a shape. A group and a text have no fill of their own and are refused; a stroke and a link have a colour, which `colorTo` keys.
 - The contrast review judges the shape by the fill it has at each frame. The motion review flags a fill that pops: one that changes a channel by a third of its range in one frame (see Motion review). A changing fill is life in the frame. A colour key makes no sound.
+
+#### The colour of a line
+
+`colorTo` is the colour key of a line, a `stroke` or a `link`: it changes the `color` it was made with, as `fillTo` changes the fill of a shape. A broad run of light that is stopped dims in its own colour; a wire warms up.
+
+```ts
+stroke({ id: 'run', points: [[-860, 380], [-200, 220], [100, 200]], color: 'accent.azure', width: 70, glow: 0.6 }),
+link({ id: 'wire', from: 'lampA', to: 'lampB', color: 'dark.navy', width: 12 }),
+// timeline
+colorTo('run', { at: 4.2, to: 'dark.still', dur: 0.8 }),     // it dims where it stands
+colorTo('wire', { at: 2, to: 'accent.amber', dur: 1.2 }),
+```
+
+- Its options are those of `fillTo`: `to` a colour of the palette, `dur` (0.6), `profile` (`'ease'`), `ramp` (0.3). It blends round the colour wheel, and keys chain from the colour reached.
+- Everything drawn from the colour of the line follows it: the line, as far as it is drawn, with its dashes; its glow; the side of a wall (`rise`) that has no `side` of its own, and its openings when they have no colour of their own; and the lights of `pulse` that have no colour of their own (a stroke without `pulseColor`, a link whose `pulseColor` is its `color`). A line keyed to a colour is drawn exactly as a line made in that colour. A `pulseColor` of another colour stays as it is.
+- It goes with every other key of a line: `drawOn`, `widthTo`, `solidTo`, `reshape`, `pulse`, `fadeTo`.
+- It targets a stroke or a link; a shape is refused with a pointer to `fillTo`, and `fillTo` on a line with a pointer to `colorTo`.
+- The contrast review judges a stroke by the colour it has at each frame. The motion review judges it on the channel `fill`, as a fill: a change of a third of the range of a channel in one frame is a `jump`, on a stroke or a link that is seen. A changing colour is life in the frame. It makes no sound.
 
 ### `stagger(ids, { at, each, order? }, make)`
 
@@ -1805,7 +1839,7 @@ Nobody has to watch the video to find out whether the motion is smooth. `skink3 
 
 | Finding | What it is |
 |---|---|
-| `jump` | a teleport or a pop: position, rotation, size, opacity, level or the width of a line out of line with the frames around it |
+| `jump` | a teleport or a pop: position, rotation, size, opacity, level, a fill, or the width or colour of a line out of line with the frames around it |
 | `abrupt-start`, `abrupt-stop` | a move with no ease at one end |
 | `mechanical` | a move between two rests at constant speed |
 | `too-fast` | travel of half the node's own size per frame or more, sustained: it strobes at 60 fps |

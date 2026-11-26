@@ -27,6 +27,7 @@ const BLOCK = 48;
 const known = new Set([
   'fadeTo',
   'fillTo',
+  'colorTo',
   'riseTo',
   'widthTo',
   'solidTo',

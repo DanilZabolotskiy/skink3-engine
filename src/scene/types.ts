@@ -441,6 +441,9 @@ export const HAZE_MAX = 60;
 /** The longest streak of a particle, in seconds of its way. */
 export const STREAK_MAX = 1;
 
+/** The farthest the middle of the pupil of an eye may be set to go from its middle, as a share of its radius (`reach`). */
+export const EYE_MAX_REACH = 0.8;
+
 /** A curved line between two nodes of the same layer; it follows them as they move. */
 export interface LinkNode {
   readonly type: 'link';
@@ -627,6 +630,11 @@ export interface EyeNode extends NodeBase {
   readonly blink: boolean;
   /** How far the lids are open at the start: 0 = shut (the eye is not drawn), 1 = open. openTo animates it. */
   readonly open: number;
+  /**
+   * How far the middle of the pupil may go from the middle of the eye, as a share of its radius; the pupil is clipped
+   * to the white. Left out: about 0.4, where the whole pupil stays inside the white.
+   */
+  readonly reach?: number;
 }
 
 export interface TurbulenceSpec {

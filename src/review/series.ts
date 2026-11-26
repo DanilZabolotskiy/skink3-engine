@@ -129,8 +129,8 @@ export interface PlacedSeries {
    */
   readonly shadow: Float32Array | null;
   /**
-   * Shapes whose fill is keyed (fillTo): how far the fill changes from the frame before to each frame, as the
-   * largest change of a channel, a share of its full range; null for other nodes.
+   * Shapes whose fill is keyed (fillTo) and strokes whose colour is keyed (colorTo): how far the colour changes from
+   * the frame before to each frame, as the largest change of a channel, a share of its full range; null for other nodes.
    */
   readonly fill: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
@@ -154,6 +154,8 @@ export interface LinkSeries {
   readonly flags: Uint8Array;
   /** Links whose width is keyed (widthTo): the width of the line in the layer's units, per frame; null for other links. */
   readonly width: Float32Array | null;
+  /** Links whose colour is keyed (colorTo): how far the colour changes from the frame before, as on a stroke; null for other links. */
+  readonly fill: Float32Array | null;
 }
 
 /** What the particles of an emitter do, frame by frame. Only particles in frame are counted. */
@@ -546,7 +548,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   });
   const links: LinkSeries[] = c.nodes
     .filter((n) => n.node.type === 'link')
-    .map((n) => ({ node: n, id: n.id, presence: f32(), x: f32(), y: f32(), half: f32(), active: new Uint8Array(frames), flags: new Uint8Array(frames), width: n.width ? f32() : null }));
+    .map((n) => ({ node: n, id: n.id, presence: f32(), x: f32(), y: f32(), half: f32(), active: new Uint8Array(frames), flags: new Uint8Array(frames), width: n.width ? f32() : null, fill: n.fill ? f32() : null }));
   const springs: SpringSeries[] = c.springs.map((index) => {
     const n = c.nodes[index]!;
     return { node: n, id: n.id, kind: n.springKind!, params: n.springParams!, restX: f32(), restY: f32(), x: f32(), y: f32() };
@@ -845,6 +847,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       s.y[f] = (from.y + to.y) / 2;
       s.half[f] = half;
       if (s.width && n.width) s.width[f] = sampleWidth(n.width, t);
+      if (s.fill && n.fill && f > 0) s.fill[f] = fillStep(n.fill, (f - 1) / FPS, t);
       const reveal = sampleReveal(n.link!, t);
       const isDrawn = own[n.index]! > FAINT && from.scale > HIDDEN && to.scale > HIDDEN && reveal > 0 && half > 0.5;
       if (!isDrawn) continue;
@@ -865,6 +868,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       }
       // A width that changes moves the edge of the line by half the change.
       if (!active && n.width) active = (Math.abs(sampleWidth(n.width, t) - sampleWidth(n.width, t - 1 / FPS)) / 2) * zoom >= T.alivePx;
+      // A colour that changes, as fast as a fill that counts as life.
+      if (!active && s.fill) active = s.fill[f]! >= T.aliveFill;
       for (const end of drivers[li]!) {
         for (const k of end) {
           const d = placed[k]!;

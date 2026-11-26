@@ -26,6 +26,7 @@ import type {
   DriveKey,
   FadeToKey,
   FillToKey,
+  ColorToKey,
   HazeToKey,
   HopKey,
   Key,
@@ -124,7 +125,10 @@ export interface CNode {
   readonly width: WidthTrack | null;
   /** Shapes and strokes with a rise: the height of the body over time; null for a node that lies flat. */
   readonly rise: RiseTrack | null;
-  /** Shapes with a fillTo: their fill over time; null for a shape that keeps the fill it was given. */
+  /**
+   * Shapes with a fillTo and lines (strokes, links) with a colorTo: the colour they are drawn in over time, a shape's
+   * fill or a line's colour; null for a node that keeps the colour it was given.
+   */
   readonly fill: FillTrack | null;
   /** Shapes with a haze: its amount over time (hazeTo), and the noise of its ripples; null for every other node. */
   readonly haze: { readonly amount: RiseTrack; readonly noise: Noise } | null;
@@ -362,6 +366,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const rises = new Map<number, RiseToKey[]>();
   const hazes = new Map<number, HazeToKey[]>();
   const fills = new Map<number, FillToKey[]>();
+  const lineColours = new Map<number, ColorToKey[]>();
   const pulses = new Map<number, PulseKey[]>();
   const strokePulses = new Map<number, PulseKey[]>();
   const reshapes = new Map<number, ReshapeKey[]>();
@@ -572,8 +577,12 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         push(hazes, index, key);
         break;
       case 'fillTo':
-        need(node.type === 'shape', 'shapes');
+        need(node.type === 'shape', node.type === 'stroke' || node.type === 'link' ? 'shapes; the colour of a line is keyed by colorTo' : 'shapes');
         push(fills, index, key);
+        break;
+      case 'colorTo':
+        need(node.type === 'stroke' || node.type === 'link', node.type === 'shape' ? 'strokes and links; the colour of a shape is keyed by fillTo' : 'strokes and links');
+        push(lineColours, index, key);
         break;
       case 'reshape':
         if (!(node.type === 'stroke' || (node.type === 'shape' && isRegion(node.shape)))) {
@@ -982,14 +991,19 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       width: (node.type === 'link' || node.type === 'stroke') && widths.has(d.index) ? buildWidthTrack(node.width, widths.get(d.index)!) : null,
       // A node without a rise has no track: it lies flat, as it always did.
       rise: (node.type === 'shape' || node.type === 'stroke') && node.rise !== undefined ? buildRiseTrack(node.rise, rises.get(d.index) ?? []) : null,
-      // A shape without a fillTo has no track: it keeps the fill it was given.
+      // A shape without a fillTo, and a line without a colorTo, have no track: each keeps the colour it was given.
       fill:
         node.type === 'shape' && fills.has(d.index)
           ? buildFillTrack(
               colors['fill']!,
               fills.get(d.index)!.map((k) => ({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, to: col(node, `fillTo at ${k.at} s: to`, k.to) })),
             )
-          : null,
+          : (node.type === 'stroke' || node.type === 'link') && lineColours.has(d.index)
+            ? buildFillTrack(
+                colors['color']!,
+                lineColours.get(d.index)!.map((k) => ({ at: k.at, dur: k.dur, profile: k.profile, ramp: k.ramp, to: col(node, `colorTo at ${k.at} s: to`, k.to) })),
+              )
+            : null,
       // A shape without a haze has none: it moves nothing.
       haze: node.type === 'shape' && node.haze ? { amount: buildRiseTrack(node.haze.amount, hazes.get(d.index) ?? []), noise: new Noise(spec.seed, `haze/${node.id}`) } : null,
       clipIndex,

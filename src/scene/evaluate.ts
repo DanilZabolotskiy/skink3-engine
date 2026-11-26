@@ -616,6 +616,8 @@ export interface LinkItem {
   readonly alpha: number;
   /** A link whose width is keyed (widthTo): the width it has at this frame. Left out: the width of its node. */
   readonly width?: number;
+  /** A link whose colour is keyed (colorTo): the colour it has at this frame (#RRGGBB). Left out: the colour of its node. */
+  readonly color?: string;
 }
 
 export interface StrokeItem {
@@ -637,6 +639,8 @@ export interface StrokeItem {
   readonly path?: PathSpec;
   /** A stroke whose width is keyed (widthTo) or held on screen (least): the width it has at this frame, in its own units. Left out: the width of its node. */
   readonly width?: number;
+  /** A stroke whose colour is keyed (colorTo): the colour it has at this frame (#RRGGBB). Left out: the colour of its node. */
+  readonly color?: string;
   /** A wall that stands up at this frame (a rise above 0): `xf` is its top, and this is where its foot stands. Left out: it lies flat. */
   readonly foot?: Foot;
   /**
@@ -831,6 +835,11 @@ export function itemPath(item: StrokeItem): PathSpec {
 /** The fill a shape is drawn with at its frame (#RRGGBB). */
 export function itemFill(item: ShapeItem): string {
   return item.fill ?? item.node.colors['fill']!;
+}
+
+/** The colour a link or a stroke is drawn with at its frame (#RRGGBB). */
+export function itemColor(item: LinkItem | StrokeItem): string {
+  return item.color ?? item.node.colors['color']!;
 }
 
 /** The width a link or a stroke is drawn with at its frame, in its own units. */
@@ -1849,6 +1858,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   };
   // A shape without a fillTo is the item it always was.
   const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
+  // So is a line without a colorTo.
+  const coloured = (n: CNode): { color?: string } => (n.fill ? { color: sampleFill(n.fill, t) } : {});
   // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
   const placeOf = (index: number): Xf => places?.flat[index] ?? world[index]!;
   // A body that stands up carries where its foot stands; any other item is what it always was.
@@ -2118,7 +2129,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           // A line on a globe: the parts of it that face the viewer.
           const runs = n.globe ? surfaceRuns(surfaceLine(node.path), globeView(n.globe.spec, t), n.globe.r, Math.min(1, drawn)) : null;
           if (runs && runs.length === 0) break;
-          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n, !!part), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
+          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n, !!part), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...coloured(n), ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {
@@ -2144,8 +2155,8 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             const span = pulseSpan(t, p.at, p.dur);
             if (span && span.head > span.tail) pulses.push(span);
           }
-          // A link without a widthTo is the item it always was.
-          items.push({ kind: 'link', node: n, curve, reveal, pulses, alpha: a, ...(n.width ? { width: sampleWidth(n.width, t) } : {}) });
+          // A link without a widthTo or a colorTo is the item it always was.
+          items.push({ kind: 'link', node: n, curve, reveal, pulses, alpha: a, ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...coloured(n) });
           break;
         }
         case 'label': {

@@ -617,6 +617,12 @@ function widthSteps(width: Float32Array, zoom: ArrayLike<number>, frames: number
 
 // --- Everything on placed nodes, links, emitters and the camera -----------------------------------
 
+/** A colour that pops: the fill of a shape, or the colour of a line, changed a channel by `step` of its range in frame f. */
+function colourJump(subject: string, line: boolean, f: number, step: number): Finding {
+  return finding('jump', subject, 'fill', f - 1, f, step, T.jumpFill, 'share of the range of a channel in one frame',
+    `${line ? 'colour: a channel of the colour of the line' : 'fill: a channel of its colour'} changed by ${step.toFixed(2)} of its range between frames ${f - 1} and ${f}`);
+}
+
 /** Jumps, abrupt starts and stops, mechanical moves and strobing speed of every node, link, emitter and the camera. */
 export function detectMotion(series: MotionSeries): Finding[] {
   const c = series.shot;
@@ -669,16 +675,14 @@ export function detectMotion(series: MotionSeries): Finding[] {
           `opacity: changed by ${step.toFixed(2)} between frames ${f - 1} and ${f} (from ${s.ownAlpha[f - 1]!.toFixed(2)} to ${s.ownAlpha[f]!.toFixed(2)})`),
       );
     }
-    // Fill: a shape whose fill is keyed pops when a channel of its colour changes by a third of its range in one frame.
+    // Fill: a shape whose fill is keyed, or a stroke whose colour is, pops when a channel of its colour changes by a
+    // third of its range in one frame.
     if (s.fill) {
       for (let f = 1; f < F; f++) {
         if (!st.seen[f] || !st.inFrame[f] || !big[f]) continue;
         const step = s.fill[f]!;
         if (step < T.jumpFill) continue;
-        mine.push(
-          finding('jump', s.id, 'fill', f - 1, f, step, T.jumpFill, 'share of the range of a channel in one frame',
-            `fill: a channel of its colour changed by ${step.toFixed(2)} of its range between frames ${f - 1} and ${f}`),
-        );
+        mine.push(colourJump(s.id, s.type === 'stroke', f, step));
       }
     }
 
@@ -779,6 +783,16 @@ export function detectMotion(series: MotionSeries): Finding[] {
         finding('jump', l.id, 'opacity', f - 1, f, step, T.jumpOpacity, 'opacity in one frame',
           `the link ${l.presence[f]! > l.presence[f - 1]! ? 'appears' : 'vanishes'} within one frame (drawn share times opacity changes by ${step.toFixed(2)} between frames ${f - 1} and ${f})`),
       );
+    }
+    // A link whose colour is keyed: a pop of its colour while it is seen, in frame and long enough to judge.
+    if (l.fill) {
+      const zoom = series.views[n.layer]!.zoom;
+      for (let f = 1; f < F; f++) {
+        if (l.presence[f - 1]! < T.visibleAlpha || l.presence[f]! < T.visibleAlpha || ((l.flags[f - 1]! | l.flags[f]!) & IN_FRAME) === 0) continue;
+        if (Math.max(l.half[f - 1]!, l.half[f]!) * zoom[f]! < T.minRadiusPx) continue;
+        const step = l.fill[f]!;
+        if (step >= T.jumpFill) out.push(colourJump(l.id, true, f, step));
+      }
     }
     // A link whose width is keyed: the travel of its edge, judged as on a stroke while the link is seen.
     const wide = l.width ? widthSteps(l.width, series.views[n.layer]!.zoom, F, quiet) : null;

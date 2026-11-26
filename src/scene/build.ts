@@ -29,7 +29,7 @@ import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
-import { CAST_MAX_LENGTH, DETAIL_MAX, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_CONTRAST_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
+import { CAST_MAX_LENGTH, DETAIL_MAX, EYE_MAX_REACH, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_CONTRAST_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
 import type {
   BackgroundSpec,
   BodySpec,
@@ -1399,11 +1399,16 @@ export function eye(o: {
   blink?: boolean;
   /** Lids at the start, 0 (shut) .. 1 (open); default 1. */
   open?: number;
+  /**
+   * 0..0.8: how far the middle of the pupil may go from the middle of the eye, as a share of its radius, for a look
+   * hard to one side; past about 0.46 the edge of the white cuts the pupil. Left out: about 0.4, the pupil wholly inside.
+   */
+  reach?: number;
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): EyeNode {
   const where = `eye("${o?.id}")`;
-  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open', 'sound', 'depth']);
+  checkKeys(where, o, ['id', 'r', 'white', 'pupil', 'at', 'scale', 'opacity', 'lookAt', 'blink', 'open', 'reach', 'sound', 'depth']);
   return {
     ...order(where, o.depth),
     ...voice(where, o.sound),
@@ -1419,6 +1424,7 @@ export function eye(o: {
     lookAt: o.lookAt === undefined ? null : idOf(where, o.lookAt),
     blink: o.blink ?? true,
     open: o.open === undefined ? 1 : num(where, 'open', o.open, 0, 1),
+    ...(o.reach === undefined ? {} : { reach: num(where, 'reach', o.reach, 0, EYE_MAX_REACH) }),
   };
 }
 

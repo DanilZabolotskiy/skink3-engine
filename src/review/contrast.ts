@@ -25,7 +25,7 @@ import { atmosphereTone, hexToLab, mix } from '../look/color.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, itemFill, itemPath, itemShape, stretchPoint, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
+import { evaluate, itemColor, itemFill, itemPath, itemShape, stretchPoint, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
 import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
 import { containsPoint, transformOutline } from '../shape/geometry.ts';
@@ -234,7 +234,7 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
           const i = Math.min(count - 1, Math.floor(((k + 0.5) * count) / PROBES));
           probes.push({ at: screen(xfApply(item.xf, [flat[2 * i]!, flat[2 * i + 1]!])), inner: null });
         }
-        return [{ part: 'line', color: tone(item.node.colors['color']!), probes, mode: 'on', ground: null }];
+        return [{ part: 'line', color: tone(itemColor(item)), probes, mode: 'on', ground: null }];
       }
       const table = pathTable(itemPath(item));
       const drawn = table.length * item.drawn;
@@ -242,7 +242,7 @@ function heldOf(c: CompiledShot, state: FrameState, leaf: Leaf): Held[] {
         const p = pathAt(table, (drawn * (k + 0.5)) / PROBES);
         probes.push({ at: screen(xfApply(item.xf, [p.x, p.y])), inner: null });
       }
-      return [{ part: 'line', color: tone(item.node.colors['color']!), probes, mode: 'on', ground: null }];
+      return [{ part: 'line', color: tone(itemColor(item)), probes, mode: 'on', ground: null }];
     }
     case 'text': {
       const b = item.block.box;
