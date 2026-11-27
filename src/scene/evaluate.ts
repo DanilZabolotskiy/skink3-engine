@@ -5,7 +5,7 @@
 import { cameraAt, layerView, type CameraState, type LayerView } from '../camera/camera.ts';
 import { DEG, quadSub, vrot, xfApply, xfCompose, XF_IDENTITY, type Quad, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
-import { pulseSpan } from '../motion/curves.ts';
+import { pulseSpan, speedDistance } from '../motion/curves.ts';
 import { sampleDriven } from '../motion/drive.ts';
 import { pathAt, pathTable, type PathSpec } from '../motion/paths.ts';
 import {
@@ -355,6 +355,22 @@ function onGround(c: CompiledShot, n: CNode, xf: Xf, space: Places): [Xf, number
   return [{ x: stand[0] + (xf.x - stand[0]) * grow, y: stand[1] + (xf.y - stand[1]) * grow, rot: xf.rot, scale: xf.scale * grow }, z];
 }
 
+/** How sharply a symbol that keeps a size on screen (screen) goes over into its hold: the power of its smooth limits. */
+const SCREEN_EASE = 6;
+
+/**
+ * The size on screen of a symbol that keeps one (screen), from the size it would have: held between least and most by
+ * smooth limits, so that it eases into a hold through a zoom and never stops growing or shrinking at once. Far from
+ * them it is the size it would have; at a limit it is a little larger than least, a little smaller than most.
+ */
+export function screenHeld(size: number, least?: number, most?: number): number {
+  // As ratios, so that no power runs out of range however far the camera has zoomed.
+  let held = size;
+  if (least !== undefined) held *= (1 + (least / held) ** SCREEN_EASE) ** (1 / SCREEN_EASE);
+  if (most !== undefined) held *= (1 + (held / most) ** SCREEN_EASE) ** (-1 / SCREEN_EASE);
+  return held;
+}
+
 /**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
@@ -367,14 +383,19 @@ function onGround(c: CompiledShot, n: CNode, xf: Xf, space: Places): [Xf, number
  *
  * The transform of a body with a height (a rise) is that of its top, and what
  * is inside it rides on that top; where its foot stands goes to `feet`.
+ *
+ * `heldBy`, when given, receives the factor by which each symbol that
+ * keeps a size on screen (a group with `screen`) is drawn larger or smaller than its parents and the camera make it.
  */
-export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, places?: Places, feet?: Map<number, Foot>): Xf[] {
+export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, places?: Places, feet?: Map<number, Foot>, heldBy?: Map<number, number>): Xf[] {
   const t = frame / FPS;
   const out: Xf[] = new Array<Xf>(c.nodes.length).fill(XF_IDENTITY);
   // The children of a shape with a level ride on its surface: their frame is the middle of the surface.
   let surfaces: Map<number, Xf> | null = null;
   // A shot with a perspective layer: the cameras of this frame, and the planes as they are found.
   const space = c.spatial ? places ?? newPlaces(c) : null;
+  // The zoom of the view of each layer at this frame, once a symbol that keeps its size on screen asks for it.
+  let zooms: number[] | null = null;
   if (space) {
     space.planes.clear();
     space.stands.clear();
@@ -521,6 +542,27 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       const map = space.planes.get(n.plane);
       out[n.index] = map ? throughPlane(map, xf) : { ...xf, scale: 0 };
     } else out[n.index] = xf;
+    if (node.type === 'group' && node.screen) {
+      // A symbol that keeps a size on screen: its size as its parents, the perspective at its place and the zoom of
+      // the camera draw it (its own keys left out, they scale it on top), held between least and most.
+      zooms ??= c.layers.map((l) => layerView(cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames, c.cameraTrack), l.parallax).zoom);
+      const keyed = n.scale ? sampleScale(n.scale, t) : 1;
+      const seen = (out[n.index]!.scale * zooms[n.layer]!) / keyed;
+      if (seen > 0 && Number.isFinite(seen)) {
+        const size = node.screen.size * seen;
+        const held = screenHeld(size, node.screen.least, node.screen.most);
+        if (held !== size) {
+          const k = held / size;
+          heldBy?.set(n.index, k);
+          xf = { ...xf, scale: xf.scale * k };
+          if (inPlane) {
+            space.flat[n.index] = xf;
+            const map = space.planes.get(n.plane);
+            out[n.index] = map ? throughPlane(map, xf) : { ...xf, scale: 0 };
+          } else out[n.index] = xf;
+        }
+      }
+    }
     if (n.level && n.subtreeEnd > n.index) {
       const g = levelGeometry(n, xf, t);
       (surfaces ??= new Map<number, Xf>()).set(n.index, { x: g.cx, y: g.y, rot: xf.rot, scale: xf.scale });
@@ -571,6 +613,11 @@ export interface ShapeItem {
   readonly level?: readonly Vec2[];
   /** A region whose outline is keyed (reshape), driven, or given by points of the space: the shape it has at this frame. Left out: the shape of its node. */
   readonly shape?: ShapeSpec;
+  /**
+   * A magnifier inset (lens): where on the frame (units of the stage, from its top-left corner) the node it looks at is
+   * at this frame, and the index of the layer it shows. Left out: any other shape.
+   */
+  readonly lens?: { readonly look: Vec2; readonly layer: number };
   /** A shape whose fill is keyed (fillTo): the fill it has at this frame (#RRGGBB). Left out: the fill of its node. */
   readonly fill?: string;
   /** A globe: the moment, in seconds, its turn and the drift of its layers are drawn at. Left out: any other shape. */
@@ -634,6 +681,8 @@ export interface StrokeItem {
   readonly drawn: number;
   /** How far the gaps of its dashes are closed: 0 as authored, 1 a solid line. */
   readonly solid: number;
+  /** A stroke whose dashes flow (flow): how far they have run along the line by this frame, in units of the stroke. Left out: they stay. */
+  readonly flow?: number;
   /**
    * The lights that run along it at this frame: head and tail of each as
    * distances along the line from its first point, and the length of the
@@ -1894,6 +1943,13 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
     return stand ? { upon: stand } : {};
   };
 
+  // Where each magnifier inset looks: the node it is centred on, on the frame, through the view of its layer.
+  const looks = c.lenses ? new Map(c.lenses.map((l) => {
+    const v = layerView(camera, c.layers[l.layer]!.parallax);
+    const at = world[l.look]!;
+    return [l.node, { look: [at.x * v.zoom + v.tx, at.y * v.zoom + v.ty] as Vec2, layer: l.layer }] as const;
+  })) : null;
+
   const layers = c.layers.map((layer): LayerState => {
     const view = layerView(camera, layer.parallax);
     const root: Item[] = [];
@@ -2100,7 +2156,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t, ...globeLayersAt(n, t) } : {}) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(looks?.has(index) ? { lens: looks.get(index)! } : {}), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t, ...globeLayersAt(n, t) } : {}) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;
@@ -2148,7 +2204,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           // A line on a globe: the parts of it that face the viewer.
           const runs = n.globe ? surfaceRuns(surfaceLine(node.path), globeView(n.globe.spec, t), n.globe.r, Math.min(1, drawn)) : null;
           if (runs && runs.length === 0) break;
-          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n, !!part), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...coloured(n), ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
+          items.push({ kind: 'stroke', ...(runs ? { runs } : {}), node: n, xf, alpha: a, drawn: Math.min(1, drawn), solid: node.dash ? sampleSolid(n.stroke!, t) : 1, ...(node.flow ? { flow: speedDistance(node.flow, t) } : {}), ...(pulses.length > 0 ? { pulses } : {}), ...strokeLaid(n, !!part), ...(n.width ? { width: sampleWidth(n.width, t) } : {}), ...held, ...coloured(n), ...(worth?.plain ? {} : standing(index)), ...(part ? { part } : {}) });
           break;
         }
         case 'link': {

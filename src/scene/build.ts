@@ -585,6 +585,56 @@ function wrapShape<T>(where: string, make: () => T): T {
   }
 }
 
+/**
+ * A magnifier inset: a circle of radius r (or a rounded rect w by h) that shows, inside its outline, the frame as drawn
+ * up to the layer `of`, enlarged `zoom` times about the place on screen of the node `look`, which lies at its middle.
+ * Its `fill` is the colour of the ring round it, `width` units wide (4); with `leader` (true) the part it shows is marked
+ * by the same outline at the place, joined to the lens by a line. List it in a flat layer drawn after `of` (a layer of
+ * the frame, `parallax: 0`, as a locator's); it moves, pops, scales and fades as any shape. What it shows is that of
+ * the same frame drawn again through a second camera, only inside the lens: no second map.
+ */
+export function lens(o: {
+  id: string;
+  of: string;
+  look: string;
+  zoom: number;
+  fill: ColorRef;
+  r?: number;
+  w?: number;
+  h?: number;
+  radius?: number;
+  width?: number;
+  leader?: boolean;
+  at?: Vec2;
+  rotation?: number;
+  scale?: number;
+  opacity?: number;
+  depth?: number;
+  sound?: string;
+}): ShapeNode {
+  const where = `lens("${o?.id}")`;
+  checkKeys(where, o, ['id', 'of', 'look', 'zoom', 'fill', 'r', 'w', 'h', 'radius', 'width', 'leader', 'at', 'rotation', 'scale', 'opacity', 'depth', 'sound']);
+  const round = o.r !== undefined;
+  if (round === (o.w !== undefined || o.h !== undefined)) fail(where, 'a lens is a circle (r) or a rounded rect (w, h, radius): give r, or w and h');
+  if (round && o.radius !== undefined) fail(where, 'radius is the corner of a rounded rect: leave it out of a round lens');
+  const shape = wrapShape(where, () => (round ? circleShape(num(where, 'r', o.r, 4, 2000)) : rectShape(num(where, 'w', o.w, 8, 4000), num(where, 'h', o.h, 8, 4000), o.radius ?? Math.min(o.w!, o.h!) * 0.16)));
+  if (typeof o.of !== 'string' || o.of.length === 0) fail(where, 'of must name the layer the lens shows');
+  const node = shapeNode(where, { id: o.id, fill: o.fill, lit: false, ...(o.at === undefined ? {} : { at: o.at }), ...(o.rotation === undefined ? {} : { rotation: o.rotation }), ...(o.scale === undefined ? {} : { scale: o.scale }), ...(o.opacity === undefined ? {} : { opacity: o.opacity }), ...(o.depth === undefined ? {} : { depth: o.depth }), ...(o.sound === undefined ? {} : { sound: o.sound }) }, shape, null);
+  return {
+    ...node,
+    lens: {
+      of: o.of,
+      look: idOf(where, o.look),
+      zoom: num(where, 'zoom', o.zoom, LENS_ZOOM[0], LENS_ZOOM[1]),
+      width: o.width === undefined ? 4 : num(where, 'width', o.width, 0.5, 100),
+      leader: o.leader === undefined ? true : flag(where, 'leader', o.leader),
+    },
+  };
+}
+
+/** The least and the most a lens enlarges. */
+export const LENS_ZOOM = [1.25, 64] as const;
+
 /** A circle of radius r. */
 export function circle(o: ShapeOptions & { r: number }): ShapeNode {
   const where = `circle("${o?.id}")`;
@@ -678,6 +728,9 @@ export function rect(o: ShapeOptions & { w: number; h: number; radius?: number }
   return shapeNode(where, o, wrapShape(where, () => rectShape(o.w, o.h, o.radius ?? Math.min(o.w, o.h) * 0.22)), null);
 }
 
+/** The most pixels a side of the picture of a relief (picture) has. */
+export const RELIEF_PICTURE_MAX = 8192;
+
 /**
  * A field of heights drawn as the light falls on it: relief shading of a map from a grid of elevations (a digital
  * elevation model), over a rect `w` by `h` around its place. The grid's first row lies along the top of the rect, its
@@ -696,6 +749,9 @@ export function rect(o: ShapeOptions & { w: number; h: number; radius?: number }
  * - feather: units of the rect: the field fades out smoothly over this distance toward its edges, so that it melts
  *   into what lies under it (a far edge into the haze, a fine field into a coarse one under it). Left out: it ends
  *   sharp at its edges.
+ * - picture: 1, 2 or 4: the shading is made once into a picture of that many pixels to a cell of the grid, and every
+ *   frame draws that one image through the field's transform: a wide field (a sea, a country) costs one image a frame,
+ *   at any camera. Detail finer than the picture is not there. Not for the ground of a plane (it is drawn raised).
  * - backdrop: true: labels may lie over it without a covers-node warning, as over any backdrop shape (the ground of
  *   a map). Default false.
  */
@@ -712,6 +768,8 @@ export function relief(o: {
   heights: { cols: number; rows: number; values: ArrayLike<number> };
   /** Output pixels across one relief shading sample. Default 1. */
   samplePixels?: 1 | 2 | 4;
+  /** The shading made once into a picture of this many pixels to a cell of the grid, drawn as one image on every frame. */
+  picture?: 1 | 2 | 4;
   vertical?: number;
   sun?: { from?: number; high?: number };
   dark: ColorRef;
@@ -722,8 +780,10 @@ export function relief(o: {
   backdrop?: boolean;
 }): ShapeNode {
   const where = `relief("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'samplePixels', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
+  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'samplePixels', 'picture', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
   if (o.samplePixels !== undefined && o.samplePixels !== 1 && o.samplePixels !== 2 && o.samplePixels !== 4) fail(where, 'samplePixels must be 1, 2 or 4');
+  if (o.picture !== undefined && o.picture !== 1 && o.picture !== 2 && o.picture !== 4) fail(where, 'picture must be 1, 2 or 4: the pixels of its picture to a cell of the grid');
+  if (o.picture !== undefined && o.samplePixels !== undefined) fail(where, 'a relief with a picture is not shaded pixel by pixel: leave samplePixels out');
   const g = o.heights;
   if (g === null || typeof g !== 'object') fail(where, 'heights must be { cols, rows, values }');
   checkKeys(`${where} heights`, g, ['cols', 'rows', 'values']);
@@ -731,6 +791,9 @@ export function relief(o: {
   const rows = num(where, 'heights.rows', g.rows, 2, 8192);
   if (!Number.isInteger(cols) || !Number.isInteger(rows)) fail(where, `heights.cols and heights.rows must be whole numbers, got ${cols} and ${rows}`);
   if (!g.values || typeof g.values.length !== 'number' || g.values.length !== cols * rows) fail(where, `heights.values must hold cols * rows = ${cols * rows} heights, got ${g.values?.length}`);
+  if (o.picture !== undefined && Math.max(cols - 1, rows - 1) * o.picture + 1 > RELIEF_PICTURE_MAX) {
+    fail(where, `its picture would be ${(cols - 1) * o.picture + 1} by ${(rows - 1) * o.picture + 1} pixels; a picture is at most ${RELIEF_PICTURE_MAX} a side: a smaller picture, or a coarser grid`);
+  }
   const heights = Float32Array.from(g.values);
   for (let i = 0; i < heights.length; i++) if (!Number.isFinite(heights[i])) fail(where, `heights.values[${i}] is not a finite number`);
   if (o.sun !== undefined) checkKeys(`${where} sun`, o.sun, ['from', 'high']);
@@ -748,6 +811,7 @@ export function relief(o: {
     ...base,
     relief: {
       ...(o.samplePixels === 2 || o.samplePixels === 4 ? { samplePixels: o.samplePixels } : {}),
+      ...(o.picture === undefined ? {} : { picture: o.picture }),
       cols,
       rows,
       heights,
@@ -1027,11 +1091,18 @@ export function group(o: {
    * it has, and its side as one outline, several times faster than outside such a group. min 0: no body is plain.
    */
   detail?: { min: number };
+  /**
+   * A symbol of a map that keeps a size on screen: size is how large what the group holds is, in its own units; least
+   * and most (units of the frame, 0.5 to 2000) are the smallest and the largest it is drawn on screen, whatever the
+   * zoom of the camera, the perspective at its place and the scale of its parents. Within them it is drawn at its own
+   * size; its own keys (popIn, scaleTo, bump) still scale it on top.
+   */
+  screen?: { size: number; least?: number; most?: number };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): GroupNode {
   const where = `group("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'tall', 'ground', 'fog', 'soft', 'sort', 'cast', 'detail']);
+  checkKeys(where, o, ['id', 'at', 'rotation', 'scale', 'opacity', 'upright', 'children', 'follow', 'idle', 'clipTo', 'sound', 'depth', 'plane', 'back', 'tall', 'ground', 'fog', 'soft', 'sort', 'cast', 'detail', 'screen']);
   if (o.sort !== undefined && o.sort !== 'depth') fail(where, `sort must be "depth" (the children are drawn far to near), got ${JSON.stringify(o.sort)}; leave it out to draw them as listed`);
   if (o.upright !== undefined && typeof o.upright !== 'boolean') fail(where, `upright must be true or false, got ${JSON.stringify(o.upright)}`);
   if (o.back !== undefined && o.plane === undefined) fail(where, 'back is for a group that lies in a plane of a perspective layer: give plane');
@@ -1049,6 +1120,7 @@ export function group(o: {
     ...(o.sort === undefined ? {} : { sort: o.sort }),
     ...castOf(where, o.cast),
     ...detailOf(where, o.detail),
+    ...screenOf(where, o.screen, o.plane !== undefined),
     ...voice(where, o.sound),
     type: 'group',
     id: idOf(where, o.id),
@@ -1063,6 +1135,21 @@ export function group(o: {
     follow: spring(where, 'follow', o.follow),
     idle: idle(where, o.idle),
   };
+}
+
+/** The size a group keeps on screen (screen), checked; nothing when it is not given. */
+function screenOf(where: string, o: unknown, plane: boolean): { screen?: { size: number; least?: number; most?: number } } {
+  if (o === undefined) return {};
+  if (o === null || typeof o !== 'object') fail(where, 'screen must be { size, least?, most? }');
+  checkKeys(`${where} screen`, o, ['size', 'least', 'most']);
+  if (plane) fail(where, 'screen is for a symbol on a map: a group that lies in a plane is the map; give screen to a group inside it');
+  const v = o as { size?: unknown; least?: unknown; most?: unknown };
+  const size = num(where, 'screen.size', v.size, 0.01, 1e6);
+  const least = v.least === undefined ? undefined : num(where, 'screen.least', v.least, 0.5, 2000);
+  const most = v.most === undefined ? undefined : num(where, 'screen.most', v.most, 0.5, 2000);
+  if (least === undefined && most === undefined) fail(where, 'screen needs least, most or both: the size it keeps on screen, in units of the frame');
+  if (least !== undefined && most !== undefined && !(least <= most)) fail(where, `screen.least (${least}) is above screen.most (${most})`);
+  return { screen: { size, ...(least === undefined ? {} : { least }), ...(most === undefined ? {} : { most }) } };
 }
 
 /** A curved line between two nodes; it follows them. Animate it with drawOn() and pulse(). */
@@ -1155,6 +1242,12 @@ export function stroke(o: {
    * back and however small its parents are drawn: a river or a road stays a line through a deep zoom.
    */
   least?: number;
+  /**
+   * A dashed stroke: its dashes run along the line, from its first point toward its last, this many units of the line a
+   * second (a negative speed runs them back); or keys [seconds from the start of the shot, units a second], the first at
+   * 0, joined smoothly: a flow that starts, changes and stops. Left out: the dashes stay where they are.
+   */
+  flow?: number | readonly (readonly [number, number])[];
   /** Units, 0 to 2000: the line is the top of a wall this high, standing on its place, as the rise of a shape. */
   rise?: number;
   /** With rise: the colour of the side of the wall; default a shadow tone of the line's colour. */
@@ -1168,7 +1261,7 @@ export function stroke(o: {
   sound?: string;
 }): StrokeNode {
   const where = `stroke("${o?.id}")`;
-  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'curveSteps', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'rise', 'side', 'openings']);
+  checkKeys(where, o, ['id', 'points', 'color', 'width', 'closed', 'smooth', 'curveSteps', 'dash', 'solid', 'drawn', 'at', 'rotation', 'scale', 'opacity', 'glow', 'pulseColor', 'clipTo', 'sound', 'depth', 'least', 'flow', 'rise', 'side', 'openings']);
   if (o.curveSteps !== undefined && ![1, 2, 4, 8, 16, 32].includes(o.curveSteps)) fail(where, 'curveSteps must be 1, 2, 4, 8, 16 or 32');
   if (!Array.isArray(o.points) || o.points.length < 2) fail(where, 'points must be a list of at least two points [x, y]');
   // Points of three numbers: a line of the space of a perspective layer. Its path is then the line seen straight on.
@@ -1184,10 +1277,15 @@ export function stroke(o: {
     dash = [num(where, 'dash[0]', o.dash[0], 0, 1e4), num(where, 'dash[1]', o.dash[1], 0.5, 1e4)];
   }
   if (o.solid !== undefined && dash === null) fail(where, 'solid is for a dashed stroke: give dash');
+  if (o.flow !== undefined && dash === null) fail(where, 'flow runs the dashes of a stroke along it: give dash');
+  const flow = o.flow === undefined ? undefined
+    : typeof o.flow === 'number' ? [[0, num(where, 'flow', o.flow, -FLOW_MAX, FLOW_MAX)] as const]
+    : speedKeyList(where, 'flow', o.flow, -FLOW_MAX, FLOW_MAX, 'units per second');
   if (solid && o.rise !== undefined) fail(where, 'a stroke of points [x, y, z] cannot have a rise: its points give its place in the space; put a flat stroke with a rise into a group that lies in a plane');
   return {
     // Written only when they are given: a stroke without them is the data it always was.
     ...(o.least === undefined ? {} : { least: num(where, 'least', o.least, 0.5, 200) }),
+    ...(flow === undefined ? {} : { flow }),
     ...risen(where, o, 'stroke'),
     ...openingsOf(where, o, 'stroke'),
     ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
@@ -1686,6 +1784,9 @@ function speedKeyList(where: string, name: string, value: unknown, min: number, 
   }
   return keys;
 }
+
+/** The fastest the dashes of a stroke flow along it, in units of the line a second. */
+const FLOW_MAX = 10000;
 
 /** The fastest the camera travels, in units per frame (1200 units per second). */
 const CAMERA_SPEED_MAX = 20;

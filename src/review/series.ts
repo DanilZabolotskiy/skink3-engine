@@ -13,7 +13,7 @@ import { cameraAt, layerView } from '../camera/camera.ts';
 import type { SpringParams } from '../core/dynamics.ts';
 import { DEG, xfApply, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
-import { pulseSpan } from '../motion/curves.ts';
+import { pulseSpan, speedDistance } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
 import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleOpacity, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
@@ -544,6 +544,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       (c.layers[n.layer]!.persp?.segs.length ?? 0) > 0 ||
       (n.count !== null && n.count.segs.length > 0) ||
       (n.stroke !== null && n.stroke.draws.length + n.stroke.solids.length + n.stroke.pulses.length > 0) ||
+      // Dashes that flow along a stroke.
+      (node.type === 'stroke' && node.flow !== undefined && node.flow.some((k) => k[1] !== 0)) ||
       (n.parent >= 0 && still[n.parent] === 0) ||
       (node.type === 'label' && still[n.targetIndex] === 0);
     still[n.index] = animated ? 0 : 1;
@@ -642,6 +644,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
   const ownAt = new Float64Array(places ? 3 * N : 0);
   // How far the points of a driven outline have travelled so far, in the layer's units.
   const formWay = new Float64Array(N);
+  // The factor of the hold of each symbol that keeps a size on screen (a group with screen), at the frame.
+  const held = c.nodes.some((n) => n.node.type === 'group' && n.node.screen) ? new Map<number, number>() : undefined;
   // Driven nodes above each end of a link, the end itself included: by link, by end.
   const drivers = links.map((l): number[][] =>
     [l.node.fromIndex, l.node.toIndex].map((end) => {
@@ -661,7 +665,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
 
   for (let f = 0; f < frames; f++) {
     const t = f / FPS;
-    const world = computeWorld(c, f, poses, places);
+    held?.clear();
+    const world = computeWorld(c, f, poses, places, undefined, held);
     const cam = cameraAt(c.spec.camera, c.cameraNoise, f, frames, c.cameraTrack);
     camera.x[f] = cam.x;
     camera.y[f] = cam.y;
@@ -826,6 +831,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         s.ownScale[f] = xf.scale;
         s.unit[f] = zoom;
       }
+      // A symbol that keeps a size on screen grows and shrinks with the camera's zoom: that is the camera's doing,
+      // judged on the camera, not a change of its own size. What it holds moves at the size it is drawn.
+      const hold = held?.get(i);
+      if (hold !== undefined) s.ownScale[f] = s.ownScale[f]! / hold;
       ownRaw += turn;
       s.ownRot[f] = f === 0 ? ownRaw : unwrap(s.ownRot[f - 1]!, prevOwnRot[i]!, ownRaw);
       prevOwnRot[i] = ownRaw;
@@ -852,6 +861,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         let life = (sampleDrawn(n.stroke!, t) + (node.dash ? sampleSolid(n.stroke!, t) : 0)) * length;
         // A light that runs along the line: where its head and its tail are.
         if (n.stroke!.pulses.length > 0) for (const p of sampleStrokePulses(n.stroke!, length, t)) life += p.head + p.tail;
+        // Dashes that flow along the line: how far they have run.
+        if (node.flow) life += speedDistance(node.flow, t);
         s.life[f] = life * xf.scale;
       }
       if (s.outline && n.outline) s.outline[f] = outlineTravel(n.outline, t) * xf.scale;

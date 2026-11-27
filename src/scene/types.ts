@@ -137,6 +137,8 @@ export interface ShapeNode extends NodeBase {
   readonly clipTo?: string | null;
   /** What is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip (which may drop a long one). */
   readonly clipMask?: boolean;
+  /** A magnifier inset (lens): the shape shows an enlarged part of another layer inside its outline, its fill the ring round it. */
+  readonly lens?: LensSpec;
   /** The shape is a content: it fills its own outline from the bottom up to a level. */
   readonly level?: LevelSpec | null;
   /**
@@ -226,6 +228,12 @@ export interface GlobeLayerSpec {
 export interface ReliefSpec {
   /** Width in output pixels of a shading sample. Geometry and grounding always use the full height grid. */
   readonly samplePixels?: 2 | 4;
+  /**
+   * The shading made once into a picture of this many pixels to a cell of the grid, and drawn on every frame as that
+   * one image through the transform of the field (a perspective of a plane included). Left out: worked out at every
+   * pixel of the frame.
+   */
+  readonly picture?: 1 | 2 | 4;
   /** Points of the grid across and down; the first row is the top of the rect, the first point of a row its left. */
   readonly cols: number;
   readonly rows: number;
@@ -246,6 +254,20 @@ export interface ReliefSpec {
   readonly tints?: readonly (readonly [number, ColorRef])[];
   /** Units of the rect: the field fades out over this distance toward its edges. Left out: it ends sharp at its edges. */
   readonly feather?: number;
+}
+
+/**
+ * A magnifier inset: what a lens shape shows inside its outline. The frame as drawn up to the layer `of` (its
+ * background, that layer and the layers behind it), enlarged `zoom` times about the place on screen of the node `look`,
+ * so that place lies at the middle of the lens; the outline of the lens drawn round it in its fill, `width` units wide;
+ * with `leader`, the part of the frame it shows marked by the same outline at the place, and a line from there to the lens.
+ */
+export interface LensSpec {
+  readonly of: string;
+  readonly look: string;
+  readonly zoom: number;
+  readonly width: number;
+  readonly leader: boolean;
 }
 
 /** How a heat haze moves the picture behind it. All lengths are in the units of the layer. */
@@ -376,6 +398,8 @@ export interface GroupNode extends NodeBase {
    * with its parent: a face on a body that rolls stays level.
    */
   readonly upright: boolean;
+  /** A symbol that keeps a size on screen: how large it is in its own units, and the least and most it is drawn, in units of the frame. */
+  readonly screen?: { readonly size: number; readonly least?: number; readonly most?: number };
   readonly children: readonly SceneNode[];
   readonly follow: SpringSpec | null;
   readonly idle: IdleSpec | null;
@@ -519,6 +543,8 @@ export interface StrokeNode extends NodeBase {
    * however small its parents are drawn. Left out: it is as wide as `width` says, at every zoom.
    */
   readonly least?: number;
+  /** Dashes that run along the line: speed keys [seconds of the shot, units of the line a second], the first at 0. */
+  readonly flow?: SpeedKeys;
   /** Units: the line is the top of a wall this high, as the rise of a shape. Left out: a flat line. */
   readonly rise?: number;
   /** The colour of the side of that wall. Left out: a shadow tone of the line's colour. */

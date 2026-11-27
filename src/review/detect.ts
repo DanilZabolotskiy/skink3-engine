@@ -15,7 +15,15 @@
 // judged, and counted as life, only while it is seen.
 //
 // A light that runs along a stroke is judged as the pulse of a link is: too
-// fast when it covers half of its own length per frame or more.
+// fast when it covers half of its own length per frame or more. Dashes that
+// flow along a stroke are too fast when they run half of their period (a dash
+// and a gap) per frame or more: the pattern strobes, as a wheel's spokes do.
+// While they run, the stroke is life in its part of the frame.
+//
+// The picture inside a magnifier inset (lens) slides as the node it is
+// centred on moves over its layer, zoom times as fast as that node moves on
+// the frame: too fast when it slides half the width of the lens or more in a
+// frame. The lens itself moves, pops and fades as a shape and is judged so.
 //
 // A line whose width is keyed (a link or a stroke with a widthTo) is judged on
 // the travel of its edge: for a jump, and for a start or a stop without an
@@ -72,7 +80,7 @@
 
 import { DEG } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
-import { PULSE_LENGTH, strokePulseLength } from '../motion/curves.ts';
+import { PULSE_LENGTH, speedDistance, strokePulseLength } from '../motion/curves.ts';
 import { pathTable } from '../motion/paths.ts';
 import { focusSubject, perspectiveSubject, type CompiledShot } from '../scene/compile.ts';
 import { labelLayout, shapeOf, strokePathOf } from '../scene/evaluate.ts';
@@ -83,7 +91,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { atSeam, IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'spring' | 'hold' | 'focus';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'flow' | 'lens' | 'spring' | 'hold' | 'focus';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -877,6 +885,77 @@ export function detectMotion(series: MotionSeries): Finding[] {
         finding('too-fast', s.id, 'pulse', f0, Math.max(f0, f1), ratio, T.fastRatio, 'own length per frame',
           `a light of ${light.toFixed(0)} units runs ${way.toFixed(0)} units along the stroke in ${count.toFixed(1)} frames: ${ratio.toFixed(2)} of its own length per frame (it needs at least ${Math.ceil(way / (T.fastRatio * light))} frames)`),
       );
+    }
+  }
+
+  // Strokes whose dashes flow: a pattern that runs half of its own period or more in a frame strobes, as the spokes of a
+  // wheel do; at a whole period it seems to stand still. Held against the period of the dashes as they are drawn.
+  for (const s of series.placed) {
+    if (!s || s.node.node.type !== 'stroke' || !s.node.node.flow || !s.node.node.dash) continue;
+    const node = s.node.node;
+    const period = node.dash![0] + node.dash![1] + node.width;
+    let start = -1;
+    let most = 0;
+    for (let f = 0; f <= F; f++) {
+      const step = f < F && f > 0 ? Math.abs(speedDistance(node.flow!, f / FPS) - speedDistance(node.flow!, (f - 1) / FPS)) : 0;
+      const hot = f < F && step / period >= T.fastRatio && (s.flags[f]! & IN_FRAME) !== 0 && visibleAt(s, f) && !atSeam(series, f);
+      if (hot) {
+        if (start < 0) start = f;
+        most = Math.max(most, step / period);
+      }
+      if (!hot && start >= 0) {
+        if (f - start >= T.fastFrames) {
+          out.push(
+            finding('too-fast', s.id, 'flow', start, f - 1, most, T.fastRatio, 'own period per frame',
+              `its dashes run ${most.toFixed(2)} of their period (${period.toFixed(1)} units, a dash and a gap) per frame: the flow strobes; slow it, or lengthen the dashes and the gaps`),
+          );
+        }
+        start = -1;
+        most = 0;
+      }
+    }
+  }
+
+  // Magnifier insets: the picture inside a lens slides as the node it is centred on moves over its layer, `zoom` times
+  // as fast as on the frame. Too fast when it slides half the width of the lens or more in a frame: what is in it strobes.
+  for (const l of series.shot.lenses ?? []) {
+    const s = series.placed[l.node];
+    const look = series.placed[l.look];
+    if (!s || !look || s.node.node.type !== 'shape' || !s.node.node.lens) continue;
+    const zoom = s.node.node.lens.zoom;
+    const persp = series.shot.layers[look.node.layer]!.persp !== null;
+    const own = series.views[s.node.layer]!;
+    const shown = series.views[look.node.layer]!;
+    let start = -1;
+    let most = 0;
+    let fastest = 0;
+    for (let f = 0; f <= F; f++) {
+      let hot = false;
+      if (f > 0 && f < F && visibleAt(s, f) && (s.flags[f]! & IN_FRAME) !== 0 && !atSeam(series, f)) {
+        // How far the node moves over its layer on the frame: in a perspective layer what it does in the space, as
+        // the camera sees it (the camera's own move carries the node and what is round it alike).
+        const step = zoom * (persp
+          ? Math.hypot(look.ownX[f]! - look.ownX[f - 1]!, look.ownY[f]! - look.ownY[f - 1]!) * look.unit[f]!
+          : Math.hypot(look.x[f]! - look.x[f - 1]!, look.y[f]! - look.y[f - 1]!) * shown.zoom[f]!);
+        const across = 2 * s.radius * s.scale[f]! * own.zoom[f]!;
+        if (across > 0 && step >= T.fastMinPx && step / across >= T.fastRatio) {
+          hot = true;
+          most = Math.max(most, step / across);
+          fastest = Math.max(fastest, step);
+        }
+      }
+      if (hot && start < 0) start = f;
+      if (!hot && start >= 0) {
+        if (f - start >= T.fastFrames) {
+          out.push(
+            finding('too-fast', s.id, 'lens', start, f - 1, most, T.fastRatio, 'own size per frame',
+              `the picture in the lens slides ${fastest.toFixed(0)} px a frame (${zoom} times the move of "${look.id}"), ${most.toFixed(2)} of the lens's width: what is in it strobes; a lower zoom, a slower move, or a larger lens`),
+          );
+        }
+        start = -1;
+        most = 0;
+        fastest = 0;
+      }
     }
   }
 

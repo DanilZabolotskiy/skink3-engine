@@ -383,6 +383,79 @@ function tintAt(stops: readonly { at: number; rgb: Rgb }[], z: number, out: numb
   out[2] = last.rgb[2];
 }
 
+/** The picture of a field (picture): made once per field, size, light and colours, and kept as pixels alone. */
+const pictures = new WeakMap<ReliefSpec, { readonly key: string; readonly image: ImageData }>();
+
+/**
+ * The shading of a field made into a picture, `picture` pixels to a cell of its grid, each pixel on a point of the grid
+ * or between them: its shade and its height read off the grid along the same curves the field is drawn with pixel by
+ * pixel, tinted, shaded and feathered as there.
+ */
+function pictureOf(spec: ReliefSpec, fw: number, fh: number, from: number, darkHex: string, brightHex: string, tintHexes: readonly string[]): ImageData {
+  const key = [fw, fh, from, darkHex, brightHex, ...tintHexes].join(',');
+  const hit = pictures.get(spec);
+  if (hit && hit.key === key) return hit.image;
+  const k = spec.picture!;
+  const { cols, rows, heights, amount } = spec;
+  const { shade } = shadingOf(spec, fw, fh, from, (spec.high * Math.PI) / 180);
+  const dark = rgbOf(darkHex);
+  const bright = rgbOf(brightHex);
+  const stops = spec.tints?.map((t, n) => ({ at: t[0], rgb: rgbOf(tintHexes[n]!) })) ?? null;
+  const feather = spec.feather ?? 0;
+  const w = (cols - 1) * k + 1;
+  const h = (rows - 1) * k + 1;
+  const data = new Uint8ClampedArray(w * h * 4);
+  const wx = new Float64Array(4);
+  const wy = new Float64Array(4);
+  const tint = [0, 0, 0];
+  for (let py = 0; py < h; py++) {
+    const gy = py / k;
+    const r0 = Math.min(rows - 2, Math.floor(gy));
+    weights(gy - r0, wy);
+    for (let px = 0; px < w; px++) {
+      const gx = px / k;
+      const shown = feather > 0 ? fadeAt((gx * fw) / (cols - 1), (gy * fh) / (rows - 1), 0, 0, fw, fh, feather) : 1;
+      if (!(shown > 0)) continue;
+      const c0 = Math.min(cols - 2, Math.floor(gx));
+      weights(gx - c0, wx);
+      let s = 0;
+      let z = 0;
+      for (let j = 0; j < 4; j++) {
+        const r = Math.max(0, Math.min(rows - 1, r0 - 1 + j)) * cols;
+        let rs = 0;
+        let rz = 0;
+        for (let n = 0; n < 4; n++) {
+          const at = r + Math.max(0, Math.min(cols - 1, c0 - 1 + n));
+          rs += wx[n]! * shade[at]!;
+          if (stops) rz += wx[n]! * heights[at]!;
+        }
+        s += wy[j]! * rs;
+        z += wy[j]! * rz;
+      }
+      s = Math.max(-1, Math.min(1, s)) * amount;
+      const o = (py * w + px) * 4;
+      const to = s < 0 ? dark : bright;
+      const t = Math.abs(s);
+      if (stops) {
+        tintAt(stops, z, tint);
+        data[o] = tint[0]! + (to[0] - tint[0]!) * t;
+        data[o + 1] = tint[1]! + (to[1] - tint[1]!) * t;
+        data[o + 2] = tint[2]! + (to[2] - tint[2]!) * t;
+        data[o + 3] = 255 * shown;
+      } else {
+        data[o] = to[0];
+        data[o + 1] = to[1];
+        data[o + 2] = to[2];
+        data[o + 3] = t * 255 * shown;
+      }
+    }
+  }
+  // Premultiplied by the canvas when it is drawn: the colour of a pixel with no alpha is never seen.
+  const image = new ImageData(data, w, h);
+  pictures.set(spec, { key, image });
+  return image;
+}
+
 /**
  * Draws a field of heights (a rect with relief) where it lies, through the transform of `ctx`: every pixel of the
  * canvas the field covers, worked out by itself. `tone` gives the colour of a palette hex as the layer paints it.
@@ -422,6 +495,24 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const darkHex = tone(colors['relief.dark']!);
   const brightHex = tone(colors['relief.bright']!);
   const tintHexes = spec.tints?.map((_, k) => tone(colors[`relief.tint${k}`]!)) ?? [];
+  if (spec.picture) {
+    // Shaded once into a picture of the field, drawn as one image through its transform.
+    const from = (spec.from * Math.PI) / 180 - xf.rot;
+    const image = pictureOf(spec, fw, fh, from, darkHex, brightHex, tintHexes);
+    // The pixels of the picture stand on the points of the grid: it reaches half a pixel past the field, which it is cut to.
+    const px = fw / (image.width - 1);
+    const py = fh / (image.height - 1);
+    raw.save();
+    raw.setTransform(m);
+    raw.beginPath();
+    raw.rect(x0, y0, fw, fh);
+    raw.clip();
+    raw.imageSmoothingEnabled = true;
+    raw.imageSmoothingQuality = 'high';
+    raw.drawImage(image, x0 - px / 2, y0 - py / 2, fw + px, fh + py);
+    raw.restore();
+    return;
+  }
   const key = [width, height, a, b, c, d, e, f, g, hh, i, xf.rot, ...(raise ?? []), darkHex, brightHex, ...tintHexes];
   const entry = rasterEntry(item.node, key);
   if (entry.raster) {

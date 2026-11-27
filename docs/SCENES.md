@@ -742,6 +742,7 @@ relief({ id: 'hills', w: 2400, h: 1800, heights: { cols: 400, rows: 300, values:
 | `amount` | `0.7` | 0..1: how far a slope turns toward them. A slope that takes no light at all turns `amount` of the way to `dark`; one that faces the light, to `bright` |
 | `tints` | none | `[[height, colour], ...]`, from the lowest: the ground takes the colour of its height, between the two tints around it, and is shaded over that. Left out, only the shading is drawn, as translucent tones over what lies under the field |
 | `feather` | none | units of the rect: the field fades out smoothly over this distance toward its edges, into what lies under it: a far edge into the haze, a finer field into a coarser one under it with no seam (blend their heights at the edge too, so the shading meets). Left out, it ends sharp at its edges |
+| `picture` | none | `1`, `2` or `4`: the shading is made once into a picture of that many pixels to a cell of the grid, and every frame draws that one image through the field's transform (see A relief drawn from a picture). Left out, it is worked out at every pixel of every frame |
 
 It also takes `at`, `depth`, `rotation`, `scale`, `opacity`, `clipTo` and `backdrop`: `backdrop: true` lets labels lie over it without a covers-node warning, as over any backdrop (see Checks); it changes nothing in the picture.
 
@@ -751,7 +752,53 @@ It also takes `at`, `depth`, `rotation`, `scale`, `opacity`, `clipTo` and `backd
 - The shading is worked out once per field and per direction of the light; each frame then reads it. A field that covers the whole frame costs about 0.3 s a frame at 1080p and 1 s at 4K, on one machine.
 - Under `tints`, a grid whose water lies below the lowest land, `[[-10, 'mid.ocean'], [0, 'mid.ocean'], [1, 'mid.jade'], ...]`, draws its own coast along the curve where the heights cross between them; a coast from a vector outline is crisper (`clipTo`).
 
-### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, tall?, ground?, fog?, soft?, sort?, cast?, detail? })`
+##### A relief drawn from a picture
+
+A relief of a wide map (a sea and the lands round it, a country) covers most of the frame, and worked out pixel by pixel it costs a large share of a frame while the camera moves. With `picture` its shading is made once into an image, `picture` pixels to a cell of its grid, and each frame draws that image through the transform of the field, a perspective of its plane included: one image a frame, at any camera.
+
+```ts
+// The land of a sea's map, from a grid of 600 by 340 heights (skink3-geo's world.mjs --heights, gridOnStage), shaded once.
+relief({ id: 'lands', ...land, vertical: land.vertical * 30, dark: 'deep.ink', bright: 'light.cream', amount: 0.5, feather: 60, picture: 2, clipTo: 'coast', backdrop: true }),
+```
+
+- **The same shading.** Each pixel of the picture is read off the grid as the field is drawn without it (its shade and its height along the same curves, its tints, its feather), and the canvas draws the picture smoothly between them. Where the frame shows the field larger than the picture holds, it is soft where the pixel-by-pixel relief stays sharp: give a picture of 2 or 4 for a field seen close, or leave `picture` out.
+- **Made once.** The picture is made again only when the size of the field, the light or the colours change (a key of the background that changes the colours of the layer), and is kept as pixels alone.
+- **Not for a ground.** The ground of a plane (`ground`) is drawn raised, a ray walked to it at every pixel; a relief with a picture lies flat, and a shot that stands a plane on one is refused. A picture is at most 8192 pixels a side, so a grid of 4096 cells takes `picture: 2` at most; `samplePixels` is for a relief without a picture.
+- **Its cost,** measured at 1080p on the GPU of one machine: a field over the whole frame of a moving camera, 600 by 340 heights, 130 ms a frame pixel by pixel, 16 ms with `samplePixels: 4`, 7 ms with `picture: 2`, most of which is the frame around it.
+
+#### `lens({ id, of, look, zoom, fill, r? | w?, h?, radius?, width?, leader?, ... })`: a magnifier inset
+
+A small subject on a wide map (a boat in a harbour, a gate in a wall, a camp) is shown enlarged in an inset beside it: a lens. It shows the frame as it is drawn there, `zoom` times larger, with a ring round it and a line to the place.
+
+```ts
+layer({ id: 'map', depth: 0, nodes: [/* the map, with a node 'harbour' at the place */] }),
+layer({ id: 'inset', depth: -0.2, parallax: 0, blur: 0, tint: 0, nodes: [
+  lens({ id: 'loupe', of: 'map', look: 'harbour', zoom: 4, r: 160, at: [-620, -260], fill: 'light.cream' }),
+] }),
+// timeline
+popIn('loupe', { at: 2 }),
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `of` | required | the id of the layer it shows: it shows the frame as drawn up to that layer, its background and every layer behind it, and not the layers in front of it |
+| `look` | required | the id of a placed node of that layer: the lens is centred on its place at every frame, and follows it when it moves |
+| `zoom` | required | 1.25 to 64: how many times larger the lens shows what is round that place |
+| `fill` | required | the colour of its ring, of the mark at the place and of the line between them |
+| `r`, or `w`, `h`, `radius` | required | a round lens of radius `r`, or a rounded rect `w` by `h` with corners of `radius` (0.16 of its shorter side) |
+| `width` | `4` | units: the width of the ring; the mark and the line are drawn at 0.6 of it |
+| `leader` | `true` | the part of the frame it shows is marked at the place by its outline made smaller, joined to the lens by a line; `false`: the lens alone |
+
+It also takes `at`, `rotation`, `scale`, `opacity`, `depth` and `sound`, and it is a shape like any other: it moves, pops, scales and fades with the intents of a shape.
+
+- **A second camera on the same frame.** The lens draws the display list of the frame again into a canvas of its own size, through a camera that enlarges it about the place it looks at: what is drawn in the lens is what the map draws, with its halos and blurs enlarged with it, and what lies outside it is culled or cut by that small canvas. No second map is built, and the frame is evaluated once.
+- **Where it is listed.** In a flat layer drawn after the layer it shows (nearer, or as near and listed after it), usually a layer of the frame (`parallax: 0`), as a locator is. A lens in a perspective layer, of its own layer, or of a layer drawn after it is refused.
+- **Drawn from the whole frame.** Where the frame draws a still part of a dense plane as a held picture, or a group as a sampled backdrop (`sampledBackdrop`), the lens draws that part as it is, item by item, from the frame evaluated whole: no picture of the frame's size is ever enlarged. A lens is no part of a sampled group: one listed in it is refused.
+- **What it draws** is only what reaches into it: the items of the layers it shows that lie wholly outside it are left out, a long line is cut to the stretches that reach into it, a large flat outline to the part round it, and what glows keeps its halo's reach.
+- The motion review judges the lens as a shape, and the picture in it as it slides: when the node it looks at moves over its layer, what is round it slides through the lens `zoom` times as fast, and half the width of the lens or more in a frame is `too-fast`, on the channel `lens` (see Motion review).
+- **Its cost** is that of drawing again what it shows, and of a second evaluation of the frame where the frame holds or samples a part of it: on a map of a sea that draws in 17 to 20 ms a frame at 1080p, a lens of 300 px at zoom 3 adds 7 to 10 ms; it does not grow with the size of the map, only with what is in the lens.
+
+### `group({ id, at?, rotation?, scale?, opacity?, upright?, children?, follow?, idle?, clipTo?, sound?, depth?, plane?, back?, tall?, ground?, fog?, soft?, sort?, cast?, detail?, screen? })`
 
 An invisible parent. Its children move, turn and scale with it. Like every node it takes `sound`, the key of its voice (see Sound). A group with no children is useful as an anchor: something for a label to point at or for eyes to look at, which the timeline can move.
 
@@ -763,12 +810,29 @@ Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a gro
 
 `sort`, `cast` and `detail` are for the bodies in the group, the shapes and strokes with a `rise`: the order they are drawn in, their shadows, and how small ones are drawn (see Bodies in a group: shadows, depth order, detail).
 
+`screen: { size, least?, most? }` makes the group a symbol that keeps a size on screen (see A symbol that keeps its size on screen).
+
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
 ```ts
 circle({ id: 'ball', r: 30, fill: 'accent.amber', body: { kind: 'dynamic', release: 1 },
   children: [group({ id: 'ball-face', upright: true, children: [eye({ id: 'ball-eye', r: 8, white: 'light.snow', pupil: 'deep.abyss' })] })] })
 ```
+
+#### A symbol that keeps its size on screen
+
+A ship, a camp, a gate or a church on a wide map is drawn at a few pixels when it keeps its true size, and at a size out of all measure when the camera comes close. `screen` gives a group a floor and a cap of its size **on screen**, in units of the frame, whatever the zoom of the camera, the perspective at its place and the scale of its parents:
+
+```ts
+group({ id: 'ship', at: harbour, screen: { size: 30, least: 24, most: 90 }, children: [hull, sail] }),   // 30 units long; never under 24 or over 90 units of the frame
+```
+
+- `size` is how large what the group holds is, in its own units (0.01 to 1 000 000); `least` and `most` (0.5 to 2000, units of the frame) are the smallest and the largest it is drawn. Give one of them or both.
+- At every frame the size it would be drawn at (its size through its parents, the perspective at its place and the zoom of the camera of its layer) is held between `least` and `most` by smooth limits: it eases into its hold through a zoom and never stops shrinking or growing at once. Between them it is drawn at its own size, within a few thousandths; at a limit a little larger than `least`, a little smaller than `most`.
+- It is held about its own place: what it holds grows and shrinks round its `at`, which stays on its place on the map.
+- Its own keys scale it on top: `popIn` brings it in from nothing, `scaleTo` and `bump` change it as ever.
+- A group that lies in a plane (`plane`) is the map, not a symbol on it: `screen` there is refused; give it to a group inside it.
+- The motion review judges a symbol at the size it is drawn: a ship held at 40 px that runs 8 px a frame is a fifth of its size a frame, where the same ship at 4 px would be too fast. That it grows and shrinks with the zoom is the camera's doing, judged on the camera, not a scale of its own.
 
 #### Bodies in a group: shadows, depth order, detail
 
@@ -869,7 +933,7 @@ widthTo('tie', { at: 6, to: 3, dur: 1 }),     // and it is a hair again
 - A stroke that is scaled (`scale`, `scaleTo`, a parent) scales its width with it, keyed or not. `widthTo` is for a line that changes its width and not its size.
 - A `widthTo` makes no event. The motion review judges it on a channel of its own, `width` (the travel of the edge of the line): a width that changes within a frame or two is a `jump`, and a large, quick change with `overshoot: 0` an `abrupt-start`. While its width changes, a line counts as life in the frame.
 
-### `stroke({ id, points, color, width?, least?, closed?, smooth?, dash?, solid?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, rise?, side?, sound?, depth? })`
+### `stroke({ id, points, color, width?, least?, closed?, smooth?, dash?, solid?, flow?, drawn?, at?, rotation?, scale?, opacity?, glow?, pulseColor?, clipTo?, rise?, side?, sound?, depth? })`
 
 A line with round ends along a free-form path: a route, a chart line, an outline, a ring. It is placed like a shape (`at`, `rotation`, `scale`, a parent) and its `points` are in its own space. It can be drawn on over time, and it can be dashed.
 
@@ -883,6 +947,7 @@ A line with round ends along a free-form path: a route, a chart line, an outline
 | `smooth` | `1` | `1` joins the points with a smooth curve, `0` with straight lines; between them the corners are partly rounded. The same as the path of a `travel` |
 | `dash` | none | `[dash, gap]` in units: the straight part of a dash and the clear gap between two. The dashes have round ends, so a dash of `0` is a dot as wide as the line |
 | `solid` | `0` | a dashed stroke: how far its gaps are closed at the start, `0` as authored, `1` a solid line. `solidTo` animates it |
+| `flow` | none | a dashed stroke: its dashes run along the line, units of the line a second, or keys of that speed (see Dashes that flow) |
 | `drawn` | all, or none | the share of the line that is drawn before its first `drawOn`, from its first point. Left out: all of it, and none of it when the stroke has a `drawOn` |
 | `at`, `rotation`, `scale`, `opacity` | `[0, 0]`, `0`, `1`, `1` | as for a shape |
 | `glow` | `0` | `0` to `1`: the line glows, with a halo around it |
@@ -956,6 +1021,24 @@ cameraTo({ at: 1, zoom: 40, dur: 4 }),
 - What is drawn from the width follows it: the round ends, the glow, the lights of `pulse`, the side of a wall (`rise`). Dashes stay laid out by the authored `width`.
 - In a plane of a perspective layer the width is held as the plane is seen at the place of the stroke; along a line that runs into the distance the perspective still narrows it.
 - The motion review reads the zoom on the camera: such a line has no width of its own that changes.
+
+#### Dashes that flow
+
+Water in a channel, grain along a route, supply down a road: a dashed line whose dashes run along it reads as a flow, and shows which way it goes. `flow` runs the dashes of a stroke along its line:
+
+```ts
+stroke({ id: 'channel', points: CHANNEL, color: 'accent.aqua', width: 6, least: 5, glow: 0.8, dash: [16, 10], flow: 45 }),   // 45 units of the line a second, from its first point
+stroke({ id: 'lane', points: LANE, color: 'light.cream', width: 4, dash: [0, 14], flow: [[0, 0], [2, 60], [7, 60], [8, 0]] }),   // a flow that starts, runs and stops
+// timeline
+drawOn('channel', { at: 1, dur: 2 }),   // drawn on, flowing as it is drawn
+```
+
+- `flow` is a speed in units of the line a second, from its first point toward its last (-10 000 to 10 000; a negative speed runs back), or keys `[seconds from the start of the shot, speed]`, the first at 0, joined smoothly as the speeds of a travel are: the dashes start, speed up, slow and stop without a jolt.
+- It needs `dash`; it works with every other option of a dashed stroke: the line is drawn on (`drawOn`), its gaps close (`solidTo`), lights run along it (`pulse`), it glows, it fades.
+- **A line that keeps its width on screen** (`least`) keeps its dashes in step with its width: through a zoom out the dashes, the gaps and the speed of the flow grow with the width the line is held at, so the flow looks the same at any zoom.
+- **Thick, glowing lines on a map** are a stroke with `least` (its width on screen, at any zoom and far into the perspective of a plane), `glow` (its halo, a pass of its layer drawn in units of the frame, so it does not thin with the perspective) and, for a flow, `dash` and `flow`. The halo of a layer is one pass for all that glows in it: the first glowing thing of a layer costs that pass (at 1080p, a few ms a frame), the others little more.
+- A flowing line inside a group that samples a backdrop (`sampledBackdrop`) would be blended between its pictures, so it is refused there: draw it outside that group. The automatic holds of a dense plane leave it live.
+- The motion review knows it: while its dashes run, the stroke is life where it lies, and dashes that run half of their period (a dash and a gap, with the round ends) or more in a frame strobe, as the spokes of a wheel do: `too-fast` on the channel `flow`. Slow it, or lengthen the dashes and the gaps.
 
 ### `label({ id, text, target, fill, ink, runInk?, side?, gap?, size?, minSize?, maxWidth?, maxLines?, opacity?, follow?, count?, sound? })`
 
@@ -1879,9 +1962,44 @@ group({ id: 'map', plane: 'floor', children: [
 group({ id: 'land', plane: 'floor', ground: 'hills', children: [relief({ id: 'hills', ... }),
   houses({ ...TOWN_OPTIONS, shadow: 'deep.abyss', ground: true }), trees({ ...BANK_OPTIONS, shadow: 'deep.abyss', ground: true })] })
 ```
+- **`fabric({ id, blocks, fills, seed?, squares?, square?, streets?, street?, least?, clear?, shadow?, rim?, lift?, dir?, detail?, part? })`** returns `{ node, parts }`: the fabric of a city from its blocks (see The fabric of a city).
 - **Geometry.** `inside(p, ring)`: whether a point lies in an outline (even-odd). `distTo(p, rings)`: the distance to the nearest edge of outlines. `scatter({ within, avoid?, step, aspect?, turn?, jitter?, seed, bounds? })`: the places of a lattice `step` apart (rows `aspect` times that), turned `turn` degrees, each moved at random by up to `jitter` (0.35) of a step, inside `within`, out of `avoid`, over `bounds`. `oval(rx, ry, turn?, n?)`: an oval's outline of `n` (40) points. `smoothLine(points, step)`: a Catmull-Rom line through the points, as points about `step` apart. `patches({ cell, share, r, seed? })`: a mask, true in round patches in about `share` of the cells of a lattice `cell` wide, `r` to 1.8 `r` across their half.
 - A dressing refuses a step so small that it would try more than 400 000 places.
 - For the ground itself, `relief` draws a grid of heights in its light (see Nodes).
+
+#### The fabric of a city
+
+A city seen whole on its map reads as itself by its fabric: its blocks as they are, irregular, the lanes between them, its main streets, its open squares and its landmarks standing out. A lattice of equal houses reads as a grid. `fabric` draws a city from its blocks, outlines on the stage: skink3-geo's blocks of a city (`blocks` of its spec, from the streets of OpenStreetMap or OpenHistoricalMap or from a plan traced by hand, fitted to the stage with `blocksOnStage`, which merges the blocks across lanes too narrow to see at that size), or any outlines a scene has.
+
+```ts
+const city = fabric({
+  id: 'town', blocks: BLOCKS, fills: ['accent.roof', 'accent.tile', 'accent.clay'], seed: 7,
+  squares: SQUARES, square: 'mid.square', streets: MAIN.map((line) => ({ line, width: 12 })), street: 'light.cream', least: 2,
+  clear: [HALL_SITE], shadow: 'deep.shade', rim: 'light.rim', lift: 2, dir: 50,
+  detail: { scale: 0.9, least: 2 }, part: ([x, y]) => (Math.atan2(y, x) > 0 ? 'south' : 'north'),
+});
+group({ id: 'floor', plane: 'floor', children: [land, river, city.node, hall, ...boats] }),
+// timeline: a quarter that grows in
+fadeTo('town-south', { at: -1, to: 0, dur: 0.5 }), fadeTo('town-south', { at: 3, to: 1, dur: 2.5 }),
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `blocks` | required | the blocks, closed outlines on the stage, as many as the city has, each of any number of points |
+| `fills` | required | the tone of the blocks, or a list of tones; each block takes one, drawn from `seed` (0): the same block keeps its tone whatever the detail |
+| `squares`, `square` | none | open squares, outlines drawn in `square` over the blocks of their part: a square that a block closes round is no hole of it, and shows; it fades with its part |
+| `streets`, `street`, `least` | none | the main streets, `{ line, width }` each, drawn over the blocks in `street`, straight from point to point; `least` holds their width on screen, as a stroke's does |
+| `clear` | none | outlines of sites kept clear: a block whose middle lies in one is left out, for a landmark drawn over the fabric |
+| `shadow`, `rim`, `lift`, `dir` | none, none, `1.5`, `45` | the blocks again under them, `lift` units toward `dir` degrees (0 right, 90 down) in `shadow`, and the other way in `rim`: a block reads as raised, lit on one side and shaded on the other. The shadow is drawn whole in its colour (a dark tone of the ground): an opacity of its own would cost a picture of the frame |
+| `detail` | `{ scale: 1, least: 1.5 }` | the level of detail: `scale` is how many pixels of a frame 1920 wide a unit of the stage is drawn at in the nearest view of the fabric; a block smaller there than a square `least` pixels across is left out, and every outline is drawn to within a third of a pixel |
+| `part` | one part, `all` | a function of the middle of a block that names its part (a whole number, or letters, digits, `-` and `_`): the blocks of each part are a group of their own, `<id>-<part>`, to fade or fill as one |
+
+- **What it is.** A group `id` of flat fills (`fillRings`): for each part its rim, its shadow, a fill for each tone and its squares, each fill holding as many outlines as 4000 points take; then the main streets. A city of two thousand blocks is a few dozen nodes, a few paths a frame. All outlines are turned one way round, so that blocks that touch share their colour.
+- **`parts`** are the ids of the groups of the parts, in the order they are drawn: a city that grows (a part fades in after another), one that empties (`fadeTo` to 0, part by part), one whose quarters change colour (`fillTo` each tone's fill). Fade a part, not its fills one by one.
+- **On a map that moves and holds.** Its fills lie in a plane as any region does, on its ground point by point. A layer that samples a backdrop (`sampledBackdrop`) keeps it as a picture while the camera holds; while the camera moves it is drawn whole, at the cost of a few paths.
+- **The level of detail is chosen once,** for the nearest view the fabric is seen in. For a deep zoom into the city, make two fabrics, a coarse one for the wide view and a fine one for the close view, and fade one into the other.
+- **Its cost,** measured at 1080p on the GPU of one machine: a city of 1700 blocks (9300 points) with its squares, streets, shadow and rim, at a tilt of 44 degrees with the camera moving, draws in a quarter of the time of a lattice of 3600 houses with their roofs and shadows over the same ground, or less. On a raised ground its outlines are laid on the ground point by point at every frame, as any region's are.
+- `examples/city` shows it with the other features of a map: a relief from a picture, a channel whose dashes flow, boats that keep their size on screen and a lens that follows one.
 
 ## Checks
 
@@ -1947,6 +2065,8 @@ Things to know when you write a scene:
 - A globe's turn is judged as its rotation, at its radius: a `spin` key that takes it from rest to speed within a frame or two is an `abrupt-start` on the globe. Things on a globe are judged where they are drawn, riding the turn; a keyed layer by its id, for a pop of its opacity or its fill (see A globe).
 - A hard cut (`cut`) is a seam: each side is judged as a shot of its own, and nothing that changes across it is a finding (see A hard cut inside a shot).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
+- Dashes that flow along a stroke (`flow`) are judged on the channel `flow`: running half of their period (a dash and a gap) or more in a frame, they strobe (`too-fast`). While they run, the stroke is life where it lies.
+- A symbol that keeps its size on screen (`screen`) is judged at the size it is drawn; its growing and shrinking with the zoom is the camera's. The picture in a lens is judged on the channel `lens` of the lens: sliding half the width of the lens or more in a frame (the node it follows moving fast, times its `zoom`) it strobes (`too-fast`).
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).
 
@@ -2424,4 +2544,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No dissolves or wipes between shots (a hard cut inside one shot is `cut`), no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size) and no heights on a globe. See the roadmap in the README.
+No dissolves or wipes between shots (a hard cut inside one shot is `cut`), no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size), no heights on a globe, and no fabric of a city that changes its level of detail by itself through a deep zoom (two fabrics, faded one into the other, do it). See the roadmap in the README.

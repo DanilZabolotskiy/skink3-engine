@@ -1045,7 +1045,16 @@ function strokeLine(ctx: CanvasRenderingContext2D, item: StrokeItem): void {
   if (node.dash && item.solid < 1 - 1e-6) {
     // A dash has round ends, so a gap between two of them is one width longer than it looks.
     const gap = node.dash[1] + node.width;
-    ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
+    if (item.flow === undefined) ctx.setLineDash([node.dash[0] + gap * item.solid, gap * (1 - item.solid)]);
+    else {
+      // Dashes that flow: the pattern runs along the line, as far as the flow has carried it, within one period. A line
+      // held on screen (least) keeps its dashes and their flow in step with its width: the flow looks the same at any zoom.
+      const k = node.least === undefined ? 1 : itemWidth(item) / node.width;
+      ctx.setLineDash([(node.dash[0] + gap * item.solid) * k, gap * (1 - item.solid) * k]);
+      const period = (node.dash[0] + gap) * k;
+      const run = item.flow * k;
+      ctx.lineDashOffset = -(run - Math.floor(run / period) * period);
+    }
   }
   const pen = item.runs ? ctx : strokePen(ctx, path);
   pen.beginPath();

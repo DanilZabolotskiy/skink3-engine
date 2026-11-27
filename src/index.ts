@@ -5,7 +5,7 @@
 // See docs/SCENES.md.
 
 // --- Scene authoring -------------------------------------------------------
-export { shot, layer, circle, capsule, polygon, rect, blob, region, fillRings, relief, globe, globeBlob, group, link, label, eye, emitter, stroke, text, intended, type LonLat } from './scene/build.ts';
+export { shot, layer, circle, capsule, polygon, rect, blob, region, fillRings, relief, lens, globe, globeBlob, group, link, label, eye, emitter, stroke, text, intended, type LonLat } from './scene/build.ts';
 export { SceneError, CAMERA_DEFAULTS, PHYSICS_DEFAULTS, type ShapeOptions } from './scene/build.ts';
 export { moveTo, popIn, popOut, turnTo, scaleTo, fadeTo, bump, drawOn, pulse, openTo, blink, stagger } from './motion/intents.ts';
 export { hop, travel, levelTo, squash, moveTimes, sfx, solidTo, cameraTo, zoomTo, countTo, bendTo, widthTo, riseTo, hazeTo, fillTo, colorTo, backgroundTo, reshape } from './motion/intents.ts';
@@ -15,6 +15,7 @@ export { MOVE_PROFILES, DEFAULT_RAMP, rampProgress, profilePeak, type MoveProfil
 export { arcPoints, loopPoints, pathLength, pathTable, pathAt, pathHeightAt, type PathSpec, type PathPoint } from './motion/paths.ts';
 export { matchPoints, reachedAt } from './motion/match.ts';
 export { water, woods, trees, flecks, parcels, houses, logRoad, locator, inside, distTo, scatter, selectByCell, oval, smoothLine, patches } from './scene/map.ts';
+export { fabric, type Fabric, type FabricOptions } from './scene/fabric.ts';
 export type { WaterOptions, WoodsOptions, TreesOptions, FlecksOptions, ParcelsOptions, HousesOptions, LogRoadOptions, LocatorOptions, ScatterOptions } from './scene/map.ts';
 export { reliefHeight } from './scene/ground.ts';
 export { definePalette, checkPalette, resolveColor, PaletteError, ROLES } from './look/palette.ts';

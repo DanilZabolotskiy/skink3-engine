@@ -10,7 +10,7 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem, type StrokeItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
 import { containsPoint, transformOutline, outlineOf, shapeExtent } from '../shape/geometry.ts';
 import {
@@ -32,12 +32,14 @@ import {
   type Paint,
 } from './draw.ts';
 import { heldFrame, type HeldRange } from './holds.ts';
+import { shapePath } from '../shape/path.ts';
 import { outsideShape } from './bounds.ts';
 import { drawFootprints } from './footprints.ts';
 import { displayPlan } from './detail.ts';
 import { applyHaze } from './haze.ts';
 import { glowView, sampledFrame } from './backdrop.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
+import { intoPlane, planePoint, type PlaneMap } from '../scene/space.ts';
 
 export interface RenderOptions {
   /** Output width in pixels; the height follows from 16:9. */
@@ -123,6 +125,10 @@ interface LayerTarget {
   readonly k: number;
   readonly pad: number;
   readonly gpu: boolean;
+  /** The most pixels a picture drawn for a blur, a soft node or a halo reaches past the canvas: the canvas of a lens. Left out: no limit. */
+  readonly padCap?: number;
+  /** Draws a magnifier inset (lens) of the frame onto a canvas of this layer. Left out in a frame without one. */
+  readonly lens?: (ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint, target: LayerTarget) => void;
 }
 
 /** A canvas larger than the frame by `pad` pixels on every side, set up to draw in layer space. */
@@ -252,7 +258,8 @@ function drawItems(
     }
     switch (item.kind) {
       case 'shape':
-        if (!planeView || !outsideShape(item, planeView)) drawShape(ctx, item, paint);
+        if (item.lens && target.lens) target.lens(ctx, item, paint, target);
+        else if (!planeView || !outsideShape(item, planeView)) drawShape(ctx, item, paint);
         break;
       case 'eye':
         drawEye(ctx, item, paint);
@@ -323,7 +330,8 @@ function drawItems(
           !leaf.foot &&
           !leaf.detail?.facet &&
           !leaf.upon &&
-          !leaf.level
+          !leaf.level &&
+          !leaf.lens
         ) {
           ctx.save();
           ctx.globalAlpha *= item.opacity;
@@ -333,7 +341,7 @@ function drawItems(
         }
         // A soft group is blurred as one picture; its canvas has room around the frame for what the blur brings in.
         const softPx = item.soft === undefined ? 0 : Math.min(MAX_SOFT_PX * target.k, item.soft * target.k * target.layer.view.zoom);
-        const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) } : target;
+        const inner = softPx > 0.05 ? { ...target, pad: Math.max(target.pad, Math.min(target.padCap ?? Infinity, Math.ceil(softPx * 3))) } : target;
         const { canvas, ctx: gx } = layerCanvas(inner);
         // A canvas of its own starts without the stretches and the planes it is nested in.
         for (const s of stretches) {
@@ -355,7 +363,7 @@ function drawItems(
           // A clip with a soft edge: the items are drawn whole into a picture of their own, and that picture is kept
           // as far as the blurred outline of the shape is there. A clip by a mask (clipMask) is drawn the same way with a
           // sharp edge (see maskedClip).
-          const inner = { ...target, pad: Math.max(target.pad, Math.ceil(softPx * 3)) };
+          const inner = { ...target, pad: Math.max(target.pad, Math.min(target.padCap ?? Infinity, Math.ceil(softPx * 3))) };
           const own = (): { canvas: Canvas; ctx: CanvasRenderingContext2D } => {
             const made = layerCanvas(inner);
             for (const s of stretches) {
@@ -627,7 +635,7 @@ function drawLayerPart(
     const scale = k * layer.view.zoom;
     const tight = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloTight.max, Math.max(GLOW.haloTight.min, glowReachMax * GLOW.haloTight.k)) * scale + blurPx);
     const wide = Math.min(MAX_SOFT_PX * k, Math.min(GLOW.haloWide.max, Math.max(GLOW.haloWide.min, glowReachMax * GLOW.haloWide.k)) * scale + blurPx);
-    const gpad = Math.ceil(wide * 3);
+    const gpad = Math.min(target.padCap ?? Infinity, Math.ceil(wide * 3));
     const { canvas: gc, ctx: gx } = layerCanvas({ ...target, pad: gpad });
     drawGlow(gx, layer.layer.persp ? glowItems(items, c.covers.length > 0) : items, paint, c.covers.length > 0, seen, undefined, () => {
       const made = newCanvas(target.scratch, gc.width, gc.height, target.gpu);
@@ -669,6 +677,415 @@ function hazeParts(items: readonly Item[], hazes: readonly HazeItem[]): (readonl
   return parts;
 }
 
+/** Where a lens looks in a state of the frame: the item of the lens node, found among the items of its layers. */
+function lensOf(state: FrameState, index: number): ShapeItem['lens'] {
+  const find = (items: readonly Item[]): ShapeItem['lens'] => {
+    for (const item of items) {
+      if (item.kind === 'shape' && item.node.index === index) return item.lens;
+      if ('items' in item) {
+        const hit = find(item.items);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  };
+  for (const layer of state.layers) {
+    const hit = find(layer.items);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** What a magnifier inset needs of the frame it is drawn in. */
+interface LensFrame {
+  readonly c: CompiledShot;
+  /** The layers of the frame, farthest first, each with the index of its layer in the shot. */
+  readonly layers: readonly {
+    readonly layer: LayerState;
+    readonly index: number;
+    readonly leaves: readonly LeafItem[];
+    readonly paint: Paint;
+    readonly seen: ReadonlyMap<LeafItem, number> | null;
+  }[];
+  readonly bg: { readonly inner: string; readonly outer: string; readonly center: readonly [number, number]; readonly radius: number };
+  readonly k: number;
+  readonly scratch: Scratch;
+  readonly gpu: boolean;
+}
+
+/** A box of a layer, [x0, y0, x1, y1] in its units. */
+type LensBox = readonly [number, number, number, number];
+
+/** How far round the part of a layer a lens shows its items are still drawn: a share of the lens's size, and, for what glows, units of the layer for its halo. */
+const LENS_REACH = 0.25;
+const LENS_HALO = 80;
+/** A plain line of this many points or more is cut to the part of it a lens shows. */
+const LENS_RUN_POINTS = 16;
+
+/** The local box of the points of a path, kept per path. */
+const pathBoxes = new WeakMap<object, LensBox>();
+function pathBox(points: readonly Vec2[]): LensBox {
+  let hit = pathBoxes.get(points);
+  if (!hit) {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of points) {
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+    // A smooth curve through the points may bulge past them a little.
+    const bulge = 0.15 * Math.max(x1 - x0, y1 - y0);
+    hit = [x0 - bulge, y0 - bulge, x1 + bulge, y1 + bulge];
+    pathBoxes.set(points, hit);
+  }
+  return hit;
+}
+
+/** Whether points of a node's own space, placed by `xf` (and drawn through `map`), all lie outside a box of the layer. */
+function pointsOutside(corners: readonly Vec2[], xf: { x: number; y: number; rot: number; scale: number }, map: PlaneMap | null, box: LensBox, pad: number): boolean {
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const c of corners) {
+    let p = xfApply(xf, c);
+    if (map) {
+      // A point near or behind the camera of the plane: drawn whatever it is.
+      if (!(map.g * p[0] + map.h * p[1] + 1 > 0.05)) return false;
+      p = planePoint(map, p);
+    }
+    x0 = Math.min(x0, p[0]);
+    y0 = Math.min(y0, p[1]);
+    x1 = Math.max(x1, p[0]);
+    y1 = Math.max(y1, p[1]);
+  }
+  return x1 + pad < box[0] || y1 + pad < box[1] || x0 - pad > box[2] || y0 - pad > box[3];
+}
+
+/** Whether a leaf lies wholly outside a box of its layer, its halo too. Only flat shapes and lines are judged: anything else is drawn. */
+function leafOutside(item: LeafItem, box: LensBox, map: PlaneMap | null): boolean {
+  const halo = glowStrength(item) > 0 ? LENS_HALO : 0;
+  if (item.kind === 'shape') {
+    const node = item.node.node as ShapeNode;
+    if (item.lens || item.foot || item.raise || item.upon || item.detail || item.level || node.relief || node.globe || node.haze || node.soft) return false;
+    const shape = itemShape(item);
+    // An outline of points: the box of its points (a region bulges a little past them); any other shape: its reach.
+    let b: LensBox;
+    if (shape.kind === 'polygon') b = pathBox(shape.points);
+    else {
+      const { center, outer } = shapeExtent(shape);
+      b = [center[0] - outer, center[1] - outer, center[0] + outer, center[1] + outer];
+    }
+    return pointsOutside([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], item.xf, map, box, halo);
+  }
+  if (item.kind === 'stroke') {
+    if (item.foot || item.runs) return false;
+    const b = pathBox(itemPath(item).points);
+    return pointsOutside([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], item.xf, map, box, itemWidth(item) * item.xf.scale + halo);
+  }
+  return false;
+}
+
+/** A long plain line cut to a box of its layer: the runs of its stretches that reach into it, each one point longer at both ends. */
+function strokeRuns(item: StrokeItem, box: LensBox, map: PlaneMap | null): StrokeItem[] | null {
+  const node = item.node.node as StrokeNode;
+  if (node.dash || item.pulses || item.runs || item.foot || item.part || item.drawn < 1) return null;
+  const path = itemPath(item);
+  const pts = path.points;
+  if (pts.length < LENS_RUN_POINTS) return null;
+  const pad = itemWidth(item) * item.xf.scale + (glowStrength(item) > 0 ? LENS_HALO : 0);
+  const n = pts.length;
+  const seg = path.closed ? n : n - 1;
+  // Where each point lies on the layer; null where it lies near or behind the camera of its plane.
+  const at = pts.map((p): Vec2 | null => {
+    const q = xfApply(item.xf, p);
+    if (!map) return q;
+    return map.g * q[0] + map.h * q[1] + 1 > 0.05 ? planePoint(map, q) : null;
+  });
+  const keep = new Uint8Array(seg);
+  let kept = 0;
+  for (let i = 0; i < seg; i++) {
+    const a = at[i];
+    const b = at[(i + 1) % n];
+    if (!a || !b) return null;
+    if (!(Math.max(a[0], b[0]) + pad < box[0] || Math.max(a[1], b[1]) + pad < box[1] || Math.min(a[0], b[0]) - pad > box[2] || Math.min(a[1], b[1]) - pad > box[3])) {
+      keep[i] = 1;
+      kept++;
+    }
+  }
+  if (kept === seg) return null;
+  const out: StrokeItem[] = [];
+  for (let i = 0; i < seg; i++) {
+    if (!keep[i] || (i > 0 && keep[i - 1])) continue;
+    let j = i;
+    while (j + 1 < seg && keep[j + 1]) j++;
+    // The run from point i to point j + 1, one more point at each end, so that a smooth line keeps its bends there.
+    const run: Vec2[] = [];
+    for (let k = i - 1; k <= j + 2; k++) {
+      if (path.closed) run.push(pts[(k + n) % n]!);
+      else if (k >= 0 && k < n) run.push(pts[k]!);
+    }
+    out.push({ ...item, path: runOf(path, i, j, run) });
+  }
+  return out;
+}
+
+/** The runs of a line, kept per line and per stretch, so that the measure of each is made once while it is shown. */
+const runPaths = new WeakMap<object, Map<string, ReturnType<typeof itemPath>>>();
+function runOf(path: ReturnType<typeof itemPath>, i: number, j: number, points: Vec2[]): ReturnType<typeof itemPath> {
+  let byRun = runPaths.get(path.points);
+  if (!byRun) runPaths.set(path.points, (byRun = new Map()));
+  const key = `${i},${j},${path.smooth}`;
+  let made = byRun.get(key);
+  if (!made) byRun.set(key, (made = { ...path, points, closed: false }));
+  return made;
+}
+
+/** A closed outline cut to a convex one (Sutherland-Hodgman); `side` is 1 when the convex one runs with a positive area, else -1. */
+function clipTo(points: readonly Vec2[], hull: readonly Vec2[], side: number): Vec2[] {
+  let out: Vec2[] = [...points];
+  for (let k = 0; k < hull.length && out.length > 0; k++) {
+    const a = hull[k]!;
+    const b = hull[(k + 1) % hull.length]!;
+    const inner = (p: Vec2): number => side * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]));
+    const was = out;
+    out = [];
+    for (let i = 0; i < was.length; i++) {
+      const p = was[i]!;
+      const q = was[(i + 1) % was.length]!;
+      const sp = inner(p);
+      const sq = inner(q);
+      if (sp >= 0) out.push(p);
+      if ((sp >= 0) !== (sq >= 0)) {
+        const t = sp / (sp - sq);
+        out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * A large flat outline of points, cut to a box of its layer: the box taken back into the shape's own space (through
+ * its plane and its place), and the outline, or each of its rings, cut to it. What is cut away lies outside the box,
+ * where nothing of the lens is seen. Null when it is not to be cut: a lit shape (its light is made from the outline),
+ * a curved one, a small one, or one whose plane does not hold the whole box in front of its camera.
+ */
+function regionInBox(item: ShapeItem, box: LensBox, map: PlaneMap | null): ShapeItem | null | 'none' {
+  const node = item.node.node as ShapeNode;
+  const shape = itemShape(item);
+  if (node.lit || node.rimLight || shape.kind !== 'polygon') return null;
+  const rings = shape.rings ?? (shape.smooth === 0 ? [shape.points] : null);
+  if (!rings || rings.reduce((n, r) => n + r.length, 0) < LENS_RUN_POINTS) return null;
+  const { xf } = item;
+  if (!(xf.scale > 0)) return null;
+  const cos = Math.cos(-xf.rot);
+  const sin = Math.sin(-xf.rot);
+  const hull: Vec2[] = [];
+  for (const [x, y] of [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]] as const) {
+    let p: Vec2 = [x, y];
+    if (map) {
+      const q = intoPlane(map, { x, y });
+      // The corner must lie in front of the camera of the plane, and come back to where it was.
+      if (!(map.g * q.x + map.h * q.y + 1 > 0.05)) return null;
+      const back = planePoint(map, [q.x, q.y]);
+      if (Math.abs(back[0] - x) + Math.abs(back[1] - y) > 1e-3 * (1 + Math.abs(x) + Math.abs(y))) return null;
+      p = [q.x, q.y];
+    }
+    const dx = (p[0] - xf.x) / xf.scale;
+    const dy = (p[1] - xf.y) / xf.scale;
+    hull.push([dx * cos - dy * sin, dx * sin + dy * cos]);
+  }
+  let area = 0;
+  for (let i = 0; i < 4; i++) area += hull[i]![0] * hull[(i + 1) % 4]![1] - hull[(i + 1) % 4]![0] * hull[i]![1];
+  if (Math.abs(area) < 1e-9) return null;
+  const cut = rings.map((r) => clipTo(r, hull, area > 0 ? 1 : -1)).filter((r) => r.length >= 3);
+  if (cut.length === 0) return 'none';
+  if (shape.rings) {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const r of cut) for (const [x, y] of r) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return { ...item, shape: { ...shape, rings: cut, points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] } };
+  }
+  return { ...item, shape: { ...shape, points: cut[0]! } };
+}
+
+/** The items of a layer that reach into a box of it: what lies wholly outside it is left out, and so are groups left empty. */
+function within(items: readonly Item[], box: LensBox, map: PlaneMap | null): Item[] {
+  const out: Item[] = [];
+  for (const item of items) {
+    switch (item.kind) {
+      case 'group':
+      case 'clip': {
+        if (item.kind === 'group' && (item.sampled || item.retained)) {
+          out.push(item);
+          break;
+        }
+        const inner = within(item.items, box, map);
+        if (inner.length > 0) out.push(inner.length === item.items.length ? item : { ...item, items: inner });
+        break;
+      }
+      case 'plane': {
+        // A plane in a plane is drawn whole.
+        const inner = map ? item.items : within(item.items, box, item.map);
+        if (inner.length > 0) out.push(inner.length === item.items.length ? item : { ...item, items: inner });
+        break;
+      }
+      case 'stretch':
+        out.push(item);
+        break;
+      default: {
+        if (leafOutside(item, box, map)) break;
+        const runs = item.kind === 'stroke' ? strokeRuns(item, box, map) : null;
+        const region = item.kind === 'shape' && !item.lens && !item.foot && !item.level && !item.detail ? regionInBox(item, box, map) : null;
+        if (runs) out.push(...runs);
+        else if (region === 'none') break;
+        else out.push(region ?? item);
+      }
+    }
+  }
+  return out;
+}
+
+/** How wide the leader of a lens is drawn: a share of the width of its ring. */
+const LEADER_WIDTH = 0.6;
+
+/**
+ * A magnifier inset (lens). The frame as drawn up to the layer it shows (the background and every layer from the
+ * farthest to that one) is drawn again into a canvas of the lens's own size, enlarged `zoom` times about the place on
+ * the frame of the node it looks at, which comes to the middle of the lens: the same display list through a second
+ * camera, its halos and blurs enlarged with it; what lies outside the lens is culled or cut by that small canvas. It is
+ * drawn from the whole frame: a part of a plane the frame holds as a picture, or a sampled backdrop, is drawn as it is. The
+ * picture is laid inside the outline of the lens, the outline is drawn round it as a ring in the lens's fill, and
+ * with `leader` the part of the frame it shows is marked by the same outline, made smaller, joined to the lens by a line.
+ */
+function drawLens(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint, target: LayerTarget, f: LensFrame): void {
+  const node = item.node.node as ShapeNode;
+  const spec = node.lens!;
+  const at = item.lens!;
+  const shape = itemShape(item);
+  // From the lens's own space to the pixels of the canvas it is drawn on.
+  const m = ctx.getTransform().translate(item.xf.x, item.xf.y).rotate((item.xf.rot * 180) / Math.PI).scale(item.xf.scale, item.xf.scale);
+  const device = (p: readonly number[]): Vec2 => [m.a * p[0]! + m.c * p[1]! + m.e, m.b * p[0]! + m.d * p[1]! + m.f];
+  const outline = outlineOf(shape).map(device);
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, y] of outline) {
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x);
+    y1 = Math.max(y1, y);
+  }
+  const bx0 = Math.max(0, Math.floor(x0) - 1);
+  const by0 = Math.max(0, Math.floor(y0) - 1);
+  const bx1 = Math.min(ctx.canvas.width, Math.ceil(x1) + 1);
+  const by1 = Math.min(ctx.canvas.height, Math.ceil(y1) + 1);
+  // Where the lens is drawn and where it looks, on this canvas; how much larger a unit of the stage is in it.
+  const centre = device(shapeExtent(shape).center);
+  const look: Vec2 = [at.look[0] * f.k + target.pad, at.look[1] * f.k + target.pad];
+  const kz = f.k * spec.zoom;
+  const tone = paint.tone('base', itemFill(item));
+
+  if (bx1 - bx0 >= 2 && by1 - by0 >= 2) {
+    const cw = bx1 - bx0;
+    const ch = by1 - by0;
+    const content = newCanvas(f.scratch, cw, ch, f.gpu);
+    const cx = content.getContext('2d');
+    // A point s of the stage lands at (centre - corner) + zoom k (s - look) of the canvas of the lens.
+    const ox = centre[0] - bx0 - kz * at.look[0];
+    const oy = centre[1] - by0 - kz * at.look[1];
+    cx.save();
+    cx.setTransform(kz, 0, 0, kz, ox, oy);
+    const bx = f.bg.center[0] * STAGE_W;
+    const by = f.bg.center[1] * STAGE_H;
+    const sky = cx.createRadialGradient(bx, by, 0, bx, by, f.bg.radius * STAGE_W);
+    sky.addColorStop(0, f.bg.inner);
+    sky.addColorStop(1, f.bg.outer);
+    cx.fillStyle = sky;
+    cx.fillRect(-ox / kz, -oy / kz, cw / kz, ch / kz);
+    cx.restore();
+    // Its pictures reach no farther past it than it is wide: what a blur brings in from farther is not seen in it.
+    const cap = Math.max(cw, ch);
+    for (const l of f.layers) {
+      const view = l.layer.view;
+      const tx = view.tx + ox / kz;
+      const ty = view.ty + oy / kz;
+      const shown: LayerState = { ...l.layer, view: { zoom: view.zoom, tx, ty } };
+      const blurPx = Math.min(MAX_SOFT_PX * kz, (l.layer.blur ?? l.layer.layer.blur) * kz * view.zoom);
+      const lensTarget: LayerTarget = { scratch: f.scratch, layer: shown, width: cw, height: ch, k: kz, pad: blurPx > 0.05 ? Math.min(cap, Math.ceil(blurPx * 3)) : 0, gpu: f.gpu, padCap: cap };
+      // The part of the layer the lens shows, in its units, with room for what a halo or a blur brings into it.
+      const unit = kz * view.zoom;
+      const margin = (LENS_REACH * Math.max(cw, ch)) / unit;
+      const box: LensBox = [-tx / view.zoom - margin, -ty / view.zoom - margin, (cw / kz - tx) / view.zoom + margin, (ch / kz - ty) / view.zoom + margin];
+      const items = within(l.layer.items, box, null);
+      // Only what is drawn in the lens lights its halo there.
+      if (items.length > 0) drawLayerPart(cx, f.c, items, flatItems(items), l.paint, l.seen, lensTarget, blurPx);
+      if (l.index === at.layer) break;
+    }
+    // The picture, inside the outline of the lens.
+    ctx.save();
+    ctx.setTransform(m);
+    ctx.clip(shapePath(shape));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawCanvas(content, bx0, by0);
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.strokeStyle = tone;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  if (spec.leader) {
+    // The part of the frame the lens shows, marked by its outline made smaller, and a line from it to the lens.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.lineWidth = spec.width * Math.hypot(m.a, m.b) * LEADER_WIDTH;
+    const dx = centre[0] - look[0];
+    const dy = centre[1] - look[1];
+    const away = Math.hypot(dx, dy);
+    if (away > 1e-6) {
+      const ux = dx / away;
+      const uy = dy / away;
+      const big = reach(outline, centre, -ux, -uy);
+      const small = big / spec.zoom;
+      // Only while the mark lies outside the lens is there a line between them.
+      if (away > big + small) {
+        ctx.beginPath();
+        ctx.moveTo(look[0] + ux * small, look[1] + uy * small);
+        ctx.lineTo(centre[0] - ux * big, centre[1] - uy * big);
+        ctx.stroke();
+      }
+    }
+    ctx.beginPath();
+    outline.forEach(([x, y], i) => {
+      const p: Vec2 = [look[0] + (x - centre[0]) / spec.zoom, look[1] + (y - centre[1]) / spec.zoom];
+      if (i === 0) ctx.moveTo(p[0], p[1]);
+      else ctx.lineTo(p[0], p[1]);
+    });
+    ctx.closePath();
+    ctx.stroke();
+  }
+  // The ring round the lens.
+  ctx.setTransform(m);
+  ctx.lineWidth = spec.width;
+  ctx.stroke(shapePath(shape));
+  ctx.restore();
+}
+
+/** How far a closed outline reaches from a point inside it along a direction: its farthest crossing of that ray. */
+function reach(outline: readonly Vec2[], from: Vec2, ux: number, uy: number): number {
+  let best = 0;
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i]!;
+    const b = outline[(i + 1) % outline.length]!;
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const den = ux * ey - uy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const ax = a[0] - from[0];
+    const ay = a[1] - from[1];
+    const t = (ax * ey - ay * ex) / den;
+    const u = (ax * uy - ay * ux) / den;
+    if (t > 0 && u >= 0 && u <= 1) best = Math.max(best, t);
+  }
+  return best;
+}
+
 export interface DrawnFrame {
   readonly canvas: Canvas;
   /** Frees the native memory of the frame and of its scratch canvases. */
@@ -676,7 +1093,7 @@ export interface DrawnFrame {
 }
 
 /** Draws a display list. */
-export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>, retained?: ReadonlyMap<number, ImageData>): DrawnFrame {
+export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>, retained?: ReadonlyMap<number, ImageData>, whole?: FrameState): DrawnFrame {
   const width = opts.width;
   const height = heightFor(width);
   const k = width / STAGE_W;
@@ -697,10 +1114,25 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     .sort((a, b) => b.layer.layer.spec.depth - a.layer.layer.spec.depth || a.i - b.i)
     .map((x) => ({
       layer: x.layer,
+      index: x.i,
       leaves: flatItems(x.layer.items),
       paint: makePaint(c.light, bg.atmosphere, x.layer.layer.tint, c.tones),
       seen: hides ? seenShares(x.layer.items) : null,
     }));
+  // A magnifier inset draws the frame again through a camera of its own, inside its outline: from the whole frame, also
+  // where the frame itself draws a held picture of a still part of a plane or a sampled backdrop.
+  let shown: LensFrame['layers'] | undefined;
+  const lens = c.lenses
+    ? (lx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint, target: LayerTarget): void => {
+        shown ??= !whole || whole === state ? layers : whole.layers
+          .map((layer, i) => ({ layer, i }))
+          .sort((a, b) => b.layer.layer.spec.depth - a.layer.layer.spec.depth || a.i - b.i)
+          .map((x) => ({ layer: x.layer, index: x.i, leaves: flatItems(x.layer.items), paint: makePaint(c.light, bg.atmosphere, x.layer.layer.tint, c.tones), seen: hides ? seenShares(x.layer.items) : null }));
+        // Where it looks, as the whole frame has it: the node it looks at may lie in a part the frame draws as a picture.
+        const look = whole && whole !== state ? lensOf(whole, item.node.index) : undefined;
+        drawLens(lx, look ? { ...item, lens: look } : item, paint, target, { c, layers: shown, bg, k, scratch, gpu: opts.gpu });
+      }
+    : undefined;
 
   // 1. Background gradient.
   ctx.save();
@@ -750,7 +1182,7 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
     const blurPx = Math.min(MAX_SOFT_PX * k, (layer.blur ?? layer.layer.blur) * k * layer.view.zoom);
     // Draw past the frame edge, so that a blur does not fade toward the border.
     const pad = blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0;
-    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop, retained };
+    const target: LayerTarget = { scratch, layer, width, height, k, pad, gpu: opts.gpu, backdrop, retained, ...(lens ? { lens } : {}) };
     if (!layer.hazes) {
       drawLayerPart(ctx, c, layer.items, leaves, paint, seen, target, blurPx);
       continue;
@@ -810,14 +1242,14 @@ export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: Rend
         held.images.set(range.first, captureRange(c, state, range, opts));
       }
     }
-    return drawState(held.view, evaluate(held.view, bake, frame, opts.lang), opts, undefined, held.images);
+    return drawState(held.view, evaluate(held.view, bake, frame, opts.lang), opts, undefined, held.images, c.lenses ? evaluate(c, bake, frame, opts.lang) : undefined);
   }
   let current: FrameState | undefined;
   const full = (f: number): FrameState => (f === frame ? (current ??= evaluate(c, bake, f, opts.lang)) : evaluate(c, bake, f, opts.lang));
   const { live, images } = sampledFrame(c, bake, frame, opts, ({ group }, f) => captureBackdrop(c, full(f), group, opts));
   if (!images?.size) return drawState(c, full(frame), opts);
   const state = evaluate(live, bake, frame, opts.lang);
-  if (!c.sampledBackdrops.some((source) => source.liveGlow && images.has(source.group.index))) return drawState(live, state, opts, images);
+  if (!c.sampledBackdrops.some((source) => source.liveGlow && images.has(source.group.index))) return drawState(live, state, opts, images, undefined, c.lenses ? full(frame) : undefined);
   const layers = [...state.layers];
   for (const source of c.sampledBackdrops) {
     const { group, layer, liveGlow } = source;
@@ -834,7 +1266,7 @@ export function drawFrame(c: CompiledShot, bake: Bake, frame: number, opts: Rend
       ),
     };
   }
-  return drawState(live, { ...state, layers }, opts, images);
+  return drawState(live, { ...state, layers }, opts, images, undefined, c.lenses ? full(frame) : undefined);
 }
 
 /** The live halo traverses its original group, plane and clip wrappers. The colour pass paints the cached group image. */

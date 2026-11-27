@@ -225,6 +225,11 @@ export interface CompiledShot {
   readonly facetRoofs?: Uint8Array;
   readonly retainedMask?: Uint8Array;
   readonly sampledBackdrops?: readonly { readonly layer: number; readonly group: CNode; readonly frames: readonly number[]; readonly liveGlow?: true }[];
+  /**
+   * The magnifier insets of the shot (lens): the index of the lens node, the index of the layer it shows and of the node
+   * it is centred on. Left out in a shot without any.
+   */
+  readonly lenses?: readonly { readonly node: number; readonly layer: number; readonly look: number }[];
   readonly spec: ShotSpec;
   readonly frames: number;
   readonly nodes: readonly CNode[];
@@ -1169,12 +1174,35 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         (glowing && !keepGlow) || n.stroke?.pulses.length || n.link?.pulses.length)) {
         fail(`${why}: "${n.id}" uses glow, a pulse, a cover or heat haze that interacts with live drawing`);
       }
+      if (captured && n.node.type === 'shape' && n.node.lens) fail(`${why}: "${n.id}" is a lens, which draws the frame again at every frame: list it outside the sampled group`);
+      if (captured && n.node.type === 'stroke' && n.node.flow) fail(`${why}: "${n.id}" has dashes that flow, which a sampled picture would blend: draw the flowing line outside the sampled group`);
       const refs = [n.clipIndex, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
       if (refs.some(i => i >= 0 && inside(i) !== captured)) fail(`${why}: "${n.id}" has a reference across the sampled group boundary`);
     }
     // A hard cut is never blended over: the frames on both sides of it are pictures of their own.
     const anchors = cutFrames.length === 0 ? [...new Set([0, ...option.frames, frames - 1])] : [...new Set([0, ...option.frames, ...cutFrames.flatMap((f) => [f - 1, f]), frames - 1])].sort((a, b) => a - b);
     return [{ layer: li, group: root, frames: anchors, ...(liveGlow ? { liveGlow: true as const } : {}) }];
+  });
+
+  // Magnifier insets: each shows a layer drawn before its own, centred on a node of that layer.
+  const lenses = nodes.flatMap((n) => {
+    if (n.node.type !== 'shape' || !n.node.lens) return [];
+    const lens = n.node.lens;
+    const why = `${where}: lens "${n.id}"`;
+    const li = layers.findIndex((l) => l.spec.id === lens.of);
+    if (li < 0) fail(`${why} shows the layer "${lens.of}", which is not a layer of the shot (layers: ${layers.map((l) => l.spec.id).join(', ')})`);
+    const own = layers[n.layer]!;
+    if (li === n.layer) fail(`${why} shows its own layer: list it in a layer of its own, drawn after "${lens.of}"`);
+    if (own.persp || n.plane >= 0 || n.persp) fail(`${why} lies in a perspective layer: a lens is a thing of the frame; list it in a flat layer`);
+    const shown = layers[li]!;
+    // Layers are drawn farthest first, those of one depth as listed.
+    if (own.spec.depth > shown.spec.depth || (own.spec.depth === shown.spec.depth && n.layer < li)) {
+      fail(`${why} lies in the layer "${own.spec.id}", which is drawn before "${lens.of}": the lens would be drawn under what it shows; list it in a layer drawn after it (nearer, or as near and listed later)`);
+    }
+    const look = byId.get(lens.look);
+    if (!look) fail(`${why} looks at "${lens.look}", which is not a node of the shot`);
+    if (look.layer !== li || !isPlaced(look.node)) fail(`${why} looks at "${lens.look}": that is a placed node (a shape, a group, an eye, a stroke, a text) of the layer "${lens.of}"`);
+    return [{ node: n.index, layer: li, look: look.index }];
   });
 
   // A plane that stands things on a ground: the ground is a relief among its own children.
@@ -1187,6 +1215,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       if (!g || g.parent !== n.index || g.node.type !== 'shape' || !g.node.relief) {
         fail(`${where}: group "${n.id}" stands on the ground "${id}": that is a relief listed among the group's own children`);
       }
+      if (g.node.relief.picture !== undefined) fail(`${where}: group "${n.id}" stands on the ground "${id}", a relief with a picture: a ground is drawn raised, ray by ray, and a picture lies flat; leave picture out of "${id}", or name another ground`);
       return g.index;
     });
     if (new Set(list).size !== list.length) fail(`${where}: group "${n.id}" names a relief of its ground twice`);
@@ -1296,6 +1325,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     stringKeys: [...stringKeys],
     sceneHash,
     ...(sampledBackdrops.length ? { sampledBackdrops } : {}),
+    ...(lenses.length ? { lenses } : {}),
     covers: nodes.filter((n) => n.node.type === 'shape' && n.node.cover === true).map((n) => n.index),
     clips: nodes.some((n) => n.clipIndex >= 0),
     cameraTrack: cameraKeys.length > 0 || zoomKeys.length > 0 || cutFrames.length > 0 ? buildCameraTrack(spec.camera, frames, cameraKeys, zoomKeys, cutFrames) : null,

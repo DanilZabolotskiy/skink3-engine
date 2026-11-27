@@ -149,7 +149,7 @@ function plan(c: CompiledShot, lo: number, hi: number): HeldRange[] {
         n.form ||
         (v.type !== 'shape' && v.type !== 'stroke' && v.type !== 'group') ||
         (v.type === 'shape' && (v.glow || v.cover || v.level || v.globe)) ||
-        (v.type === 'stroke' && v.glow) ||
+        (v.type === 'stroke' && (v.glow || v.flow)) ||
         (v.type === 'group' && v.plane)
       )
         blocked[offset] = 1;
