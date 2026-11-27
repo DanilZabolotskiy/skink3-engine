@@ -68,7 +68,7 @@ The text report is capped: at most 12 bodies and 4 findings per body. Generated 
 | Kind | What it means | Usual fix |
 |---|---|---|
 | `overlap` | Two bodies are sunk into each other by more than 1.5 px for a tenth of a second or longer, or by a quarter of the smaller one (at least 4 px) for two frames. | If it starts at a release, the body is released inside another one or inside a wall: move its start. In a pile the load presses bodies together: pour slower or less, use fewer and larger bodies, or a wider container. |
-| `tunnelling` | A body passed through a fixed body: it was outside it, and it is outside it again on another side. Or it passed between two fixed bodies through a gap narrower than itself. | Make the wall thicker, close the gap between the walls (let them overlap), or lower the load that pressed the body through: a slower or thinner pour, a lower release velocity. |
+| `tunnelling` | A body passed through a fixed or a kinematic body: it was outside it, and it is outside it again on another side. Or it passed between two fixed bodies through a gap narrower than itself. | Make the wall thicker, close the gap between the walls (let them overlap), or lower the load that pressed the body through: a slower or thinner pour, a lower release velocity. |
 | `escape` | A body that lay on something is, at the end of the shot, below every fixed body and still falling: nothing is left for it to land on. | Widen the ground or add a wall where the body left. If it is meant to fall out of the picture, mark it as intended. |
 | `jitter` | A body at rest swings back and forth by half a pixel or more, four times or more within half a second, while nothing near it travels. A turn counts like a move, by the travel of the body's edge. | Raise `physics.friction` or `physics.angularDamping`, or lower the restitution. A tall narrow stack of small bodies trembles more than a wide one of larger bodies. |
 | `unsettled` | A pile (three or more bodies that touch, standing on a fixed body) still travels at the end of the shot, two seconds or more after the last body landed on it. One finding per pile: it names the fastest body and lists the others. | End the pour earlier or make the shot longer. Raise `physics.linearDamping`, `physics.angularDamping` or `physics.friction` so that sliding and rolling die out. |
@@ -88,19 +88,20 @@ Things that are legitimate and are not flagged:
 - **What is not seen.** A body that is faded out, has no size or is outside the frame is not reported, whatever it does. Only broken numbers are reported regardless.
 - **Walls that are not drawn.** A fixed body with `opacity: 0` is the usual way to give a container that is drawn by other shapes something to hold its contents. Resting on it, or bouncing off it, is not a hit by something unseen; only dynamic bodies count for that. A dynamic body that is merely outside the frame is a thing too.
 - **A body that waits unseen for its release.** With `appear: 'release'` a body is not drawn until the solver takes it over. Before that it is not in the world: it touches nothing, so it is not a body that is not drawn, and the simulation is the same as without the option. From its release on it is judged like any other body.
-- **Things that are not bodies.** A node moved by `travel`, `hop` or `moveTo`, and a content with a `level`, are not in the simulation: they pass through bodies without touching them, and nothing here speaks of them. Their motion is the motion review's.
+- **A pile carried by a kinematic body.** A pile that rides on a kinematic body while it moves at the end of the shot travels with it, and is not unsettled. What it touches may take up to twice its speed, as from any body.
+- **Things that are not bodies.** A node moved by `travel`, `hop` or `moveTo` without a body of kind `'kinematic'`, and a content with a `level`, are not in the simulation: they pass through bodies without touching them, and nothing here speaks of them. Their motion is the motion review's.
 
 ### What applies to what
 
-| | dynamic bodies | fixed bodies | springs | particles |
-|---|---|---|---|---|
-| overlap | against each other and against fixed bodies | as the other body | – | – |
-| tunnelling | through fixed bodies and through the gaps between them | as what is passed | – | – |
-| escape | yes, with gravity and at least one fixed body | as the ground | – | – |
-| jitter, energy-spike | yes | – | – | – |
-| unseen-hit | seen ones, hit by ones that are not drawn | – | – | – |
-| unsettled | piles of three or more that stand on a fixed body | as the support | – | – |
-| not-finite | yes | yes | yes | yes |
+| | dynamic bodies | fixed bodies | kinematic bodies | springs | particles |
+|---|---|---|---|---|---|
+| overlap | against each other and against fixed and kinematic bodies | as the other body | as the other body, measured where it is at each frame | – | – |
+| tunnelling | through fixed and kinematic bodies, and through the gaps between bodies that stand still | as what is passed | as what is passed, measured against its motion | – | – |
+| escape | yes, with gravity and at least one fixed body | as the ground | as the ground | – | – |
+| jitter, energy-spike | yes | – | its speed counted in what a body in touch can take; near one that moves, nothing is calm | – | – |
+| unseen-hit | seen ones, hit by ones that are not drawn | – | – | – | – |
+| unsettled | piles of three or more that stand on a fixed body | as the support | as the support; a pile it carries while it moves is not unsettled | – | – |
+| not-finite | yes | yes | yes | yes | yes |
 
 Springs and particles have no contacts, so nothing but their numbers can break here. How a spring swings and how fast particles travel are questions of the motion review.
 
@@ -113,6 +114,7 @@ Springs and particles have no contacts, so nothing but their numbers can break h
 - **Seen.** A body counts while it is at least 5 % opaque, has a size and reaches into the frame.
 - **Rest and travel.** A body travels when it has moved more than 0.15 px per frame over half a second. A tremble has no travel over that span; a slide has.
 - **A pile** is bodies that touch (surfaces within 0.75 units). It stands when one of them touches a fixed body.
+- **A kinematic body** is a fixed body that moves: the review places its collider where the bake has it at each frame. A passage through it is judged in its own frame of reference, the point carried along with it from one frame to the next, so a body it sweeps aside has not passed through it, and a body it rides into has. A gap is looked for only between bodies that stand still: one that moves carries its edges with it, and what is pressed through it is a passage through it.
 - **Passing through** is judged on a point inside the body (its centre): the body was outside the fixed body, its centre was inside or crossed it between two frames, and it is outside again, with the straight line between the two outside places running through the fixed body. In and back out on the same side is an overlap, not a passage.
 - **A gap** is the nearest place between two fixed bodies. A body cannot pass it when the largest disc inside the body is wider than the gap.
 - **Speed that nothing gave.** The speed of a body at a frame is held against what it had in the two frames before, what gravity adds, and twice the speed of the fastest body it can have touched in those frames, directly or through others. The first frames after a release hold the release itself and are left out.
@@ -211,11 +213,11 @@ A hard cut (`cut`) changes no physics: rigid bodies, their contacts and the part
 |---|---|
 | a new kind of body or collider (a joint, a soft body, a rope, a compound shape) | `src/review/collide.ts` learns its geometry, and the test that holds the review against the physics library covers it |
 | a new solver or a new kind of simulated thing (fluids, flocks, particle collisions) | the detectors that apply are extended to it, and the failure modes that are new get a kind of finding of their own |
-| a new constraint or setting that changes what is sound (a kinematic hand-off, a goal force, restitution above 1) | the detectors that it makes wrong are corrected, and a sound scene that uses it joins the tests |
+| a new constraint or setting that changes what is sound (a hand-off from keys to the simulation, a goal force, restitution above 1) | the detectors that it makes wrong are corrected, and a sound scene that uses it joins the tests |
 | a new source of speed (a force field, a motor, wind on bodies) | the energy check learns it, so that it is not reported as speed from nowhere |
 | a new way for a body to be drawn or not (as `appear: 'release'`: not drawn before its release) | what counts as seen follows it, and a sound scene and a planted defect with it join the tests |
 
-Each such change comes with a planted defect that the review catches and a sound scene that it leaves alone, in `test/physics-review.test.ts`, and with the rows of this guide that it changes; a new kind of finding also gets its line in [QUICK-REFERENCE.md](QUICK-REFERENCE.md#reading-the-reviews). A kind of finding without a test that plants its defect is a blind spot; a finding on a sound shot is a false one. Both are bugs of the review.
+Each such change comes with a planted defect that the review catches and a sound scene that it leaves alone, in `test/physics-review.test.ts` (kinematic bodies: in `test/kinematic.test.ts`), and with the rows of this guide that it changes; a new kind of finding also gets its line in [QUICK-REFERENCE.md](QUICK-REFERENCE.md#reading-the-reviews). A kind of finding without a test that plants its defect is a blind spot; a finding on a sound shot is a false one. Both are bugs of the review.
 
 ## Programmatic use
 

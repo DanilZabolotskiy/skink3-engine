@@ -24,6 +24,7 @@ import { projectedLine } from './projected-line.ts';
 import { drawGlobe } from './globe.ts';
 import { framePath } from './fresh.ts';
 import { drawRelief } from './relief.ts';
+import { ROLL_MIDDLE, ROLL_PITCH } from '../text/count.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 import { splitRuns, type RunSpan } from '../text/runs.ts';
 
@@ -1646,13 +1647,45 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: P
     return;
   }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
-  for (const line of item.lines) {
-    const p = textPath(ctx, line.text, b.size, b.weight);
-    if (!p) continue;
+  for (const line of item.lines) fillLine(ctx, line, b.size, b.weight);
+  ctx.restore();
+}
+
+/**
+ * One piece of a line, in the fill style that is set. A digit of a counter on its way to the next is drawn in the
+ * window of its cell: the digit it leaves moved up by its share of the pitch, the next one coming up under it.
+ */
+function fillLine(ctx: CanvasRenderingContext2D, line: { readonly text: string; readonly x: number; readonly y: number; readonly roll?: TextItem['lines'][number]['roll'] }, size: number, weight: number): void {
+  const roll = line.roll;
+  if (!roll) {
+    const p = textPath(ctx, line.text, size, weight);
+    if (!p) return;
     ctx.save();
     ctx.translate(line.x, line.y);
     ctx.fill(framePath(p));
     ctx.restore();
+    return;
+  }
+  const pitch = ROLL_PITCH * size;
+  ctx.save();
+  ctx.translate(line.x, line.y);
+  // The window: as wide as the cell and a little more, so no edge of a glyph is cut; one pitch high round the middle of a digit.
+  const frame = new Path2D();
+  const half = roll.width / 2 + size * 0.06;
+  frame.rect(-half, -ROLL_MIDDLE * size - pitch / 2, 2 * half, pitch);
+  ctx.clip(frame);
+  const lift = roll.share * pitch;
+  const leaving = line.text ? textPath(ctx, line.text, size, weight) : null;
+  if (leaving) {
+    ctx.save();
+    ctx.translate(0, -lift);
+    ctx.fill(framePath(leaving));
+    ctx.restore();
+  }
+  const coming = textPath(ctx, roll.next, size, weight);
+  if (coming) {
+    ctx.translate(0, pitch - lift);
+    ctx.fill(framePath(coming));
   }
   ctx.restore();
 }
@@ -1676,13 +1709,6 @@ export function drawLabel(ctx: CanvasRenderingContext2D, item: LabelItem, paint:
   }
   ctx.fillStyle = paint.tone('base', item.node.colors['ink']!);
   // A counter draws its lines as they are at this frame; any other label, those of its geometry.
-  for (const line of item.lines ?? g.lines) {
-    const p = textPath(ctx, line.text, g.size, g.weight);
-    if (!p) continue;
-    ctx.save();
-    ctx.translate(line.x, line.y);
-    ctx.fill(framePath(p));
-    ctx.restore();
-  }
+  for (const line of item.lines ?? g.lines) fillLine(ctx, line, g.size, g.weight);
   ctx.restore();
 }

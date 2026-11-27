@@ -111,10 +111,10 @@ test('perspective: the option of a layer and the key of its camera, and what the
   const badLayer = (view: unknown, message: RegExp): void => {
     assert.throws(() => layer({ id: 'room', depth: 0, nodes: [], perspective: view as never }), message, String(message));
   };
-  badLayer('yes', /perspective must be true or \{ aim, distance, tilt, turn, lens \}/);
+  badLayer('yes', /perspective must be true or \{ aim, distance, tilt, turn, lens, focus \}/);
   badLayer({ tilt: 120 }, /perspective\.tilt must be a number in -90\.\.90/);
   badLayer({ aim: [0, 0] }, /perspective\.aim must be \[x, y, z\]/);
-  badLayer({ fov: 40 }, /unknown option "fov" \(allowed: aim, distance, tilt, turn, lens\)/);
+  badLayer({ fov: 40 }, /unknown option "fov" \(allowed: aim, distance, tilt, turn, lens, focus\)/);
 
   assert.deepEqual(perspectiveTo('room', { at: 2, tilt: 40 }), { kind: 'perspectiveTo', target: null, layer: 'room', at: 2, dur: 1.6, tilt: 40, profile: 'ease', ramp: 0.3 });
   assert.deepEqual(perspectiveTo('room', { at: 2, dur: 4, aim: [1, 2, 3], distance: 900, turn: 30, lens: 1200, profile: 'out', ramp: 0.2 }), {

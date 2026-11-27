@@ -1170,11 +1170,13 @@ countTo('way', { at: 1, to: 1280, dur: 3 }),                           // it run
 countTo('way', { at: 7, to: 1281, dur: 0.1 }),                         // a tick
 countTo('grains', { at: 2, to: 2e9, dur: 4, profile: 'steady', ratio: true }),   // digit after digit at an even pace
 countTo('year', { at: 2, to: 1309, dur: 2 }),                          // the label's year: 1309 in every language
+text({ id: 'meter', text: 'count.way', ink: 'light.cream', size: 110, count: { from: 96, roll: true } }),
+countTo('meter', { at: 1, to: 104, dur: 4 }),                          // its digits roll as the wheels of a meter
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
-| `count` of `text` or `label` | none | a number: where the counter starts. Or `{ from, decimals?, grouping? }`: `decimals` (0, up to 6) are the places it shows after the decimal sign; `grouping: false` writes the digits alone, with no sign between their groups |
+| `count` of `text` or `label` | none | a number: where the counter starts. Or `{ from, decimals?, grouping?, roll? }`: `decimals` (0, up to 6) are the places it shows after the decimal sign; `grouping: false` writes the digits alone, with no sign between their groups; `roll: true` rolls its digits as the wheels of a meter |
 | `countTo(id, { at, to, ... })` | | runs the number to `to` |
 | `dur` | `1` | seconds the run takes; a short one is a tick |
 | `profile`, `ramp` | `'ease'`, `0.3` | how the pace is spread: `'ease'` from rest to rest, `'steady'`, `'in'`, `'out'` |
@@ -1189,7 +1191,9 @@ countTo('year', { at: 2, to: 1309, dur: 2 }),                          // the la
 - Everything else is a `text`: place, alignment, a box, the intents of a placed node.
 - **A label that counts** is a label: its box points its tail at its target and follows it. The box is laid out for the widest value, so it neither grows nor shrinks while the number runs, and the number stands where `{n}` is in its line. The label's string must hold `{n}` once, in every language. Like a text that counts, it takes no `runInk`.
 - A `countTo` makes no event. The motion review counts a running number as life in the frame.
-- Digits do not roll like an odometer: a digit is replaced by the next.
+- **Digits that roll: `roll: true`.** Left out, a digit is replaced by the next. With it the counter is a meter: each place is a wheel, the last one turns as the number runs, and a higher one turns to its next digit while the places below it carry. A digit on its way rolls up from below through a window of the line's height, and down as the number falls. A carry is spread over a few frames, as a wheel takes time to turn. A wheel that turns a digit a frame or faster changes its digits in place, as the eye sees a fast meter: in a long, fast run the last places flicker while the higher ones roll. A new place rolls in from blank, with the sign of its group. The cells, the layout for the widest value and everything else are those of any counter.
+  - It runs between values of 0 or more, stops at whole values of its last place (with `decimals: 2`, at hundredths) and holds at most 15 digits: a `from` or a `countTo` outside that is refused.
+  - The motion review judges its digits on a channel of their own, `roll` (see the motion review): an eased count (the default) is sound; one at the profile `'steady'` rolls at one speed between two rests, `mechanical`.
 
 ### `eye({ id, r, white, pupil, at?, scale?, opacity?, lookAt?, blink?, open?, reach?, sound?, depth? })`
 
@@ -1723,6 +1727,7 @@ perspectiveTo('room', { at: 7, dur: 3, distance: 1300 }),
 | `tilt` | `0` | degrees it looks down by: 0 level, 90 straight down on the ground; negative from below |
 | `turn` | `0` | degrees it has gone round the point, to the left: at 90 it stands on the left, and what was at the back is on the left of the picture |
 | `lens` | the `distance` | the zoom of the picture: a thing is drawn `lens / d` times its size, where `d` is how far it is in front of the camera. With the default, what stands at `aim` has its own size |
+| `focus` | none | a focus by distance, `{ far?, near?, at? }`: what lies at the focus is sharp, a thing behind it or in front of it softer the farther off (see Focus by distance) |
 
 With `perspective: true` a node at z 0 is drawn exactly where a flat layer draws it; a node twice as far from the camera is half as large and half as far from the middle. The camera of the shot (its drift, its path, `cameraTo`, `zoomTo`) moves the picture of the layer as it moves any layer, by the layer's `depth`.
 
@@ -1790,6 +1795,30 @@ group({ id: 'map', plane: 'floor', ground: 'hills', fog: { color: 'light.haze', 
 - **What it does not do.** The ground hides the plane behind its hills, but not the things that stand on it: a ship behind a hill is drawn over the hill. A body stands on the ground at its place and does not lean with the slope; a body larger than a cell of the grid sits level on it. The shadows of a group's bodies lie level at the foot of each body unless its `cast` says `ground: true` (see Bodies in a group). A stroke with heights of its own (a path with heights) keeps them and is not laid on the ground. Nothing but a relief listed directly in the group can be its ground, and only a group with `plane` takes one.
 - **Its cost.** Each pixel of a raised relief walks a ray from the camera down to the ground: a field over the whole frame costs about 0.1 s more a frame at 1080p than a flat one. Left out, a plane is drawn as it always was.
 
+**Focus by distance: `focus`.** A street, a row or a wall that runs deep into the picture is sharp near the focus and soft toward its far end; a thing that comes down the street toward the camera sharpens as it comes to the focus, and softens again as it passes nearer.
+
+```ts
+layer({ id: 'street', depth: 0, perspective: { aim: [0, 60, 1400], distance: 1400, tilt: 6, focus: { far: 4, near: 30 } }, nodes: [road, wall, ...posts, ...carts] }),
+```
+
+The depth of a thing is its distance from the camera, along the line of sight, over the distance of the focus, less 1, as the depth of a layer is: 1 for a thing twice as far as the focus, 3 for one four times as far, -0.5 for one halfway to the camera. It is blurred by `far` units of the layer per unit of depth behind the focus, and by `near` per unit in front of it, as the camera's `focus` blurs a layer by its depth.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `far` | `0` | blur per unit of depth behind the focus, 0..100 |
+| `near` | `0` | blur per unit of depth in front of it, 0..400 |
+| `at` | the camera's distance | how far from the camera the focus lies. Left out: the camera's distance from its aim at each frame, so what the camera looks at stays sharp as `perspectiveTo` moves it in or out |
+
+Give `far` or `near` above 0; a focus that blurs nothing is refused.
+
+- **What is blurred:** each node listed in the layer, by the distance of its place, and each child of a group that lies in a plane, by the distance of its place on the plane. Each is one picture: the parts of a group go soft together. The plane itself is not one picture, so a floor's dashes, a wall's panels and the bodies that stand on a ground are blurred each by its own distance.
+- **At every frame:** a thing that travels in the space, or a camera that moves, changes the blur with the distance.
+- **A thing long in depth** (a road, a wall) is blurred alike all along, by its place. Build it of pieces along its length (stretches, panels, dashes) and each is blurred by its own distance.
+- **Its own blur adds:** a node's own `soft` and the focus's blur add as two blurs one after the other do. The layer's `blur` (and `blurTo`) still blurs all of the layer on top.
+- **Its cost:** each blurred node is drawn into a picture of its own and blurred. A street of some sixty blurred nodes draws several times slower than the same street sharp.
+- **The motion review** has nothing to add: the blur follows the motion of the nodes and of the layer's camera, which it already judges.
+- The focus is not keyed: it stays at `at`, or at the camera's distance. A pull of focus over the whole layer is `blurTo`.
+
 **Bodies taller than the camera is high: `tall`.** A body in a plane (a shape with a `rise`) is held under the camera: it is drawn at most 0.9 of the camera's height over the plane, its roof included, so a tower on a map seen from low down is cut short. `tall: true` on the group with `plane` draws such a body whole: the part of it above the camera's height is seen from below, the underside of its roof where it shows, and what would come round behind the camera is left out. Its shadow is that of the body as high as it is held. Bodies placed on the top of a tall body, and strokes with a rise, are still held. Without `tall` a body is drawn as it always was.
 
 **A shape that stands up: `stands`.** `stands: true` on a shape in a plane stands it up from the plane, flat, as a sail, a flag or a sign does. Its own x runs along the plane, turned with its `rotation`; its own y runs straight up, so the points with a negative y stand over its place: `polygon({ id: 'sail', points: [[-30, 0], [40, 0], [-10, -90]], stands: true, ... })` is a lateen sail on a hull. Seen from the side it shows its whole shape; turned toward the camera it narrows to an edge. It is not a body and takes no `rise`. Outside a plane it is drawn as any shape.
@@ -1805,7 +1834,7 @@ group({ id: 'map', plane: 'floor', ground: 'hills', fog: { color: 'light.haze', 
 - The light of a shape is the light of the shot, in the picture of the node; in a plane it is flattened with the plane. There is no light of the space. Only the bodies of a group with `cast` throw shadows, and only on their plane (see Bodies in a group: shadows, depth order, detail); draw any other shadow as links or as a region on the ground and drive it. A shape or a stroke in a plane may stand up from it with `rise`, as the top of a body, with a roof and openings if it is given them (see A height: bodies that stand on the ground).
 - Nothing but a plane is cut at the camera. A node whose place, or one of whose points of the space, is nearer than 2 % of the lens in front of the camera, or behind it, is not drawn at that frame.
 - Rigid bodies are refused in a perspective layer: the physics bake is flat. Springs (`follow`, `sway`) work on the picture, so a move of the layer's camera sets them swinging.
-- No blur by distance: the `blur` of the layer applies to all of it. One node or one group, also in a plane, is blurred by its own `soft`. A plane fades by distance with `fog`.
+- The focus by distance blurs a thing as a whole, by its place, never a plane point by point. Without `focus`, the `blur` of the layer applies to all of it, and one node or one group, also in a plane, is blurred by its own `soft`. A plane fades by distance with `fog`.
 
 `examples/space/scene.ts` shows a floor with a map, a wire cube of driven corners with its shadow, a moon that passes in front of a globe and behind it, a card on a hinge, a ramp, and a camera that rises, goes round and moves in.
 
@@ -1917,6 +1946,7 @@ circle({ id: 'ball', at: [0, -300], r: 30, fill: 'accent.coral', body: { kind: '
 ```
 
 - `{ kind: 'fixed' }` never moves; other bodies land on it.
+- `{ kind: 'kinematic', friction?, restitution? }` moves by its keys, not by the simulation (see Kinematic bodies below).
 - `{ kind: 'dynamic', release, velocity?, spin?, density?, friction?, restitution?, appear? }` stays where the scene put it until `release` (seconds), then the simulation takes it over. Before its release it does not collide with anything. `velocity` (units per second) and `spin` (degrees per second) apply at the release.
 - While it waits for its release a body is drawn where the scene put it, glow included: a hundred glowing pieces that wait above the frame light the top of it. `appear: 'release'` leaves a body undrawn until it is released; the simulation is the same either way.
 - `release` may be negative, down to minus the shot's `physics.prewarm`. The world then starts that many seconds before frame 0, and such a body is already falling, or already at rest, when the shot opens. Contacts from before frame 0 are not recorded.
@@ -1927,10 +1957,30 @@ circle({ id: 'ball', at: [0, -300], r: 30, fill: 'accent.coral', body: { kind: '
 - A body is a solid thing only as far as its own shape goes. Children drawn past that shape, and a pop or a bump (which change the picture, not the collider), are not part of what collides.
 - A faded body still collides, and so does a fixed body with `opacity: 0`. That is how a container is drawn by other shapes around invisible walls; draw it where the walls are.
 - Gravity, damping, friction and restitution are set for the whole shot (`physics`); a body can override friction and restitution, not gravity or damping. The damping is a drag on the velocity: without anything in touch a body follows `dv/dt = gravity - linearDamping × v`, so a fall levels off at the speed `gravity / linearDamping`. With `gravity: 0` nothing falls, and with both dampings at 0 a body keeps the velocity and the spin of its release.
-- A body cannot be taken out of the world, steered or slowed once it is released, and collisions cannot be filtered. Something that should travel at a set speed along a set way is not a body: use `travel`.
+- A dynamic body cannot be taken out of the world, steered or slowed once it is released, and collisions cannot be filtered. Something that should travel at a set speed along a set way is not a dynamic body: use `travel`, and make it a kinematic body if it should push what it meets.
 - For a content that should reach an exact level, use a shape with a `level`: a pile of bodies ends where the simulation puts it.
 
-Joints, bodies driven by animation before their release, goal forces and seed search are not built yet.
+### Kinematic bodies
+
+A kinematic body is moved by the keys of its node, not by the simulation: it pushes and carries the dynamic bodies it meets, and nothing they do moves it. A blade that drives into a heap and shoves it aside, a pan that sinks as things drop into it and carries them down, a paddle, a lid, a lift.
+
+```ts
+rect({ id: 'blade', at: [-860, 232], w: 36, h: 150, fill: 'accent.amber', body: { kind: 'kinematic' } }),
+rect({ id: 'ground', at: [0, 330], w: 1900, h: 60, fill: 'dark.indigo', body: { kind: 'fixed' } }),
+// timeline: along the ground, eased, with no arc
+moveTo('blade', { at: 0.5, to: [-80, 232], dur: 4, profile: 'ease', arc: 0 }),
+```
+
+- **It follows its keys:** `moveTo`, `hop`, `travel` (along a path, rolled or oriented), `turnTo`, a `drive` of its place or its rotation, and `idle`. Its place and its turn are those of its keys at every step of the simulation, so it is drawn exactly where the keys put it.
+- **It pushes and carries.** A dynamic body it meets is pushed out of its way; one that rests on it rides with it, by friction, as it moves and turns. A body asleep in its way is woken before it is reached. `friction` and `restitution` are its own, as a dynamic body's are.
+- **Its contacts are recorded** as any body's: `onContact`, `skink3 bake` and the sound of the shot read them.
+- **It meets no fixed body and no other kinematic one:** they pass through each other. A blade driven along the ground keeps its lower edge at or below the top of the ground, so nothing slips under it. A move along the ground takes `arc: 0`: `moveTo` arcs by default.
+- **What it presses against a fixed body is crushed into it.** A body caught between a kinematic body and a wall cannot get out, and is pushed into one or through it: the physics review finds it as an overlap or a tunnelling. Leave room, or stop the move short.
+- It takes no `scaleTo`, no `drive` of its size, and no `follow` or `sway`: its collider is its shape, at its size.
+- Before frame 0, while the world prewarms, it stands where its keys put it at the start.
+- The motion review judges it on its keys as a keyed node: one speed between two rests is `mechanical`, so ease its moves. The physics review takes it as a wall that moves (see Physics review).
+
+Joints, dynamic bodies driven by animation before their release (a kinematic body is keyed throughout), goal forces and seed search are not built yet.
 
 ## Generating content in a scene
 
@@ -2111,7 +2161,7 @@ Whether the rigid bodies behave like solid things is checked from the bake, with
 | Finding | What it is |
 |---|---|
 | `overlap` | two bodies sunk into each other deeper than a soft contact gives, for long enough to be seen |
-| `tunnelling` | a body that passed through a fixed body, or through a gap between two fixed bodies that is narrower than itself |
+| `tunnelling` | a body that passed through a fixed or a kinematic body, or through a gap between two fixed bodies that is narrower than itself |
 | `escape` | a body that lay on something and ends below every fixed body, still falling |
 | `jitter` | a body at rest that keeps swinging back and forth by half a pixel or more |
 | `unsettled` | a pile that still travels at the end of the shot, two seconds or more after the last body landed |
@@ -2136,6 +2186,7 @@ Things to know when you write a scene with bodies:
 - A body that is meant to leave the picture and fall forever is reported as an escape only if it lay on something first and is seen leaving. Mark it as intended, or fade it out before it leaves.
 - What is not seen is not reported: a body that is faded out, has no size or is outside the frame.
 - A dynamic body collides from its release on, drawn or not. One that is faded out or has not popped in yet, in the way of bodies that are seen, makes them bounce off nothing.
+- A kinematic body is a wall that moves. A body sunk into it or passed through it is measured against its motion; a pile that rides on it while it moves is not unsettled; and what it touches may take up to twice its speed, as from any body in touch. A body crushed between it and a fixed body is an overlap or a tunnelling: leave room.
 
 The full guide, with every threshold, how to read the pictures, and what the review cannot tell: [PHYSICS-REVIEW.md](PHYSICS-REVIEW.md).
 
@@ -2578,4 +2629,4 @@ For sound, `sceneEvents(c, bake)` returns the events of a shot, `loadBank(file)`
 
 ## What is not there yet
 
-No dissolves or wipes between shots (a hard cut inside one shot is `cut`), no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no digits that roll, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that can be steered or retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size), no heights on a globe, and no fabric of a city that changes its level of detail by itself through a deep zoom (two fabrics, faded one into the other, do it). See the roadmap in the README.
+No dissolves or wipes between shots (a hard cut inside one shot is `cut`), no narration, no music and no mix of a film's sound, no keys anchored to words, no bubbles, no scripts beyond Latin, Cyrillic and Greek, no right-to-left text, no double arrows or geometric shapes in the bundled fonts, no soft bodies, ropes with weight, flocks or fluids, no motion blur (particles can be drawn as streaks), no blending of overlapping moves, no size that follows a move which settles, a hop or keys of speed (a size on a profile follows the plain profiles), no corners with different radii, no bodies that are keyed until they are let go (a kinematic body is keyed throughout) and none that can be retired, no way for a scene to follow a baked quantity (the height of a pile), no solid bodies with faces that hide each other (a body with a `rise` is a top over one flat side, drawn in the order of the list), no cast shadows and no light in the space of a perspective layer, no globe seen from close by (a globe is seen from far away, its things on it keep their size), no heights on a globe, and no fabric of a city that changes its level of detail by itself through a deep zoom (two fabrics, faded one into the other, do it). See the roadmap in the README.

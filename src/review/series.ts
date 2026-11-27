@@ -46,6 +46,7 @@ import { outlineTravel, restForms } from '../scene/outline.ts';
 import { eyeOf, perspAt, project } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type GroupNode } from '../scene/types.ts';
 import { containsPoint, transformOutline, outlineOf, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
+import { countWheels, ROLL_PITCH, rollTravel, rollWheels } from '../text/count.ts';
 import { languagesOf } from '../text/strings.ts';
 import { T } from './thresholds.ts';
 
@@ -114,6 +115,12 @@ export interface PlacedSeries {
    * change a viewer sees. null for other nodes.
    */
   readonly life: Float32Array | null;
+  /**
+   * Counters whose digits roll: how far their digits are seen to travel from the frame before, in the layer's units
+   * (the turn of the wheel drawn turning the farthest, times the pitch of its wheels; negative as the number falls).
+   * null for other nodes.
+   */
+  readonly roll: Float32Array | null;
   /**
    * Regions and strokes whose outline is keyed (reshape) or driven (drive
    * with points): how far the outline has changed by each frame, as the way
@@ -513,8 +520,10 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
     turnRadius[n.parent] = Math.max(turnRadius[n.parent]!, offset + turnRadius[i]! * node.scale);
   }
 
+  // What the solver moves: a body, and what it carries; a kinematic body follows its keys, as a timeline node does.
+  const bySolver = (n: CNode): boolean => n.bodySlot >= 0 && !(n.node.type === 'shape' && n.node.body?.kind === 'kinematic');
   const isBody = (index: number): boolean => {
-    for (let i = index; i >= 0; i = c.nodes[i]!.parent) if (c.nodes[i]!.bodySlot >= 0) return true;
+    for (let i = index; i >= 0; i = c.nodes[i]!.parent) if (bySolver(c.nodes[i]!)) return true;
     return false;
   };
 
@@ -567,7 +576,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       node: n,
       id: n.id,
       type,
-      solver: type === 'label' ? isBody(n.targetIndex) : n.bodySlot >= 0,
+      solver: type === 'label' ? isBody(n.targetIndex) : bySolver(n),
       still: still[n.index] === 1,
       x: f32(),
       y: f32(),
@@ -585,6 +594,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       level: n.level ? f32() : null,
       axis: n.axis ? { sx: f32().fill(1), sy: f32().fill(1) } : null,
       life: type === 'stroke' || n.count !== null ? f32() : null,
+      roll: (n.node.type === 'text' || n.node.type === 'label') && n.node.count?.roll === true && n.count !== null && n.count.segs.length > 0 ? f32() : null,
       outline: n.outline || n.form?.drive ? f32() : null,
       width: n.width ? f32() : null,
       shadow: n.rise !== null && n.rise.segs.length > 0 && castLength(c, n) > 0 ? f32() : null,
@@ -864,6 +874,13 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
         // The number as it is shown: a change of its last place is a change on screen.
         const k = 10 ** node.count.decimals;
         s.life[f] = Math.round(sampleCount(n.count, t) * k) * 16;
+      }
+      if (s.roll && (node.type === 'text' || node.type === 'label') && node.count && n.count) {
+        // The digits travel a pitch of the wheels for each digit they turn, at the size the text is drawn.
+        const track = n.count;
+        const size = node.type === 'label' ? labelLayout(c, n, lang).layout.size : textLayout(c, n, lang).layout.size;
+        const wheels = countWheels((u) => sampleCount(track, u), f, FPS, node.count.decimals, rollWheels([track.base, ...track.segs.map((g) => g.to)], node.count.decimals));
+        s.roll[f] = f === 0 ? 0 : rollTravel(wheels) * ROLL_PITCH * size * xf.scale;
       }
       if (s.life && node.type === 'stroke') {
         const length = pathTable(strokePathOf(n, t)).length;

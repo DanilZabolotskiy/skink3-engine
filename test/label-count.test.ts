@@ -123,7 +123,7 @@ test('label count: what it refuses, and that it is opt-in', async () => {
   bad(() => label({ ...TAG, text: 'tag.marked', count: 0, runInk: 'accent.aqua' }), /label\("tag"\): a counter takes no runInk/);
   bad(() => label({ ...TAG, count: { from: 0, grouping: 'no' } as never }), /label\("tag"\): count\.grouping must be true or false/);
   bad(() => text({ id: 'n', text: 'tag.year', ink: 'light.cream', count: { from: 0, grouping: 0 } as never }), /text\("n"\): count\.grouping must be true or false/);
-  bad(() => label({ ...TAG, count: { from: 0, group: false } as never }), /label\("tag"\) count: unknown option "group" \(allowed: from, decimals, grouping\)/);
+  bad(() => label({ ...TAG, count: { from: 0, group: false } as never }), /label\("tag"\) count: unknown option "group" \(allowed: from, decimals, grouping, roll\)/);
   bad(() => label({ ...TAG, count: { from: 0, decimals: 0.5 } }), /count\.decimals must be a whole number/);
 
   // Opt-in: a plain label lists no lines of its own and has no counter in its data; grouping true is written as nothing.

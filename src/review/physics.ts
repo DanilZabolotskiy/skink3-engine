@@ -4,7 +4,7 @@
 // the motion review:
 //
 //   overlap        two bodies sunk into each other deeper than a contact gives
-//   tunnelling     a body that passed through a fixed body, or through a gap narrower than itself
+//   tunnelling     a body that passed through a fixed or a kinematic body, or through a gap narrower than itself
 //   escape         a body below every fixed body, still falling at the end
 //   jitter         a body of a pile at rest that keeps swinging back and forth
 //   unsettled      a pile that still travels at the end, long after the last body landed
@@ -63,7 +63,7 @@ export const PHYSICS_KINDS: Readonly<Record<PhysicsFindingKind, { readonly means
     fix: 'if it starts at a release, the body is released inside another one or inside a wall: move its start. In a pile the load presses bodies together: pour slower or less, use fewer and larger bodies, or a wider container',
   },
   tunnelling: {
-    means: 'a body that passed through a fixed body, or through a gap between two fixed bodies that is narrower than itself',
+    means: 'a body that passed through a fixed or a kinematic body, or through a gap between two fixed bodies that is narrower than itself',
     fix: 'make the wall thicker, close the gap between the walls (let them overlap), or lower the load that pressed the body through: a slower or thinner pour, a lower release velocity',
   },
   escape: {
@@ -111,6 +111,8 @@ export interface PhysicsReport {
     readonly bodies: number;
     readonly dynamic: number;
     readonly fixed: number;
+    /** Bodies moved by their keys; written only when there are any. */
+    readonly kinematic?: number;
     readonly springs: number;
     readonly emitters: number;
     /** Pairs of bodies whose distance was worked out, summed over all frames. */
@@ -151,8 +153,10 @@ interface Body {
   readonly id: string;
   readonly slot: number;
   readonly dynamic: boolean;
+  /** A kinematic body: solid as a fixed one, but carried by its keys, so placed anew at every frame. */
+  readonly moves: boolean;
   readonly col: Collider;
-  /** The first frame at which the solver owns it (0 for a fixed body). */
+  /** The first frame at which the solver owns it (0 for a fixed or a kinematic body). */
   readonly first: number;
   /** A turn of it shows: it is not a plain disc. */
   readonly turns: boolean;
@@ -299,14 +303,27 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
     // the pose of a frame is stored before that frame's steps are taken.
     const step = node.body.kind === 'dynamic' ? Math.ceil(node.body.release * FPS * SUBSTEPS - 1e-6) : 0;
     const first = dynamic ? Math.max(0, Math.floor(step / SUBSTEPS) + 1) : 0;
-    return { id: n.id, slot, dynamic, col: colliderOf(node.shape, node.scale), first: Math.min(first, F), turns: node.shape.kind !== 'circle' || node.children.length > 0 };
+    const moves = node.body.kind === 'kinematic';
+    return { id: n.id, slot, dynamic, moves, col: colliderOf(node.shape, node.scale), first: Math.min(first, F), turns: node.shape.kind !== 'circle' || node.children.length > 0 };
   });
   const dyn = bodies.filter((b) => b.dynamic && !broken.has(b.slot));
+  // What the dynamic bodies meet: the fixed bodies and the kinematic ones.
   const fixed = bodies.filter((b) => !b.dynamic && !broken.has(b.slot));
+  const kin = fixed.filter((b) => b.moves);
   const K = fixed.length;
   const gravity = c.spec.physics.gravity;
+  const solidWord = (b: Body): string => (b.moves ? 'kinematic' : 'fixed');
 
-  const counts = { bodies: N, dynamic: bodies.filter((b) => b.dynamic).length, fixed: bodies.filter((b) => !b.dynamic).length, springs: c.springs.length, emitters: c.emitters.length, pairs: 0 };
+  const kinematicCount = bodies.filter((b) => b.moves).length;
+  const counts = {
+    bodies: N,
+    dynamic: bodies.filter((b) => b.dynamic).length,
+    fixed: bodies.filter((b) => !b.dynamic && !b.moves).length,
+    ...(kinematicCount > 0 ? { kinematic: kinematicCount } : {}),
+    springs: c.springs.length,
+    emitters: c.emitters.length,
+    pairs: 0,
+  };
   const finish = (world: PhysicsReport['world']): PhysicsReport => {
     out.sort((a, b) => b.severity - a.severity || (a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0) || a.from - b.from || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0));
     // Exceptions to the motion review are honoured, and counted as unused, by that review.
@@ -406,11 +423,12 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
   };
   const moving = new Uint8Array(F * N);
   for (const b of dyn) for (let f = b.first; f < F; f++) if (netSpeed(f, b.slot) > P.restPx) moving[f * N + b.slot] = 1;
+  for (const b of kin) for (let f = 0; f < F; f++) if (netSpeed(f, b.slot) > P.restPx) moving[f * N + b.slot] = 1;
 
-  // --- Fixed bodies never move: placed once ------------------------------------------------
+  // --- Fixed bodies never move: placed once; kinematic ones are placed again at every frame --------
   const cores: Float64Array[] = bodies.map((b) => new Float64Array(Math.max(2, b.col.n * 2)));
-  const boxes = fixed.map((b) => {
-    placeCore(b.col, X(0, b.slot), Y(0, b.slot), R(0, b.slot), cores[b.slot]!);
+  const boxOf = (b: Body, f: number): { x0: number; x1: number; y0: number; y1: number } => {
+    placeCore(b.col, X(f, b.slot), Y(f, b.slot), R(f, b.slot), cores[b.slot]!);
     const p = cores[b.slot]!;
     let x0 = Infinity;
     let x1 = -Infinity;
@@ -424,8 +442,23 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
     }
     const r = b.col.radius;
     return { x0: x0 - r, x1: x1 + r, y0: y0 - r, y1: y1 + r };
-  });
+  };
+  const boxes = fixed.map((b) => boxOf(b, 0));
+  /**
+   * A point at frame `to` that stood at (x, y) at frame `from`, carried along with the solid body `b`: a point that
+   * keeps its place on a kinematic body. A fixed body does not move, and the point stays.
+   */
+  const carried = (b: Body, from: number, to: number, x: number, y: number): [number, number] => {
+    if (!b.moves || from === to) return [x, y];
+    const dx = x - X(from, b.slot);
+    const dy = y - Y(from, b.slot);
+    const turn = R(to, b.slot) - R(from, b.slot);
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    return [X(to, b.slot) + dx * cos - dy * sin, Y(to, b.slot) + dx * sin + dy * cos];
+  };
   // Gaps between fixed bodies that a body cannot pass: narrower than the widest disc inside any dynamic body.
+  // Kinematic bodies move, and the gaps they leave move with them: what passes them is judged as tunnelling.
   const widest = dyn.reduce((a, b) => Math.max(a, 2 * b.col.inner), 0);
   const gaps: { ax: number; ay: number; bx: number; by: number; gap: number; k: number; l: number }[] = [];
   {
@@ -434,6 +467,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       for (let l = k + 1; l < K; l++) {
         const a = fixed[k]!;
         const b = fixed[l]!;
+        if (a.moves || b.moves) continue;
         const gap = separation(cores[a.slot]!, a.col.n, a.col.radius, cores[b.slot]!, b.col.n, b.col.radius, near);
         if (gap > 0 && gap < widest) gaps.push({ ax: near.ax, ay: near.ay, bx: near.bx, by: near.by, gap, k, l });
       }
@@ -444,7 +478,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
   /** Travel of the body and of its edge (by turning) in the last frame, in units. */
   const stepLin = new Float32Array(F * N);
   const stepSpin = new Float32Array(F * N);
-  for (const b of dyn) {
+  for (const b of [...dyn, ...kin]) {
     for (let f = Math.max(1, b.first); f < F; f++) {
       stepLin[f * N + b.slot] = Math.hypot(X(f, b.slot) - X(f - 1, b.slot), Y(f, b.slot) - Y(f - 1, b.slot));
       stepSpin[f * N + b.slot] = Math.abs(turned(f, b.slot)) * b.col.bound;
@@ -463,6 +497,9 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
   const groups = new Sets(N);
   const standing = new Uint8Array(N);
   const supported = new Uint8Array(N);
+  /** The body lies on a kinematic body that travels at this frame: it is carried. */
+  const riding = new Uint8Array(N);
+  let lastCarried: Uint8Array | null = null;
   /** Pairs of bodies near enough to have touched within a frame, for the last three frames. */
   const nearPairs: [number[], number[], number[]] = [[], [], []];
   // Tunnelling: per dynamic body and fixed body, whether its centre is inside, and the last frame it was outside before it went in.
@@ -494,12 +531,18 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
   const touch = (f: number, i: number, j: number, jFixed: boolean, sep: number): void => {
     counts.pairs++;
     if (sep <= P.touchUnits) {
-      if (jFixed) supported[i] = 1;
-      else islands.join(i, j);
+      if (jFixed) {
+        supported[i] = 1;
+        if (bodies[j]!.moves && moving[f * N + j]) riding[i] = 1;
+      } else islands.join(i, j);
     }
-    if (sep <= P.touchUnits + stepLin[f * N + i]! + (jFixed ? 0 : stepLin[f * N + j]!)) {
-      if (jFixed) solidNow[i] = 1;
-      else {
+    // A fixed body takes no step; a kinematic one takes the step its keys give it.
+    if (sep <= P.touchUnits + stepLin[f * N + i]! + stepLin[f * N + j]!) {
+      if (jFixed) {
+        solidNow[i] = 1;
+        // What a kinematic body touches can take its speed.
+        if (bodies[j]!.moves) nearPairs[0].push(i, j);
+      } else {
         nearPairs[0].push(i, j);
         // A body outside the frame is still a thing: what counts here is whether it is drawn at all.
         if (drawn[f * N + j]) solidNow[i] = 1;
@@ -539,6 +582,8 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
 
   for (let f = 0; f < F; f++) {
     const z = zoom[f]!;
+    // Kinematic bodies where their keys put them at this frame.
+    for (let k = 0; k < K; k++) if (fixed[k]!.moves) boxes[k] = boxOf(fixed[k]!, f);
     // Bodies the solver owns at this frame, at their poses.
     let active = 0;
     for (const b of dyn) {
@@ -576,6 +621,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
     if (active === 0) continue;
     islands.reset();
     supported.fill(0);
+    riding.fill(0);
     solidBefore.set(solidNow);
     ghostBefore.set(ghostNow);
     solidNow.fill(0);
@@ -587,14 +633,17 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       if (f < b.first) continue;
       const x = X(f, i);
       const y = Y(f, i);
-      const r = reach[i]! + P.touchUnits;
-      const travel = Math.hypot(cx[i]! - prevCx[i]!, cy[i]! - prevCy[i]!);
+      const still = Math.hypot(cx[i]! - prevCx[i]!, cy[i]! - prevCy[i]!);
       for (let k = 0; k < K; k++) {
         const box = boxes[k]!;
         const fb = fixed[k]!;
         const state = i * K + k;
+        const r = reach[i]! + P.touchUnits + stepLin[f * N + fb.slot]!;
         const nearBox = x + r >= box.x0 && x - r <= box.x1 && y + r >= box.y0 && y - r <= box.y1;
         if (nearBox) touch(f, i, fb.slot, true, separation(cores[i]!, b.col.n, b.col.radius, cores[fb.slot]!, fb.col.n, fb.col.radius));
+        // Against a kinematic body, the way the centre went as seen from that body: where it was, carried along with it.
+        const [px, py] = fb.moves && f > 0 ? carried(fb, f - 1, f, prevCx[i]!, prevCy[i]!) : [prevCx[i]!, prevCy[i]!];
+        const travel = fb.moves ? Math.hypot(cx[i]! - px, cy[i]! - py) : still;
 
         // Tunnelling: the centre of the body against the fixed body.
         const reachable = cx[i]! + travel >= box.x0 && cx[i]! - travel <= box.x1 && cy[i]! + travel >= box.y0 && cy[i]! - travel <= box.y1;
@@ -615,8 +664,8 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
           exit(f, i, k);
         } else if (f > b.first && -depth <= travel) {
           // Outside before and after: did it pass through between the two frames?
-          const inside = pathInside(prevCx[i]!, prevCy[i]!, cx[i]!, cy[i]!, cores[fb.slot]!, fb.col.n, fb.col.radius, 1);
-          if (inside * z >= P.tunnelPx) tunnels.push({ i, k, l: -1, a: f - 1, b: f, inside, gap: 0, x: (prevCx[i]! + cx[i]!) / 2, y: (prevCy[i]! + cy[i]!) / 2 });
+          const inside = pathInside(px, py, cx[i]!, cy[i]!, cores[fb.slot]!, fb.col.n, fb.col.radius, 1);
+          if (inside * z >= P.tunnelPx) tunnels.push({ i, k, l: -1, a: f - 1, b: f, inside, gap: 0, x: (px + cx[i]!) / 2, y: (py + cy[i]!) / 2 });
         }
       }
       // A gap between two fixed bodies that is narrower than the body.
@@ -669,6 +718,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
     // an impact or a slide by rocking for a moment, and that is not a tremble.
     travelling.length = 0;
     for (const b of dyn) if (f >= b.first && moving[f * N + b.slot]) travelling.push(b.slot);
+    for (const b of kin) if (moving[f * N + b.slot]) travelling.push(b.slot);
     for (const b of dyn) {
       const i = b.slot;
       if (f < b.first || moving[f * N + i]) continue;
@@ -677,9 +727,12 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       const y = Y(f, i);
       let near = false;
       for (let m = 0; m < travelling.length && !near; m++) {
-        const dx = X(f, travelling[m]!) - x;
-        const dy = Y(f, travelling[m]!) - y;
-        near = dx * dx + dy * dy < clear * clear;
+        const t = bodies[travelling[m]!]!;
+        const dx = X(f, t.slot) - x;
+        const dy = Y(f, t.slot) - y;
+        // A kinematic body is near from anywhere along it.
+        const within = clear + (t.moves ? t.col.bound : 0);
+        near = dx * dx + dy * dy < within * within;
       }
       if (!near) calm[f * N + i] = 1;
     }
@@ -695,11 +748,13 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
     if (f === F - 1) {
       lastIslands = new Int32Array(N).fill(-1);
       lastSupported = new Uint8Array(N);
+      lastCarried = new Uint8Array(N);
       for (const b of dyn) {
         if (f < b.first) continue;
         const root = islands.find(b.slot);
         lastIslands[b.slot] = root;
         if (standing[root]) lastSupported[root] = 1;
+        if (riding[b.slot]) lastCarried[root] = 1;
       }
     }
 
@@ -743,6 +798,18 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
           topOwner[root] = i;
         } else if (s > top2[root]!) top2[root] = s;
       }
+      // A kinematic body gives what it touches the speed of its keys, at this frame or the two before.
+      for (const b of kin) {
+        const i = b.slot;
+        const root = groups.find(i);
+        let s = 0;
+        for (let g = f - 2; g <= f; g++) s = Math.max(s, stepLin[g * N + i]! + stepSpin[g * N + i]!);
+        if (s > top1[root]!) {
+          top2[root] = top1[root]!;
+          top1[root] = s;
+          topOwner[root] = i;
+        } else if (s > top2[root]!) top2[root] = s;
+      }
       for (const b of dyn) {
         const i = b.slot;
         // The first frames after a release hold the release itself.
@@ -775,6 +842,8 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       ax += col.center[0] * Math.cos(rot) - col.center[1] * Math.sin(rot);
       ay += col.center[0] * Math.sin(rot) + col.center[1] * Math.cos(rot);
     }
+    // Where it went in, carried along with a kinematic body to where that body is now.
+    [ax, ay] = carried(fb, a, f, ax, ay);
     const inside = pathInside(ax, ay, cx[i]!, cy[i]!, cores[fb.slot]!, fb.col.n, fb.col.radius, 1);
     if (inside * zoom[f]! >= P.tunnelPx) tunnels.push({ i, k, l: -1, a, b: f, inside, gap: 0, x: (ax + cx[i]!) / 2, y: (ay + cy[i]!) / 2 });
   }
@@ -801,7 +870,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       p.maxDepth,
       P.overlapPx,
       'px',
-      `sunk ${p.maxDepth.toFixed(1)} px into ${b.dynamic ? '' : 'the fixed body '}"${b.id}" at frame ${p.maxAt}; deeper than ${P.overlapPx} px for ${p.frames} frame(s), ${p.longest} in a row${where}`,
+      `sunk ${p.maxDepth.toFixed(1)} px into ${b.dynamic ? '' : `the ${solidWord(b)} body `}"${b.id}" at frame ${p.maxAt}; deeper than ${P.overlapPx} px for ${p.frames} frame(s), ${p.longest} in a row${where}`,
       p.maxAt,
       [p.x, p.y],
     );
@@ -818,6 +887,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       if (!seen[t.a * N + t.i] && !seen[t.b * N + t.i]) continue;
       const z = zoom[t.b]!;
       const through = fixed[t.k]!.id;
+      const word = solidWord(fixed[t.k]!);
       if (t.l < 0) {
         const px = t.inside * z;
         make(
@@ -829,7 +899,7 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
           px,
           P.tunnelPx,
           'px',
-          `passed through the fixed body "${through}" between frames ${t.a} and ${t.b}: the line from where it was outside to where it is outside again runs ${px.toFixed(1)} px inside it`,
+          `passed through the ${word} body "${through}" between frames ${t.a} and ${t.b}: the line from where it was outside to where it is outside again runs ${px.toFixed(1)} px inside it`,
           t.b,
           [t.x, t.y],
         );
@@ -984,6 +1054,8 @@ export function reviewPhysics(c: CompiledShot, bake: Bake): PhysicsReport {
       for (const members of byRoot.values()) {
         // A pile is bodies that lie on each other; one body that rolls along the ground is not one.
         if (members.length < 3) continue;
+        // A pile that a kinematic body carries travels with it.
+        if (lastCarried?.[lastIslands[members[0]!]!]) continue;
         // The pile was last joined when the latest of its bodies came to lie in it.
         const landedLast = members.reduce((a, m) => Math.max(a, groundedSince[m]!), -1);
         const waited = (last - landedLast) / FPS;

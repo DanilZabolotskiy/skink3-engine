@@ -94,7 +94,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { atSeam, IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'light' | 'particles' | 'haze' | 'pulse' | 'flow' | 'lens' | 'spring' | 'hold' | 'focus';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'roll' | 'fill' | 'light' | 'particles' | 'haze' | 'pulse' | 'flow' | 'lens' | 'spring' | 'hold' | 'focus';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -174,7 +174,7 @@ export function finding(
 
 /** Steps of one channel: the change from frame f - 1 to frame f in px, as components and as a length. */
 interface Chan {
-  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width' | 'shadow' | 'focus';
+  readonly name: 'position' | 'rotation' | 'scale' | 'level' | 'outline' | 'width' | 'shadow' | 'roll' | 'focus';
   readonly a: Float32Array;
   readonly b: Float32Array;
   readonly d: Float32Array;
@@ -259,6 +259,7 @@ const CHANNEL_WORDS: Readonly<Record<Chan['name'], { readonly moved: string; rea
   outline: { moved: 'changed by', what: 'outline (travel of its points)' },
   width: { moved: 'changed by', what: 'width (travel of its edge)' },
   shadow: { moved: 'moved', what: 'shadow (travel of its end)' },
+  roll: { moved: 'rolled', what: 'roll (travel of its digits)' },
   focus: { moved: 'changed by', what: 'focus (travel of a blurred edge)' },
 };
 
@@ -799,6 +800,22 @@ export function detectMotion(series: MotionSeries): Finding[] {
           jumps(s.id, form, okSeen, F, mine);
           abrupt(s.id, form, st, F, NO_FRAMES, eased);
           mechanical(s.id, form, st, s, F, flat);
+        }
+      }
+      // A counter whose digits roll: the travel of the digits on their way is judged like a move.
+      if (s.roll) {
+        const wheel = chan('roll', F);
+        const zoomOf = series.views[s.node.layer]!.zoom;
+        let largest = 0;
+        for (let f = 1; f < F; f++) {
+          wheel.b[f] = s.roll[f]! * zoomOf[f]!;
+          wheel.d[f] = Math.abs(wheel.b[f]!);
+          if (wheel.d[f]! > largest) largest = wheel.d[f]!;
+        }
+        if (largest >= quiet) {
+          jumps(s.id, wheel, okSeen, F, mine);
+          abrupt(s.id, wheel, st, F, NO_FRAMES, eased);
+          mechanical(s.id, wheel, st, s, F, flat);
         }
       }
       // A stroke whose width is keyed: the travel of its edge is judged for a jump and for its ease.

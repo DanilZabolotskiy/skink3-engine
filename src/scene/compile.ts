@@ -82,7 +82,7 @@ import {
   type StrokeTrack,
   type WidthTrack,
 } from '../motion/tracks.ts';
-import { COUNT_MARK } from '../text/count.ts';
+import { COUNT_MARK, rollRefusal } from '../text/count.ts';
 import { isRegion } from '../shape/geometry.ts';
 import { buildBackgroundTrack, type BackgroundTrack } from './background.ts';
 import { buildFillTrack, type FillTrack } from './fill.ts';
@@ -525,13 +525,13 @@ export function compileShot(spec: ShotSpec): CompiledShot {
     switch (key.kind) {
       case 'moveTo':
         need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
-        if (node.type === 'shape' && node.body) fail(`${where}: moveTo cannot target "${node.id}": a rigid body is moved by the physics bake`);
+        if (node.type === 'shape' && node.body && node.body.kind !== 'kinematic') fail(`${where}: moveTo cannot target "${node.id}": a ${node.body.kind} rigid body is moved by the physics bake (a body of kind "kinematic" follows its keys)`);
         push(moves, index, key);
         break;
       case 'hop':
       case 'travel':
         need(isPlaced(node), 'shapes, groups, eyes, strokes and texts');
-        if (node.type === 'shape' && node.body) fail(`${where}: ${key.kind} cannot target "${node.id}": a rigid body is moved by the physics bake`);
+        if (node.type === 'shape' && node.body && node.body.kind !== 'kinematic') fail(`${where}: ${key.kind} cannot target "${node.id}": a ${node.body.kind} rigid body is moved by the physics bake (a body of kind "kinematic" follows its keys)`);
         if (key.kind === 'travel' && (key.roll !== null || key.orient) && node.type === 'eye') {
           fail(`${where}: travel("${node.id}") cannot roll or orient an eye: an eye does not turn; put it in a group and move that`);
         }
@@ -549,7 +549,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         break;
       case 'turnTo':
         need(node.type === 'shape' || node.type === 'group' || node.type === 'stroke' || node.type === 'text', 'shapes, groups, strokes and texts');
-        if (node.type === 'shape' && node.body) fail(`${where}: turnTo cannot target "${node.id}": a rigid body is turned by the physics bake`);
+        if (node.type === 'shape' && node.body && node.body.kind !== 'kinematic') fail(`${where}: turnTo cannot target "${node.id}": a ${node.body.kind} rigid body is turned by the physics bake (a body of kind "kinematic" follows its keys)`);
         if (key.about !== undefined) {
           // A hinge: the plane of a group turns about one of its own axes.
           if (node.type !== 'group' || !node.plane) {
@@ -597,6 +597,11 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         break;
       case 'countTo':
         if ((node.type !== 'text' && node.type !== 'label') || !node.count) fail(`${where}: countTo cannot target ${node.type} "${node.id}"; it applies to a text or a label that is a counter (give it the option count)`);
+        if (node.count.roll) {
+          // The wheels of a meter come to rest at whole digits.
+          const refused = rollRefusal(key.to, node.count.decimals);
+          if (refused) fail(`${where}: countTo("${node.id}") to: ${refused}`);
+        }
         push(counts, index, key);
         break;
       case 'solidTo':
@@ -809,7 +814,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         }
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
-          if (node.follow || node.sway || node.idle) fail(`${where}: rigid body "${node.id}" cannot also have follow, sway or idle`);
+          if (node.follow || node.sway) fail(`${where}: rigid body "${node.id}" cannot also have follow or sway`);
+          if (node.idle && node.body.kind !== 'kinematic') fail(`${where}: rigid body "${node.id}" cannot also have idle: a ${node.body.kind} body is placed by the physics bake (a body of kind "kinematic" follows its keys and its idle)`);
           if (bodyLayer >= 0 && bodyLayer !== d.layer) {
             fail(`${where}: rigid bodies must all be in one layer ("${node.id}" is in "${spec.layers[d.layer]!.id}", others are in "${spec.layers[bodyLayer]!.id}")`);
           }
@@ -965,7 +971,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         else if ((moves.get(d.index) ?? []).some((k) => k.kind === 'moveTo' && k.z !== undefined)) {
           fail(`moveTo("${node.id}") has a place of three numbers, [x, y, z]: ${listed}`);
         }
-        const body = node.type === 'shape' && node.body !== null;
+        // A kinematic body follows its keys, and so its drives too.
+        const body = node.type === 'shape' && node.body !== null && node.body.kind !== 'kinematic';
         // A drive sets a channel instead of the keys of that channel, never beside them.
         const place = driveTrack(node.id, 'place', 2, driven, (k) => (k.place && k.placeDims === 3 ? k.place.filter((_, i) => i % 3 !== 2) : k.place));
         if (place) {

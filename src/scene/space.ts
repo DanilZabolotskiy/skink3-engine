@@ -22,6 +22,28 @@ export interface PerspSpec {
   readonly turn: number;
   /** Its lens: the distance at which one unit is drawn one unit large. */
   readonly lens: number;
+  /** Focus by distance: what lies at the focus is sharp, what lies behind it or in front of it the softer the farther off. Left out: all of the layer is as sharp. */
+  readonly focus?: PerspFocus;
+}
+
+/**
+ * The focus of a perspective layer by distance. The depth of a thing is how far it is from the camera, along the line
+ * of sight, over the distance of the focus, less 1, as the depth of a layer is: 1 for a thing twice as far as the
+ * focus, -0.5 for one halfway to the camera. It is blurred by `far` per unit of depth behind the focus and by `near`
+ * per unit in front of it, in the units of the layer, as the camera's focus blurs a layer.
+ */
+export interface PerspFocus {
+  readonly far: number;
+  readonly near: number;
+  /** The distance from the camera that is sharp. Left out: the camera's distance from its aim at each frame, so that what it looks at stays sharp. */
+  readonly at?: number;
+}
+
+/** How much the focus of a perspective layer blurs a thing `distance` away from its camera, when the focus is `at` away. */
+export function focusBlur(focus: PerspFocus, distance: number, at: number): number {
+  if (!(distance > 0) || !(at > 0)) return 0;
+  const depth = distance / at - 1;
+  return depth >= 0 ? focus.far * depth : focus.near * -depth;
 }
 
 export interface PerspSeg {

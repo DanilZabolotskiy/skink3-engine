@@ -21,6 +21,8 @@ export const BASE_DENSITY = 1 / (UNITS_PER_METER * UNITS_PER_METER);
 export const CONTACT_FREQUENCY = 30;
 /** Solver iterations per step: twice the default, so that a resting pile does not sink into itself. */
 export const SOLVER_ITERATIONS = 8;
+/** How far beyond its reach a moving kinematic body wakes the bodies asleep around it, in units. */
+const WAKE_MARGIN = 4;
 /** Substeps after first touch over which the peak impulse of a contact is taken. */
 const IMPACT_WINDOW = 4;
 /** Impacts weaker than this (kg m/s) are not recorded. */
@@ -52,6 +54,8 @@ export interface RigidBodyDef {
   readonly rot: number;
   readonly scale: number;
   readonly body: BodySpec;
+  /** A kinematic body: where its keys put it at a time in seconds from the start of the shot (rot in radians). */
+  readonly track?: (seconds: number) => { readonly x: number; readonly y: number; readonly rot: number };
 }
 
 export interface RigidResult {
@@ -103,10 +107,18 @@ export function colliderFor(R: typeof RAPIER, shape: ShapeSpec, id: string): RAP
   }
 }
 
+/** The track of a kinematic body; a body without one stands where it was put. */
+function trackOf(def: RigidBodyDef): (seconds: number) => { readonly x: number; readonly y: number; readonly rot: number } {
+  return def.track ?? (() => ({ x: def.x, y: def.y, rot: def.rot }));
+}
+
 /**
  * Simulates the rigid bodies of a shot and returns their pose at every frame.
  * A dynamic body holds its authored pose until its release time, then joins the
- * world. The pose stored for frame n is the state at time n / 60 s. With
+ * world. A kinematic body is in the world from the start and is carried, step by
+ * step, to where its track puts it at the end of the step: the solver gives the
+ * dynamic bodies it meets the push of that motion, and it takes none back. The
+ * pose stored for frame n is the state at time n / 60 s. With
  * `style.prewarm` the world first runs for that many seconds before frame 0;
  * bodies with a negative release join it then, and contacts from before the
  * shot are not recorded.
@@ -128,11 +140,21 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
   const bodies: (RAPIER.RigidBody | null)[] = new Array<RAPIER.RigidBody | null>(n).fill(null);
   const idOfCollider = new Map<number, string>();
 
+  const prewarmSteps = Math.round(Math.max(0, style.prewarm) * FPS * SUBSTEPS);
+  const kinematic: number[] = [];
+  /** How far the outline of a kinematic body reaches from its origin, in units. */
+  const reach: number[] = [];
   const create = (i: number): void => {
     const def = defs[i]!;
     const spec = def.body;
-    const desc = spec.kind === 'fixed' ? R.RigidBodyDesc.fixed() : R.RigidBodyDesc.dynamic();
-    desc.setTranslation(def.x, def.y).setRotation(def.rot);
+    const desc = spec.kind === 'fixed' ? R.RigidBodyDesc.fixed() : spec.kind === 'kinematic' ? R.RigidBodyDesc.kinematicPositionBased() : R.RigidBodyDesc.dynamic();
+    if (spec.kind === 'kinematic') {
+      // Where its keys put it when the world starts: at the start of the prewarm, or of the shot.
+      const at = trackOf(def)(-prewarmSteps * SIM_DT);
+      desc.setTranslation(at.x, at.y).setRotation(at.rot).setCcdEnabled(true).setCanSleep(false);
+      kinematic.push(i);
+      reach[i] = outline(scaleShape(def.shape, def.scale), 48).reduce((r, p) => Math.max(r, Math.hypot(p[0], p[1])), 0);
+    } else desc.setTranslation(def.x, def.y).setRotation(def.rot);
     if (spec.kind === 'dynamic') {
       const v = spec.velocity ?? [0, 0];
       desc
@@ -153,11 +175,11 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
     bodies[i] = body;
   };
 
-  // Fixed bodies exist from the start; dynamic ones join at their release, in a
-  // fixed order (release time, then scene order).
+  // Fixed and kinematic bodies exist from the start; dynamic ones join at their
+  // release, in a fixed order (release time, then scene order).
   const waiting: number[] = [];
   defs.forEach((def, i) => {
-    if (def.body.kind === 'fixed') create(i);
+    if (def.body.kind !== 'dynamic') create(i);
     else waiting.push(i);
   });
   const releaseOf = (i: number): number => {
@@ -201,6 +223,31 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
       create(waiting[next]!);
       next++;
     }
+    // Each kinematic body goes, over this step, to where its keys put it at the end of the step. What it can reach
+    // on the way is woken first: a body asleep in a pile would answer its push a step late, after it has sunk in.
+    for (const i of kinematic) {
+      const to = trackOf(defs[i]!)(time + SIM_DT);
+      const body = bodies[i]!;
+      const from = body.translation();
+      let turn = Math.abs(to.rot - body.rotation());
+      if (turn > Math.PI) turn = 2 * Math.PI - (turn % (2 * Math.PI));
+      const sweep = Math.hypot(to.x - from.x, to.y - from.y) + turn * reach[i]!;
+      if (sweep > 0) {
+        const half = reach[i]! + sweep + WAKE_MARGIN;
+        // The query holds the world while it runs: what it finds is woken after it.
+        const found: number[] = [];
+        world.collidersWithAabbIntersectingAabb({ x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }, { x: half, y: half }, (collider) => {
+          found.push(collider.handle);
+          return true;
+        });
+        for (const handle of found) {
+          const other = world.getCollider(handle)?.parent();
+          if (other && other.isDynamic() && other.isSleeping()) other.wakeUp();
+        }
+      }
+      body.setNextKinematicTranslation({ x: to.x, y: to.y });
+      body.setNextKinematicRotation(to.rot);
+    }
     world.step(queue);
     queue.drainCollisionEvents((h1, h2, started) => {
       if (started) pending.push({ h1, h2, age: 0, peak: 0, x: 0, y: 0, step });
@@ -237,7 +284,6 @@ export async function simulateRigid(defs: readonly RigidBodyDef[], style: Physic
     }
   };
 
-  const prewarmSteps = Math.round(Math.max(0, style.prewarm) * FPS * SUBSTEPS);
   for (let s = -prewarmSteps; s < 0; s++) advance(s);
 
   for (let f = 0; f < frames; f++) {

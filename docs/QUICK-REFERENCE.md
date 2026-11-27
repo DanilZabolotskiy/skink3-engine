@@ -19,7 +19,7 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette keys; text: `strings` keys. A palette has `rules` (held by `check`), `tones`, variants.
+- Colours: palette keys; text: `strings` keys. A palette has `rules` (`check`), `tones`, variants.
 
 ## Shot, camera, layers
 
@@ -31,7 +31,7 @@ cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /**/ dur: 1.2, profile: 'ease' }); //
 zoomTo({ at: 6, to: 1.15, /**/ dur: 3 }); // zoom alone
 backgroundTo({ at: 3, inner: 'deep.night', /**/ dur: 2, profile: 'ease' }); // + outer, center, radius, atmosphere, vignette
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
-layer({ id: 'room', depth: 0, nodes: [], perspective: { aim: [0, 0, 0], distance: 1600, tilt: 0, turn: 0 } }); // or true: a space, z away, with its camera; + lens
+layer({ id: 'room', depth: 0, nodes: [], perspective: { aim: [0, 0, 0], distance: 1600, tilt: 0, turn: 0, focus: { far: 4 } } }); // or true: a space, z away, own camera; + lens; focus: blur by depth (+ near, at: aim)
 perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6 }); // + aim, distance (a dolly), turn, lens (a zoom)
 blurTo('far', { at: 2, to: 0, /**/ dur: 1.2 }); // a focus pull
 cut({ at: 4 }); cameraTo({ at: 4, zoom: 2, dur: 0 }); // dur 0 on a cut: cameraTo, zoomTo, backgroundTo, perspectiveTo, blurTo, fadeTo
@@ -40,9 +40,9 @@ cut({ at: 4 }); cameraTo({ at: 4, zoom: 2, dur: 0 }); // dur 0 on a cut: cameraT
 - `drift.speed`: units/frame along `heading` (0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
 - A `path` replaces `at`, `drift.speed`, `drift.heading`: a closed one with `speed` (units/frame) loops (`loopPoints(center, r | [rx, ry])`), else runs once.
 - Keys chain. `cameraTo`: `zoom` times the view, `to` its aim; path and drift wait. Under `zoomTo` they run on.
-- A `cut` restarts the push-in and springs; drift `speeds` may step there.
+- A `cut` restarts the push-in and springs.
 - `depth` 0: in focus; positive: far (less parallax, blurred, tinted); to -0.9: near. Far first, then list order, parents first.
-- A listed node's `depth` (larger: behind) orders a layer. Perspective layer: `at: [x, y, z]`, facing the camera; `region`, `stroke`: `points` of three; a `plane` group lies in it.
+- A listed node's `depth` (larger: behind) orders a layer. Perspective: `at: [x, y, z]` faces the camera; `region`, `stroke`: `points` of three; a `plane` group lies in it.
 - Dense maps: `sampledBackdrop: { group, frames }`.
 
 ## Nodes
@@ -70,7 +70,7 @@ fabric({ id: 'town', blocks: [[[0, 0], [9, 0], [9, 9]]], fills: 'mid.mist' }).no
 
 - Shape options: `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: `reliefHeight`, `samplePixels`, `picture`, `backdrop`, `smooth`, `shadows: true | { color, amount, soft }`.
 - `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: arc or ring (degrees).
-- `globe`: layer `drift` (deg/s), `soft`, `id` (`fadeTo`, `fillTo`); `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride its turn, hidden behind, heading `rotation`; a `[lon, lat]` `stroke` lies on it.
+- `globe`: layer `drift` (deg/s), `soft`, `id` (`fadeTo`, `fillTo`); `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride it, hidden behind, heading `rotation`; a `[lon, lat]` `stroke` lies on it.
 - `label`: tail at `target`'s edge on `side`; wraps, then shrinks, never cut. `text`: free-standing; a shape's child: on it; in a `parallax: 0` layer: the frame's.
 
 ## Springs and rigid bodies
@@ -78,8 +78,8 @@ fabric({ id: 'town', blocks: [[[0, 0], [9, 0], [9, 9]]], fills: 'mid.mist' }).no
 ```ts
 capsule({ id: 'tail', fill: 'mid.mist', length: 46, r: 8, origin: 'start', sway: 'springy' }); // swings about its first end; or 'heavy', 'light', 'viscous'
 circle({ id: 'moon', fill: 'light.cream', r: 9, follow: { f: 2.4, z: 0.26, r: 0 } }); // Hz, damping, response: its place lags; groups, labels too
-rect({ id: 'floor', fill: 'mid.mist', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } });
-circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // waits till release (s); from velocity (units/s; spin: deg/s) on: defaults; appear: 'release': undrawn till then
+rect({ id: 'floor', fill: 'mid.mist', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } }); // or 'kinematic': keyed, pushes bodies
+circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // waits till release (s); velocity units/s, spin deg/s: defaults; 'release': undrawn till then
 shot({ ...scene, /**/ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
 
@@ -88,7 +88,7 @@ shot({ ...scene, /**/ physics: { gravity: 540, linearDamping: 0.35, angularDampi
 ```ts
 moveTo('dot', { at: 1.2, to: [260, -40], /**/ dur: 1.1, anticipation: 0.08, overshoot: 0.07, arc: 0.12 }); // shares of distance. arrive: when at `to`
 hop('buddy', { at: 4, to: [610, 130], /**/ dur: 0.6, height: 80 }); // a parabola; or land:
-travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // units/s, or dur, or speeds: [[s, v], ...]; + roll: wheel radius; [x, y, h]: heights
+travel('bead', { at: -1, path: [[-900, -260], [-300, 150]], speed: 250, /**/ profile: 'steady', closed: false, orient: false, only: false }); // units/s, or dur, or speeds: [[s, v]]; + roll: wheel radius; [x, y, h]: heights
 turnTo('hex', { at: 2, to: 90, /**/ dur: 0.8, overshoot: 0.1 }); // degrees. + profile: no overshoot ('steady': spin); for to: speed (deg/s), speeds; about: 'x' | 'y': plane hinge
 scaleTo('hex', { at: 3, to: 1.5, /**/ dur: 0.6, overshoot: 0.15 }); // times its size, lasting; to: [sx, sy], pivot: own axes; + profile: no overshoot
 fadeTo('hex', { at: 4, to: 0.3, /**/ dur: 0.5 });
@@ -98,7 +98,7 @@ popIn('c', { at: 0.3, /**/ dur: 0.55, overshoot: 0.18 }); // hidden before at
 popOut('c', { at: 3, /**/ dur: 0.35 });
 bump('c', { at: 2, /**/ amount: 0.14 }); // a size kick, 0.7 s
 squash('buddy', { at: 5, /**/ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
-countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text, label: "{n}"; + ratio
+countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false, roll: true } on a text, label: "{n}"; + ratio
 levelTo('drink', { at: 2, to: 0.8, /**/ dur: 1.5, profile: 'ease' }); // 0 empty, 1 full
 riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8 });
 sunTo('hills', { at: 2, from: 45, /**/ dur: 2 }); // + high: a relief's light
@@ -109,7 +109,7 @@ bendTo('wire', { at: 3, to: 0, /**/ dur: 0.8, overshoot: 0.25 }); // taut (0), o
 widthTo('wire', { at: 4, to: 20, /**/ dur: 0.6, overshoot: 0.15 }); // a link's or stroke's width
 reshape('isle', { at: 2, points: [[-200, 0], [0, -60], [200, 0], [0, 90]], /**/ dur: 1.2, profile: 'ease' }); // a region or stroke, point for point; + smooth; matchPoints, reachedAt
 drive('dot', { dur: 4, by: (t) => ({ at: [200 * t, 0] }), /**/ at: 0 }); // at, rotation, scale, opacity, depth, points by time; or samples
-pulse('wire', { at: 2, /**/ dur: 0.7, bump: 0.14 }); // bumps the far node at at + dur. Stroke: + from, to (shares), profile, length, node
+pulse('wire', { at: 2, /**/ dur: 0.7, bump: 0.14 }); // bumps the far node at at + dur. Stroke: + from, to, profile, length, node
 openTo('pupil', { at: 1, to: 1, /**/ dur: 0.3, overshoot: 0.12 }); // lids: 1 open, 0 shut
 blink('pupil', { at: 3 });
 stagger(['a', 'b'], { at: 1, each: 0.1 }, (id, at) => popIn(id, { at })); // + order: 'reverse', 'center-out', 'edges-in'
@@ -126,7 +126,7 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 3 } }); // wavers what is drawn before; + scale 40, speed 30, direction -90
 ```
 
-- An emitter needs `rate` (/s; `rateTo('fizz', { at: 2, to: 30 })`), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): n or `[min, max]`. `sizing: 'spark'` shrinks, `'grow'` grows; `fade: [birth, death]`: each one's opacity; `opacity`: all (`fadeTo`). + `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak`.
+- An emitter needs `rate` (/s; `rateTo('fizz', { at: 2, to: 30 })`), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): n or `[min, max]`. `sizing: 'spark'` shrinks, `'grow'` grows; `fade: [birth, death]`: each one's; `opacity`: all (`fadeTo`). + `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak`.
 - `cover`: hides the glow drawn before it. `backdrop`: labels may cover it. `clipTo`: only inside that shape (`['a', 'b']`: their union), faded at a `soft` edge; a coast: `clipMask`. `level` (or 0..1): fills from the bottom; `wave` ripples it.
 
 ## Sound
@@ -157,7 +157,7 @@ queue   render queue status
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
-`--group`: shared admission (not macOS). `--crop`: units, top-left. `--alone`: ~1 s a frame.
+`--group`: shared admission. `--crop`: units, top-left. `--alone`: ~1 s a frame.
 
 ## Reading the reviews
 
@@ -180,7 +180,7 @@ shot({ ...scene, intended: [intended('dot', 'abrupt-start', 'it is kicked')] });
 
 ## Index
 
-SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`**; **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **A globe**; **A world map**; **Springs: secondary motion**; **Rigid bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
+SCENES.md: **The model in one page**; **Minimal example**; **Space, time, units**; **Colours: the palette**; **Text: string tables**; **`shot`**; **`layer`**; **Nodes**; **Timeline: intents**; **A perspective layer**; **A globe**; **A world map**; **Springs: secondary motion**; **Rigid bodies**, **Kinematic bodies**; **Generating content in a scene**; **Checks**; **Motion review**, **Physics review**, **Contrast review**; **Sound**; **Command line**; **From another repository**; **Programmatic use**; **What is not there yet**.
 
 MOTION-REVIEW.md, PHYSICS-REVIEW.md: findings, pictures, thresholds.
 

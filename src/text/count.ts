@@ -114,3 +114,197 @@ export function countRuns(layout: TextLayout, slot: CountSlot, number: string, a
   if (slot.suffix.trim()) out.push({ text: slot.suffix, x: x + suffixW / 2 });
   return out;
 }
+
+// --- Digits that roll ---------------------------------------------------------------------------
+//
+// A rolling counter is a meter: a wheel for each place, the last place turning
+// as the number runs and each higher one turning to its next digit while the
+// places below it carry. Its wheels at a frame are a pure function of the
+// number over the frames round it: each wheel's turn is the mean of where a
+// meter's wheel would be over ROLL_FRAMES frames centred on the frame, so a
+// carry that a meter makes within one frame is a turn spread over that time,
+// and a wheel at rest stands at its whole digit.
+
+/** The frames a carry's turn is spread over: the wheels of a fast count roll their next digit up in this time. */
+export const ROLL_FRAMES = 10;
+/** How far apart the digits of a wheel are, as a share of the size of the text: its line height. */
+export const ROLL_PITCH = 1.18;
+/** The middle of a digit above the baseline, as a share of the size: the window of a wheel is centred on it. */
+export const ROLL_MIDDLE = 0.36;
+/** The most places a rolling counter has: beyond them a number is not held exactly. */
+export const ROLL_MAX_DIGITS = 15;
+
+/** Why a value cannot be shown by a rolling counter, or null: it must be a whole value of the last place, 0 or more, of at most 15 digits. */
+export function rollRefusal(value: number, decimals: number): string | null {
+  const u = value * 10 ** decimals;
+  if (!(u >= 0)) return `a counter whose digits roll runs between values of 0 or more, got ${value}`;
+  if (Math.abs(u - Math.round(u)) > 1e-6 * Math.max(1, u)) return `a counter whose digits roll stops only at whole values of its last place (${decimals} decimal${decimals === 1 ? '' : 's'}), got ${value}`;
+  if (Math.round(u) >= 10 ** ROLL_MAX_DIGITS) return `a counter whose digits roll has at most ${ROLL_MAX_DIGITS} digits, got ${value}`;
+  return null;
+}
+
+/** How many wheels a rolling counter needs for the values it reaches: as many as the digits of the largest, the places after the decimal sign and one before it at least. */
+export function rollWheels(values: readonly number[], decimals: number): number {
+  let most = 0;
+  for (const v of values) most = Math.max(most, Math.round(Math.abs(v) * 10 ** decimals));
+  return Math.max(decimals + 1, String(most).length);
+}
+
+/** Where wheel k of a meter stands at the value u of its last place: its whole turns, and the turn it makes while every place below it carries. */
+function meterWheel(u: number, k: number): number {
+  const p = 10 ** k;
+  const q = Math.floor(u / p);
+  const m = u - q * p;
+  return q + Math.min(1, Math.max(0, m - (p - 1)));
+}
+
+/** The wheels of a rolling counter at one frame. */
+export interface CountWheels {
+  /** Per wheel, from the last place (0) up: where it has turned to, in digits; 37.25 shows a 7 a quarter of the way to an 8. */
+  readonly pos: Float64Array;
+  /** Per wheel: how far it turned since the frame before, in digits; negative as the number falls. */
+  readonly turn: Float64Array;
+}
+
+/**
+ * The wheels of a rolling counter at a frame. `valueAt` is the number of the counter at a time in seconds, `wheels`
+ * how many it has (rollWheels).
+ */
+export function countWheels(valueAt: (seconds: number) => number, frame: number, fps: number, decimals: number, wheels: number): CountWheels {
+  const scale = 10 ** decimals;
+  // The frames round the one before and round this one: ROLL_FRAMES + 1 samples, the first ROLL_FRAMES for the frame
+  // before, the last ROLL_FRAMES for this one.
+  const us: number[] = [];
+  for (let j = 0; j <= ROLL_FRAMES; j++) {
+    let u = valueAt((frame - 1 + j + 0.5 - ROLL_FRAMES / 2) / fps) * scale;
+    const r = Math.round(u);
+    if (Math.abs(u - r) < 1e-6) u = r;
+    us.push(Math.max(0, u));
+  }
+  const pos = new Float64Array(wheels);
+  const turn = new Float64Array(wheels);
+  for (let k = 0; k < wheels; k++) {
+    let before = 0;
+    let now = 0;
+    for (let j = 0; j <= ROLL_FRAMES; j++) {
+      const w = meterWheel(us[j]!, k);
+      if (j < ROLL_FRAMES) before += w;
+      if (j > 0) now += w;
+    }
+    pos[k] = now / ROLL_FRAMES;
+    turn[k] = (now - before) / ROLL_FRAMES;
+  }
+  return { pos, turn };
+}
+
+/**
+ * How much of a wheel's turn is drawn: all of it while it turns half a digit a frame or less, none of it at a digit a
+ * frame or more, where the eye sees digits that change and not a wheel that turns.
+ */
+export function rollDrawn(rate: number): number {
+  return Math.min(1, Math.max(0, 2 - 2 * rate));
+}
+
+/**
+ * How far the digits of a rolling counter are seen to travel from the frame before, in pitches of its wheels: the
+ * turn of the wheel whose turn is drawn the farthest, negative as the number falls. A wheel too fast to be drawn
+ * turning changes its digits in place, which is no travel.
+ */
+export function rollTravel(w: CountWheels): number {
+  let best = 0;
+  for (let k = 0; k < w.turn.length; k++) {
+    const turn = w.turn[k]!;
+    const seen = turn * rollDrawn(Math.abs(turn));
+    if (Math.abs(seen) > Math.abs(best)) best = seen;
+  }
+  return best;
+}
+
+/** A piece of the line of a rolling counter. */
+export interface RollRun {
+  readonly text: string;
+  readonly x: number;
+  /** A digit on its way: the one coming up from below, how far it has come (0..1), and the width of its cell. */
+  readonly roll?: { readonly next: string; readonly share: number; readonly width: number };
+}
+
+/**
+ * The line of a rolling counter at a frame, as countRuns sets it: the number has as many places as its wheels show,
+ * each digit in its cell, a digit on its way with the next one and its share, and a sign between groups that comes in
+ * with the digit before it. `number` is the number as it stands, the digits on their way at the ones they leave.
+ */
+export function rollRuns(layout: TextLayout, slot: CountSlot, w: CountWheels, decimals: number, lang: string, grouping: boolean, align: TextAlign): { runs: RollRun[]; number: string } {
+  const n = w.pos.length;
+  const digit: number[] = [];
+  const share: number[] = [];
+  for (let k = 0; k < n; k++) {
+    let d = Math.floor(w.pos[k]!);
+    let s = w.pos[k]! - d;
+    if (s > 1 - 1e-9) {
+      d += 1;
+      s = 0;
+    }
+    if (s < 1e-6) s = 0;
+    digit.push(d);
+    share.push(s * rollDrawn(Math.abs(w.turn[k]!)));
+  }
+  // The highest wheel that shows a digit, and the highest that turns one in from blank.
+  let top = decimals;
+  for (let k = n - 1; k > decimals; k--) {
+    if (digit[k]! >= 1) {
+      top = k;
+      break;
+    }
+  }
+  let high = top;
+  for (let k = n - 1; k > top; k--) {
+    if (share[k]! > 0) {
+      high = k;
+      break;
+    }
+  }
+  // The number as the language writes one of that many places, its digits replaced by the wheels'.
+  const shape = [...formatCount(10 ** (high - decimals), decimals, lang, grouping)];
+  const { size, weight } = layout;
+  const cell = digitCell(size, weight).width;
+  const prefixW = slot.prefix ? measureText(slot.prefix, size, weight) : 0;
+  const suffixW = slot.suffix ? measureText(slot.suffix, size, weight) : 0;
+  const widths = shape.map((ch) => (DIGITS.includes(ch) ? cell : measureText(ch, size, weight)));
+  const total = prefixW + widths.reduce((a, b) => a + b, 0) + suffixW;
+  const left = align === 'center' ? -layout.width / 2 : align === 'left' ? 0 : -layout.width;
+  let x = align === 'center' ? left + (layout.width - total) / 2 : align === 'left' ? left : left + layout.width - total;
+  // Which wheel each digit of the shape is, counted from the right.
+  const wheelOf: number[] = new Array(shape.length).fill(-1);
+  for (let i = shape.length - 1, k = 0; i >= 0; i--) if (DIGITS.includes(shape[i]!)) wheelOf[i] = k++;
+  const runs: RollRun[] = [];
+  let number = '';
+  if (slot.prefix.trim()) runs.push({ text: slot.prefix, x: x + prefixW / 2 });
+  x += prefixW;
+  // A sign between groups to the left of the highest digit shown comes in with the wheel before it.
+  const topAt = wheelOf.indexOf(top);
+  let incoming = 0;
+  shape.forEach((ch, i) => {
+    const mid = x + widths[i]! / 2;
+    x += widths[i]!;
+    const k = wheelOf[i]!;
+    if (k >= 0) {
+      const blank = k > top;
+      const from = blank ? '' : String(digit[k]! % 10);
+      const next = String((digit[k]! + 1) % 10);
+      const s = share[k]!;
+      if (blank) incoming = s;
+      number += from;
+      if (s > 0) runs.push({ text: from, x: mid, roll: { next, share: s, width: widths[i]! } });
+      else if (from) runs.push({ text: from, x: mid });
+      return;
+    }
+    if (i < topAt) {
+      if (incoming > 0 && ch.trim()) runs.push({ text: '', x: mid, roll: { next: ch, share: incoming, width: widths[i]! } });
+      return;
+    }
+    number += ch;
+    if (ch.trim()) runs.push({ text: ch, x: mid });
+  });
+  if (slot.suffix.trim()) runs.push({ text: slot.suffix, x: x + suffixW / 2 });
+  return { runs, number };
+}

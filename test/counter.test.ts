@@ -11,6 +11,7 @@ import {
   flatItems,
   frameRaw,
   heightFor,
+  label,
   IntentError,
   layer,
   reviewMotion,
@@ -174,4 +175,89 @@ test('counter: what it refuses, that it is opt-in, and what the review and the e
   assert.ok(!findings(running, await bakeShot(running)).includes('dead-area (frame)'));
   const still = compileShot(make([text({ ...N, count: 0, size: 80 })], [], 8));
   assert.ok(findings(still, await bakeShot(still)).includes('dead-area (frame)'));
+});
+
+// --- Digits that roll -------------------------------------------------------------------------------
+
+const ROLL = { id: 'n', text: 'count.n', ink: 'light.cream', size: 100 } as const;
+/** The pieces of a counter's line: a digit at rest as itself, one on its way as "from>next@share". */
+const rolled = (item: Awaited<ReturnType<typeof at>>): string[] => item.lines.map((l) => (l.roll ? `${l.text}>${l.roll.next}@${l.roll.share.toFixed(2)}` : l.text));
+
+test('counter roll: its digits roll as the wheels of a meter, the last place fastest, a higher one as the places below it carry', async () => {
+  assert.deepEqual(text({ ...ROLL, count: { from: 0, roll: true } }).count, { from: 0, decimals: 0, roll: true });
+  assert.deepEqual(label({ id: 'l', text: 'count.n', target: 'c', fill: 'dark.indigo', ink: 'light.cream', count: { from: 2, roll: true } }).count, { from: 2, decimals: 0, roll: true });
+
+  // A slow count from 7 to 12 over 5 s at one pace: one digit a second. The last place turns all the way, and the
+  // tens wheel turns from blank to 1 only while the 9 turns to 0.
+  const slow = make([text({ ...ROLL, count: { from: 7, roll: true } })], [countTo('n', { at: 0, to: 12, dur: 5, profile: 'steady' })], 6);
+  assert.deepEqual(rolled(await at(slow, 1.5)), ['8>9@0.50'], 'half way from 8 to 9: the 8 half up, the 9 half come');
+  assert.deepEqual(rolled(await at(slow, 2.25)), ['>1@0.25', '9>0@0.25'], 'a quarter of the carry: the 1 comes in from blank as the 9 turns to 0');
+  assert.deepEqual(rolled(await at(slow, 3)), ['>1@0.98', '0'], 'at 10 the last place is at rest, the carry all but through');
+  assert.deepEqual(rolled(await at(slow, 5.5)), ['1', '2'], 'and at the end it stands at the number reached');
+  assert.equal((await at(slow, 2.25)).number, '9', 'the number as it stands: the digits on their way at the ones they leave');
+
+  // A fast count: the last places change in place, whole digits, while the high ones roll; it ends at rest.
+  const fast = make([text({ ...ROLL, count: { from: 0, roll: true } })], [countTo('n', { at: 0, to: 1_000_000, dur: 3 })], 4);
+  const mid = await at(fast, 1.5);
+  const last = mid.lines[mid.lines.length - 1]!;
+  assert.ok(!last.roll && /^\d$/.test(last.text), 'the last place turns faster than the eye follows: a whole digit');
+  assert.ok(mid.lines.some((l) => l.roll), 'some higher wheel is on its way');
+  const end = await at(fast, 3.5);
+  assert.deepEqual([end.number, end.lines.some((l) => l.roll)], ['1,000,000', false]);
+
+  // A sign between groups comes in with the digit before it; the language's own signs; places after the decimal sign.
+  const grouped = make([text({ ...ROLL, count: { from: 998, roll: true } })], [countTo('n', { at: 0, to: 1002, dur: 4, profile: 'steady' })], 5);
+  assert.deepEqual(rolled(await at(grouped, 1.25)), ['>1@0.25', '>,@0.25', '9>0@0.25', '9>0@0.25', '9>0@0.25']);
+  assert.deepEqual(rolled(await at(grouped, 1.25, 'de')), ['>1@0.25', '>.@0.25', '9>0@0.25', '9>0@0.25', '9>0@0.25']);
+  const fine = make([text({ ...ROLL, count: { from: 0, decimals: 1, roll: true } })], [countTo('n', { at: 0, to: 0.4, dur: 4, profile: 'steady' })], 5);
+  assert.deepEqual(rolled(await at(fine, 1.5)), ['0', '.', '1>2@0.50']);
+  // Running down, the wheels turn back.
+  const down = make([text({ ...ROLL, count: { from: 10, roll: true } })], [countTo('n', { at: 0, to: 8, dur: 2, profile: 'steady' })], 3);
+  assert.deepEqual(rolled(await at(down, 0.25)), ['>1@0.75', '9>0@0.75'], 'a quarter of the way from 10 down to 9');
+
+  // In the picture: the window of a digit on its way holds the two digits, each in part.
+  const ink = async (spec: ShotSpec, seconds: number): Promise<Buffer> => {
+    const c = compileShot(spec);
+    return frameRaw(c, await bakeShot(c), Math.round(seconds * 60), { width: 960, lang: 'en', gpu: false });
+  };
+  const still = (n: number) => make([text({ ...ROLL, count: { from: n, roll: true } })], [], 6);
+  const [eight, nine, half] = [await ink(still(8), 1.5), await ink(still(9), 1.5), await ink(slow, 1.5)];
+  assert.ok(!half.equals(eight) && !half.equals(nine), 'half way is neither digit');
+});
+
+test('counter roll: what it refuses, that it is opt-in, and what the motion review makes of it', async () => {
+  const bad = (run: () => unknown, message: RegExp): void => {
+    assert.throws(run, (e: unknown) => e instanceof Error && message.test(e.message), String(message));
+  };
+  bad(() => text({ ...ROLL, count: { from: 0, roll: 'yes' } as never }), /count\.roll must be true or false/);
+  bad(() => text({ ...ROLL, count: { from: -5, roll: true } }), /count\.from: a counter whose digits roll runs between values of 0 or more, got -5/);
+  bad(() => text({ ...ROLL, count: { from: 1.25, decimals: 1, roll: true } }), /stops only at whole values of its last place \(1 decimal\), got 1\.25/);
+  bad(() => text({ ...ROLL, count: { from: 1e15, roll: true } }), /has at most 15 digits/);
+  bad(() => make([text({ ...ROLL, count: { from: 0, roll: true } })], [countTo('n', { at: 0, to: 2.5 })]), /countTo\("n"\) to: a counter whose digits roll stops only at whole values of its last place \(0 decimals\), got 2\.5/);
+  bad(() => make([text({ ...ROLL, count: { from: 5, roll: true } })], [countTo('n', { at: 0, to: -1 })]), /runs between values of 0 or more, got -1/);
+  // Without roll the same values are fine, as they always were.
+  assert.ok(make([text({ ...ROLL, count: { from: -5, decimals: 0 } })], [countTo('n', { at: 0, to: 2.5 })]));
+
+  // Opt-in: a counter without roll says nothing of it and draws no digit on its way; at rest a rolling counter draws
+  // what a plain one draws, pixel for pixel.
+  const plain = make([text({ ...ROLL, count: 7 })], [countTo('n', { at: 0, to: 12, dur: 5, profile: 'steady' })], 6);
+  assert.ok(!JSON.stringify(plain).includes('"roll"'));
+  assert.ok((await at(plain, 1.5)).lines.every((l) => l.roll === undefined));
+  const pixels = async (spec: ShotSpec, seconds: number): Promise<Buffer> => {
+    const c = compileShot(spec);
+    return frameRaw(c, await bakeShot(c), Math.round(seconds * 60), { width: 960, lang: 'en', gpu: false });
+  };
+  const rolling = make([text({ ...ROLL, count: { from: 7, roll: true } })], [countTo('n', { at: 0, to: 12, dur: 5, profile: 'steady' })], 6);
+  assert.ok((await pixels(plain, 5.5)).equals(await pixels(rolling, 5.5)));
+
+  // The motion review: digits that roll at one pace between two rests are mechanical; an eased count is sound; a
+  // counter that does not roll has no travel of its digits.
+  const review = async (spec: ShotSpec): Promise<string[]> => {
+    const c = compileShot(spec);
+    return reviewMotion(c, await bakeShot(c)).report.findings.filter((f) => f.subject === 'n').map((f) => `${f.kind} ${f.channel}`);
+  };
+  const run = (count: { from: number; roll?: boolean }, profile: 'ease' | 'steady') => make([text({ ...ROLL, size: 120, count })], [countTo('n', { at: 1, to: 40, dur: 5, profile })], 8);
+  assert.deepEqual(await review(run({ from: 0, roll: true }, 'steady')), ['mechanical roll']);
+  assert.deepEqual(await review(run({ from: 0, roll: true }, 'ease')), []);
+  assert.deepEqual(await review(run({ from: 0 }, 'steady')), []);
 });

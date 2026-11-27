@@ -34,8 +34,8 @@ import {
 import type { Bake } from '../physics/cache.ts';
 import { isRegion, transformOutline, outlineOf, reach, type ShapeSpec } from '../shape/geometry.ts';
 import { hull, ringOf, roofFaces, sideRing, spanOf, wallOpenings, type RoofFace, type Upright } from '../shape/solid.ts';
-import { textBlock, type TextBlock } from '../text/block.ts';
-import { COUNT_MARK, countRuns, countSlot, formatCount, widestCount, type CountSlot } from '../text/count.ts';
+import { textBlock, type TextAlign, type TextBlock } from '../text/block.ts';
+import { COUNT_MARK, countRuns, countSlot, countWheels, formatCount, rollRuns, rollWheels, widestCount, type CountSlot, type RollRun } from '../text/count.ts';
 import { labelGeometry, LABEL_PROPORTIONS, type LabelGeometry } from '../text/label.ts';
 import { layoutText, type TextLayout } from '../text/layout.ts';
 import { parseRuns, runSpans, type RunSpan } from '../text/runs.ts';
@@ -46,8 +46,8 @@ import { sampleFill } from './fill.ts';
 import { formAt } from './form.ts';
 import { globeFade, globePlace, globeView, surfaceLine, surfacePath, surfaceRuns } from './globe.ts';
 import { regionAt, strokePathAt } from './outline.ts';
-import { eyeOf, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
-import { SHADOW_REACH, type CastSpec, type GroupNode, type LabelSide, type StrokeNode } from './types.ts';
+import { eyeOf, focusBlur, hingedAxes, intoPlane, perspAt, planeMap, planePoint, project, throughPlane, type Eye, type PlaneAxes, type PlaneMap } from './space.ts';
+import { SHADOW_REACH, type CastSpec, type CountSpec, type GroupNode, type LabelSide, type StrokeNode } from './types.ts';
 import { groundField, type GroundField } from './ground.ts';
 
 /** Where the state with history comes from: the bake, or the bake in progress. */
@@ -228,6 +228,8 @@ export interface Places {
   readonly lifted: Float64Array;
   /** By node index: 1 for a body whose transform is that of its top at the frame, so that what is inside it rides on that top. */
   readonly topped: Uint8Array;
+  /** By node index of a child of a group that lies in a plane, in a layer with a focus by distance: how far its place is from the camera, along the line of sight. */
+  readonly focal: Float64Array;
 }
 
 export function newPlaces(c: CompiledShot): Places {
@@ -241,6 +243,7 @@ export function newPlaces(c: CompiledShot): Places {
     grounds: new Map(),
     lifted: new Float64Array(c.nodes.length),
     topped: new Uint8Array(c.nodes.length),
+    focal: new Float64Array(c.nodes.length),
   };
 }
 
@@ -373,6 +376,23 @@ export function screenHeld(size: number, least?: number, most?: number): number 
 }
 
 /**
+ * Where a node's own keys put it at a time, in the space of its parent: its place with its idle, and its turn in
+ * radians (with the turn a travel gives it). A kinematic body is carried along it by the physics bake.
+ */
+export function keyedPose(n: CNode, t: number): { x: number; y: number; rot: number } {
+  const node = n.node;
+  let [x, y] = samplePos(n.pos!, t);
+  if (n.idleNoise && (node.type === 'shape' || node.type === 'group') && node.idle) {
+    const u = t / node.idle.period;
+    x += node.idle.amp * n.idleNoise.n1(u);
+    y += node.idle.amp * n.idleNoise.n1(u + 71.3);
+  }
+  // A travel may turn the node: it rolls along its path, or faces along it.
+  const rot = (n.pos!.turns ? sampleRot(n.rot!, t) + samplePathTurn(n.pos!, t) : sampleRot(n.rot!, t)) * DEG;
+  return { x, y, rot };
+}
+
+/**
  * World transforms of all nodes at a frame, in the space of their layer.
  * For a label the transform holds the tip of its tail and its pop scale.
  * Nodes without a place of their own (links, emitters) get the identity.
@@ -420,17 +440,10 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
       out[n.index] = { x: p.x, y: p.y, rot: p.rot, scale };
       continue;
     }
-    let [x, y] = samplePos(n.pos!, t);
-    if (n.idleNoise && (node.type === 'shape' || node.type === 'group') && node.idle) {
-      const u = t / node.idle.period;
-      x += node.idle.amp * n.idleNoise.n1(u);
-      y += node.idle.amp * n.idleNoise.n1(u + 71.3);
-    }
+    const { x, y, rot } = keyedPose(n, t);
     // A node inside a group that lies in a plane is placed in that plane.
     const inPlane = space !== null && n.plane >= 0;
     const parent = n.parent >= 0 ? surfaces?.get(n.parent) ?? (inPlane ? space.flat[n.parent]! : out[n.parent]!) : XF_IDENTITY;
-    // A travel may turn the node: it rolls along its path, or faces along it.
-    const rot = (n.pos!.turns ? sampleRot(n.rot!, t) + samplePathTurn(n.pos!, t) : sampleRot(n.rot!, t)) * DEG;
     let xf: Xf;
     if (space && n.persp) {
       // Listed in a perspective layer: a place of the space, seen through the camera of the layer.
@@ -489,6 +502,11 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     if (inPlane && c.grounds) {
       [xf, base] = onGround(c, n, xf, space);
       space.lifted[n.index] = base;
+    }
+    if (inPlane && n.parent === n.plane && c.layers[n.layer]!.spec.perspective?.focus) {
+      // A child of a plane, in a layer with a focus by distance: how far its place is from the camera, for its blur.
+      const map = space.planes.get(n.plane);
+      space.focal[n.index] = map ? space.far[n.plane]! * (map.g * xf.x + map.h * xf.y + 1) : 0;
     }
     if (n.pos?.lifts) {
       // A travel along a path with heights: the node is drawn as high over the ground as the path runs.
@@ -747,9 +765,10 @@ export interface TextItem {
   readonly layout: TextLayout;
   /**
    * What is drawn at this frame: pieces of text, each with the x of its middle and the y of its baseline, and on a
-   * line with a run of the second ink its spans. For a counter: the line with its number as it is now.
+   * line with a run of the second ink its spans. For a counter: the line with its number as it is now; for one whose
+   * digits roll, a digit on its way with the next one (`roll`).
    */
-  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[] }[];
+  readonly lines: readonly { readonly text: string; readonly x: number; readonly y: number; readonly runs?: readonly RunSpan[]; readonly roll?: RollRun['roll'] }[];
   /** A counter: the number it shows at this frame, as it is written. */
   readonly number?: string;
   /** How far its pops and its lasting size have grown it: 1 at its authored size. */
@@ -767,9 +786,10 @@ export interface LabelItem {
   readonly alpha: number;
   /**
    * A counter: what is drawn at this frame, relative to the tip, as the lines of its geometry are, with the line of
-   * its number set for the number it shows now. Left out: the lines of the geometry.
+   * its number set for the number it shows now (with its digits on their way, as a text's). Left out: the lines of the
+   * geometry.
    */
-  readonly lines?: readonly { readonly text: string; readonly x: number; readonly y: number }[];
+  readonly lines?: readonly { readonly text: string; readonly x: number; readonly y: number; readonly roll?: RollRun['roll'] }[];
   /** A counter: the number it shows at this frame, as it is written. */
   readonly number?: string;
 }
@@ -991,6 +1011,21 @@ export interface FrameState {
 const labelCache = new WeakMap<CompiledShot, Map<string, { layout: TextLayout; geometry: LabelGeometry; slot?: CountSlot }>>();
 
 /**
+ * The line of a counter at a frame, as pieces to draw: the number as it is written now, or, for one whose digits roll,
+ * the digits its wheels show, each on its way to the next as far as the wheel has turned.
+ */
+export function counterLine(n: CNode, count: CountSpec, layout: TextLayout, slot: CountSlot, align: TextAlign, lang: string, frame: number): { runs: RollRun[]; number: string } {
+  const track = n.count!;
+  const grouping = count.grouping !== false;
+  if (!count.roll) {
+    const number = formatCount(sampleCount(track, frame / FPS), count.decimals, lang, grouping);
+    return { runs: countRuns(layout, slot, number, align), number };
+  }
+  const wheels = countWheels((t) => sampleCount(track, t), frame, FPS, count.decimals, rollWheels([track.base, ...track.segs.map((s) => s.to)], count.decimals));
+  return rollRuns(layout, slot, wheels, count.decimals, lang, grouping, align);
+}
+
+/**
  * Layout and geometry of a label in a language (cached; the result depends on nothing else). A counter is laid out
  * with the widest number it ever shows, so its box holds every value; `slot` says where its number is.
  */
@@ -1074,6 +1109,8 @@ export const HIDDEN = 1e-3;
 export const SHUT = 0.02;
 /** Opacity below which a node is not drawn, and above which it is drawn without a group. */
 export const FAINT = 0.002;
+/** A blur of the focus by distance below this, in units of the layer, is none: the node is drawn sharp. */
+const FOCUS_SHARP = 0.05;
 const OPAQUE = 0.998;
 
 /** Drops groups that ended up with nothing to draw. */
@@ -1977,6 +2014,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
 
   const layers = c.layers.map((layer): LayerState => {
     const view = layerView(camera, layer.parallax);
+    // A perspective layer with a focus by distance, and how far from its camera the focus is at this frame.
+    const lens = layer.spec.perspective?.focus;
+    const focusAt = lens && layer.persp ? lens.at ?? perspAt(layer.persp, t).distance : 0;
     const root: Item[] = [];
     // The hazes of the layer, each with the number of items of the root drawn before it.
     const marks: { at: number; haze: Omit<HazeItem, 'before'> }[] = [];
@@ -2141,10 +2181,14 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         }
       }
       // A soft node is one picture, as a faded one is; its blur is that of its units where it is drawn.
-      const soft = (node.type === 'shape' || node.type === 'group') && node.soft !== undefined ? node.soft * world[index]!.scale : 0;
+      const mine = (node.type === 'shape' || node.type === 'group') && node.soft !== undefined ? node.soft * world[index]!.scale : 0;
+      // In a layer with a focus by distance, a node listed in it and a child of a plane are blurred by how far they
+      // are, each as one picture; the blur adds to a node's own as two blurs one after the other do.
+      const focal = lens && places ? focusBlur(lens, n.persp ? (node.type === 'group' && node.plane ? 0 : places.far[index]!) : n.plane >= 0 && n.parent === n.plane ? places.focal[index]! : 0, focusAt) : 0;
+      const soft = focal > FOCUS_SHARP ? Math.hypot(mine, focal) : mine;
       if (soft > 0) {
         const group: Item[] = [];
-        items.push({ kind: 'group', node: n, opacity: Math.min(1, own[index]!), items: group, soft });
+        items.push({ kind: 'group', node: n, opacity: Math.min(1, mine > 0 ? own[index]! : displayOpacity), items: group, soft });
         open.push({ start: index, end: n.subtreeEnd, items: group });
         items = group;
       } else if (displayOpacity < OPAQUE) {
@@ -2214,10 +2258,10 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const { layout, block, slot } = textLayout(c, n, lang);
           const grown = n.scale ? sampleScale(n.scale, t) : 1;
           if (slot && n.count && node.count) {
-            // A counter: the line of the number is set anew for the number it shows now.
-            const number = formatCount(sampleCount(n.count, t), node.count.decimals, lang, node.count.grouping !== false);
+            // A counter: the line of the number is set anew for the number it shows now; one that rolls, for where its wheels are.
+            const { runs, number } = counterLine(n, node.count, layout, slot, node.align, lang, frame);
             const y = block.lines[slot.line]!.y;
-            const lines = [...block.lines.filter((_, i) => i !== slot.line), ...countRuns(layout, slot, number, node.align).map((r) => ({ ...r, y }))];
+            const lines = [...block.lines.filter((_, i) => i !== slot.line), ...runs.map((r) => ({ ...r, y }))];
             items.push({ kind: 'text', node: n, xf, alpha: a, block, layout, lines, number, grown });
           } else items.push({ kind: 'text', node: n, xf, alpha: a, block, layout, lines: block.lines, grown });
           break;
@@ -2269,9 +2313,9 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
           const { layout, geometry, slot } = labelLayout(c, n, lang);
           if (slot && n.count && node.count) {
             // A counter: the line of its number is set anew for the number it shows now, in the middle of the box.
-            const number = formatCount(sampleCount(n.count, t), node.count.decimals, lang, node.count.grouping !== false);
+            const { runs, number } = counterLine(n, node.count, layout, slot, 'center', lang, frame);
             const { x, y } = geometry.lines[slot.line]!;
-            const lines = [...geometry.lines.filter((_, i) => i !== slot.line), ...countRuns(layout, slot, number, 'center').map((r) => ({ text: r.text, x: x + r.x, y }))];
+            const lines = [...geometry.lines.filter((_, i) => i !== slot.line), ...runs.map((r) => ({ ...r, x: x + r.x, y }))];
             items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a, lines, number });
           } else items.push({ kind: 'label', node: n, tip: [xf.x, xf.y], scale: xf.scale, geometry, layout, alpha: a });
           break;

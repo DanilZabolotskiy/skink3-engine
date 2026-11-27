@@ -327,7 +327,7 @@ function describe(c: CompiledShot, subject: string): string {
   if (!n) return '';
   const node = n.node;
   const notes: string[] = [node.type === 'shape' ? node.shape.kind : node.type];
-  if (n.bodySlot >= 0) notes.push('rigid body');
+  if (n.bodySlot >= 0) notes.push(node.type === 'shape' && node.body?.kind === 'kinematic' ? 'kinematic body' : 'rigid body');
   if (n.springKind) notes.push(`${n.springKind} spring`);
   if (n.parent >= 0) notes.push(`in "${c.nodes[n.parent]!.id}"`);
   return ` (${notes.join(', ')})`;

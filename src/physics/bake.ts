@@ -12,7 +12,7 @@ import { SecondOrder, SWAY_MAX_RATE, swayLean, swayTurn } from '../core/dynamics
 import { DEG, type Vec2 } from '../core/math.ts';
 import { FPS, SIM_DT, SUBSTEPS } from '../core/time.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { computeWorld, posesFromBake, swayDirection, type PoseSource } from '../scene/evaluate.ts';
+import { computeWorld, keyedPose, posesFromBake, swayDirection, type PoseSource } from '../scene/evaluate.ts';
 import { engineVersion, physicsVersion } from '../version.ts';
 import {
   Bake,
@@ -71,7 +71,9 @@ export async function bakeShot(c: CompiledShot): Promise<Bake> {
     const n = c.nodes[index]!;
     const node = n.node;
     if (node.type !== 'shape' || !node.body) throw new Error(`"${n.id}" is not a rigid body`);
-    return { id: n.id, shape: node.shape, x: node.at[0], y: node.at[1], rot: node.rotation * DEG, scale: node.scale, body: node.body };
+    // A kinematic body is carried where its keys put it.
+    const track = node.body.kind === 'kinematic' ? { track: (t: number) => keyedPose(n, t) } : {};
+    return { id: n.id, shape: node.shape, x: node.at[0], y: node.at[1], rot: node.rotation * DEG, scale: node.scale, body: node.body, ...track };
   });
   const rigid = await simulateRigid(defs, c.spec.physics, frames);
   const nBodies = defs.length;

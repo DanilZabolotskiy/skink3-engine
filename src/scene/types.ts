@@ -40,6 +40,16 @@ export type BodySpec =
       readonly restitution?: number;
     }
   | {
+      /**
+       * Moved by its keys (moveTo, hop, travel, turnTo, a drive of its place or its rotation, idle), not by the
+       * simulation: it pushes and carries the dynamic bodies it meets, and nothing they do moves it. Its contacts are
+       * recorded as any other's.
+       */
+      readonly kind: 'kinematic';
+      readonly friction?: number;
+      readonly restitution?: number;
+    }
+  | {
       /** Stays where the scene puts it until `release`, then falls and collides. */
       readonly kind: 'dynamic';
       /**
@@ -672,6 +682,13 @@ export interface CountSpec {
    * the decimal sign stays the language's own). Left out: the number is grouped the way the language groups it.
    */
   readonly grouping?: false;
+  /**
+   * true: its digits roll as the wheels of a meter do. Each digit turns up to the next one inside its cell, the last
+   * place fastest, a higher one only as the places below it carry; a wheel that would turn faster than the eye can
+   * follow shows whole digits. The number then runs between whole values of its last place, 0 or more. Written only
+   * when it is given.
+   */
+  readonly roll?: true;
 }
 
 /** A simple eye: a light disc with a pupil that looks at a node, and blinks. */

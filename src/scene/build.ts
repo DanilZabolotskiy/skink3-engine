@@ -26,10 +26,11 @@ import {
   type ShapeSpec,
 } from '../shape/geometry.ts';
 import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
+import { rollRefusal } from '../text/count.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
 import { RELIEF_SMOOTH_MAX, smoothHeights } from './ground.ts';
-import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
+import { flatten as seenStraightOn, PLANES, type PerspFocus, type PerspSpec, type PlaneAxes } from './space.ts';
 import { CAST_MAX_LENGTH, DETAIL_MAX, EYE_MAX_REACH, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_CONTRAST_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
 import type {
   BackgroundSpec,
@@ -170,9 +171,9 @@ function planeAxes(where: string, value: unknown): PlaneAxes {
 
 /** The camera of a perspective layer, with what is left out filled in. */
 function perspective(where: string, value: unknown): PerspSpec {
-  const o = (value === true ? {} : value) as { aim?: unknown; distance?: unknown; tilt?: unknown; turn?: unknown; lens?: unknown };
-  if (o === null || typeof o !== 'object' || Array.isArray(o)) fail(where, `perspective must be true or { aim, distance, tilt, turn, lens }, got ${JSON.stringify(value)}`);
-  checkKeys(`${where} perspective`, o, ['aim', 'distance', 'tilt', 'turn', 'lens']);
+  const o = (value === true ? {} : value) as { aim?: unknown; distance?: unknown; tilt?: unknown; turn?: unknown; lens?: unknown; focus?: unknown };
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) fail(where, `perspective must be true or { aim, distance, tilt, turn, lens, focus }, got ${JSON.stringify(value)}`);
+  checkKeys(`${where} perspective`, o, ['aim', 'distance', 'tilt', 'turn', 'lens', 'focus']);
   const distance = o.distance === undefined ? 1600 : num(where, 'perspective.distance', o.distance, 1, 1e6);
   return {
     aim: o.aim === undefined ? [0, 0, 0] : vec3(where, 'perspective.aim', o.aim),
@@ -180,7 +181,20 @@ function perspective(where: string, value: unknown): PerspSpec {
     tilt: o.tilt === undefined ? 0 : num(where, 'perspective.tilt', o.tilt, -90, 90),
     turn: o.turn === undefined ? 0 : num(where, 'perspective.turn', o.turn, -36000, 36000),
     lens: o.lens === undefined ? distance : num(where, 'perspective.lens', o.lens, 1, 1e6),
+    // Written only when it is given: a layer without it is the data it always was.
+    ...(o.focus === undefined ? {} : { focus: perspFocus(where, o.focus) }),
   };
+}
+
+/** The focus by distance of a perspective layer: blur per unit of depth behind and in front of the focus, and where it is. */
+function perspFocus(where: string, value: unknown): PerspFocus {
+  const o = value as { far?: unknown; near?: unknown; at?: unknown };
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) fail(where, `perspective.focus must be { far, near, at }, got ${JSON.stringify(value)}`);
+  checkKeys(`${where} perspective.focus`, o, ['far', 'near', 'at']);
+  const far = o.far === undefined ? 0 : num(where, 'perspective.focus.far', o.far, 0, 100);
+  const near = o.near === undefined ? 0 : num(where, 'perspective.focus.near', o.near, 0, 400);
+  if (far === 0 && near === 0) fail(where, 'perspective.focus blurs nothing: give far (blur per unit of depth behind the focus) or near (in front of it) above 0');
+  return { far, near, ...(o.at === undefined ? {} : { at: num(where, 'perspective.focus.at', o.at, 1, 1e6) }) };
 }
 
 function range(where: string, name: string, value: unknown, min: number, max: number): Vec2 {
@@ -226,7 +240,7 @@ function idle(where: string, value: IdleSpec | undefined): IdleSpec | null {
 
 function body(where: string, value: BodySpec | undefined): BodySpec | null {
   if (value === undefined) return null;
-  if (value.kind === 'fixed') {
+  if (value.kind === 'fixed' || value.kind === 'kinematic') {
     checkKeys(`${where} body`, value, ['kind', 'friction', 'restitution']);
     return value;
   }
@@ -241,7 +255,7 @@ function body(where: string, value: BodySpec | undefined): BodySpec | null {
     }
     return value;
   }
-  return fail(where, `body.kind must be "fixed" or "dynamic", got ${JSON.stringify((value as { kind?: unknown }).kind)}`);
+  return fail(where, `body.kind must be "fixed", "dynamic" or "kinematic", got ${JSON.stringify((value as { kind?: unknown }).kind)}`);
 }
 
 function children(where: string, value: readonly SceneNode[] | undefined): readonly SceneNode[] {
@@ -1398,9 +1412,10 @@ export function label(o: {
   follow?: SpringSpec;
   /**
    * Makes the label a counter, as on a text: its string holds "{n}" where the number goes; the number starts at this
-   * value (or at `from`, with `decimals` places, and `grouping: false` for digits alone) and countTo() runs it.
+   * value (or at `from`, with `decimals` places, `grouping: false` for digits alone, and `roll: true` for digits that
+   * roll as the wheels of a meter) and countTo() runs it.
    */
-  count?: number | { from: number; decimals?: number; grouping?: boolean };
+  count?: number | { from: number; decimals?: number; grouping?: boolean; roll?: boolean };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): LabelNode {
@@ -1474,8 +1489,9 @@ export function text(o: {
   /**
    * Makes the text a counter. Its string holds "{n}" where the number goes; the number starts at this value (or at
    * `from`, with `decimals` places after the decimal sign, and `grouping: false` for digits alone) and countTo() runs it.
+   * `roll: true` rolls its digits as the wheels of a meter.
    */
-  count?: number | { from: number; decimals?: number; grouping?: boolean };
+  count?: number | { from: number; decimals?: number; grouping?: boolean; roll?: boolean };
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
   clipTo?: string | readonly string[];
   /** Key of the node's voice in the bank of sounds. */
@@ -1520,13 +1536,17 @@ function countOf(where: string, value: unknown, runInk: unknown): CountSpec | un
   let count: CountSpec;
   if (typeof value === 'number') count = { from: num(where, 'count', value, -1e15, 1e15), decimals: 0 };
   else {
-    if (value === null || typeof value !== 'object') fail(where, `count must be a number, or { from, decimals, grouping }, got ${JSON.stringify(value)}`);
-    const o = value as { from?: unknown; decimals?: unknown; grouping?: unknown };
-    checkKeys(`${where} count`, o, ['from', 'decimals', 'grouping']);
+    if (value === null || typeof value !== 'object') fail(where, `count must be a number, or { from, decimals, grouping, roll }, got ${JSON.stringify(value)}`);
+    const o = value as { from?: unknown; decimals?: unknown; grouping?: unknown; roll?: unknown };
+    checkKeys(`${where} count`, o, ['from', 'decimals', 'grouping', 'roll']);
     const decimals = o.decimals === undefined ? 0 : num(where, 'count.decimals', o.decimals, 0, 6);
     if (!Number.isInteger(decimals)) fail(where, `count.decimals must be a whole number, got ${decimals}`);
     if (o.grouping !== undefined && typeof o.grouping !== 'boolean') fail(where, `count.grouping must be true or false (false: the digits alone, with no sign between their groups), got ${JSON.stringify(o.grouping)}`);
-    count = { from: num(where, 'count.from', o.from, -1e15, 1e15), decimals, ...(o.grouping === false ? { grouping: false as const } : {}) };
+    if (o.roll !== undefined && typeof o.roll !== 'boolean') fail(where, `count.roll must be true or false (true: its digits roll as the wheels of a meter), got ${JSON.stringify(o.roll)}`);
+    count = { from: num(where, 'count.from', o.from, -1e15, 1e15), decimals, ...(o.grouping === false ? { grouping: false as const } : {}), ...(o.roll === true ? { roll: true as const } : {}) };
+    // The wheels of a meter stand still at whole digits: the number starts at one.
+    const refused = count.roll ? rollRefusal(count.from, decimals) : null;
+    if (refused) fail(where, `count.from: ${refused}`);
   }
   // The line of a counter is set anew for every number it shows, piece by piece; a run has no place in it.
   if (runInk !== undefined) fail(where, 'a counter takes no runInk: its number is set anew at every value. Put the words of the second ink in a text of their own');
@@ -1736,8 +1756,13 @@ export function layer(o: {
    * that looks at `aim` (default [0, 0, 0]) from `distance` (default 1600), `tilt` degrees down (0 level, 90 straight
    * down) and `turn` degrees round it, with the lens `lens` (default: the distance, so that what lies at the aim is
    * drawn at its own size). true takes every default. Move the camera with perspectiveTo().
+   *
+   * `focus` blurs by distance: what lies `at` from the camera (default: the camera's distance from its aim, at each
+   * frame) is sharp; a thing behind it is blurred by `far` units per unit of depth, one in front of it by `near`, the
+   * depth of a thing being its distance over that of the focus, less 1. A node listed in the layer, and each child of a
+   * group that lies in a plane, is blurred as one picture by its distance at its place, worked out at every frame.
    */
-  perspective?: true | { aim?: Vec3; distance?: number; tilt?: number; turn?: number; lens?: number };
+  perspective?: true | { aim?: Vec3; distance?: number; tilt?: number; turn?: number; lens?: number; focus?: { far?: number; near?: number; at?: number } };
 }): LayerSpec {
   const where = `layer("${o?.id}")`;
   checkKeys(where, o, ['id', 'depth', 'nodes', 'blur', 'parallax', 'tint', 'perspective', 'sampledBackdrop']);
