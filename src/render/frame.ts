@@ -35,6 +35,7 @@ import { heldFrame, type HeldRange } from './holds.ts';
 import { shapePath } from '../shape/path.ts';
 import { outsideShape } from './bounds.ts';
 import { drawFootprints } from './footprints.ts';
+import { beginFrame, framePath } from './fresh.ts';
 import { displayPlan } from './detail.ts';
 import { applyHaze } from './haze.ts';
 import { glowView, sampledFrame } from './backdrop.ts';
@@ -50,10 +51,11 @@ export interface RenderOptions {
   readonly gpu: boolean;
   /**
    * Draw the frame as a still of it alone draws it, whatever this process drew before it (`frameRaw` and `framePng`;
-   * off by default). On the GPU the drawing library keeps the triangles of a curved outline for about a second and
-   * draws that outline again with them, also at another scale: a frame drawn soon after a frame of another zoom may
-   * differ from its still by a few pixels of such an edge. With `alone` a frame drawn after another first lets the GPU
-   * rest from it for `GPU_FORGETS_MS`, so every frame after the first is slower by that much.
+   * off by default). Every path the engine keeps from frame to frame is drawn as a copy of each frame's own (fresh.ts),
+   * so a frame is that frame anyway, but for a path of ten segments or fewer, which the drawing library keeps by its
+   * points for about a second and draws again with what it worked out, also at another scale: drawn soon after a frame
+   * of a much different zoom, such a path may differ by a few pixels of its edge. With `alone` a frame drawn after
+   * another first lets the GPU rest from it for `GPU_FORGETS_MS`, so every frame after the first is slower by that much.
    */
   readonly alone?: boolean;
 }
@@ -75,7 +77,8 @@ export const GPU_MSAA = 4;
 /**
  * How long a frame drawn `alone` waits after the frame of this process drawn on the GPU before it, in ms. The drawing
  * library drops what it keeps of the paths of earlier frames once nothing has used it for about a second, and offers no
- * way to drop it sooner: after 950 ms of rest a frame came out as its still, after 900 ms not always.
+ * way to drop it sooner: after 950 ms of rest a frame came out as its still, after 900 ms not always (measured before
+ * the paths kept from frame to frame were drawn as copies of each frame's own).
  */
 export const GPU_FORGETS_MS = 1250;
 
@@ -1021,7 +1024,7 @@ function drawLens(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint, 
     // The picture, inside the outline of the lens.
     ctx.save();
     ctx.setTransform(m);
-    ctx.clip(shapePath(shape));
+    ctx.clip(framePath(shapePath(shape)));
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawCanvas(content, bx0, by0);
     ctx.restore();
@@ -1063,7 +1066,7 @@ function drawLens(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint, 
   // The ring round the lens.
   ctx.setTransform(m);
   ctx.lineWidth = spec.width;
-  ctx.stroke(shapePath(shape));
+  ctx.stroke(framePath(shapePath(shape)));
   ctx.restore();
 }
 
@@ -1098,6 +1101,8 @@ export function drawState(c: CompiledShot, state: FrameState, opts: RenderOption
   const height = heightFor(width);
   const k = width / STAGE_W;
   const scratch: Scratch = { canvases: [] };
+  // A path kept from the frames before is drawn as a copy of this frame's own (fresh.ts).
+  beginFrame();
   const out = newCanvas(scratch, width, height, opts.gpu);
   const ctx = out.getContext('2d');
   const spec = c.spec;
@@ -1353,7 +1358,7 @@ let frameInHand: Promise<unknown> = Promise.resolve();
  * alive: a heavy frame (many layers, several of them blurred) is drawn with other edges, by a few levels, when the
  * canvases of the frame before still exist, also when that frame was read back before this one was drawn. So frames
  * are made one at a time, whoever asks for them and however many are asked for at once. What the library keeps of the
- * paths of the frames before is another matter: see `RenderOptions.alone`.
+ * paths of the frames before is another matter: see fresh.ts and `RenderOptions.alone`.
  */
 function oneFrameAtATime<T>(job: () => Promise<T>): Promise<T> {
   const run = frameInHand.then(job, job);

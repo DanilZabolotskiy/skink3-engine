@@ -22,6 +22,7 @@ import { shapePath } from '../shape/path.ts';
 import { liftedContext, PLANE_NEAR_W0, planeCanvas } from './plane.ts';
 import { projectedLine } from './projected-line.ts';
 import { drawGlobe } from './globe.ts';
+import { framePath } from './fresh.ts';
 import { drawRelief } from './relief.ts';
 import { ensureFonts, fontString } from '../text/fonts.ts';
 import { splitRuns, type RunSpan } from '../text/runs.ts';
@@ -806,29 +807,29 @@ function fillShape(ctx: CanvasRenderingContext2D, item: ShapeItem, paint: Paint)
     ctx.scale(xf.scale, xf.scale);
   }
   ctx.fillStyle = paint.tone('base', base);
-  ctx.fill(path);
+  ctx.fill(framePath(path));
   if (node.lit) {
     // The light direction in the shape's own space: the crescents stay on the
     // correct side however the shape is turned.
     const parts = litParts(shape, vrot(paint.light, -xf.rot));
     ctx.fillStyle = paint.tone('shadow1', base);
-    ctx.fill(parts.shadow);
+    ctx.fill(framePath(parts.shadow));
     ctx.fillStyle = paint.tone('shadow2', base);
-    ctx.fill(parts.deepShadow);
+    ctx.fill(framePath(parts.deepShadow));
     const rimLight = item.node.colors['rimLight'];
     if (rimLight) {
       ctx.fillStyle = paint.tone('base', rimLight);
-      ctx.fill(parts.rimLight);
+      ctx.fill(framePath(parts.rimLight));
     }
     ctx.fillStyle = paint.tone('rim', base);
-    ctx.fill(parts.rim);
+    ctx.fill(framePath(parts.rim));
     // highlight: false keeps the crescents alone: on a long outline with deep bays the stroke would cut across it.
     if (node.highlight !== false) {
       ctx.strokeStyle = paint.tone('highlight', base);
       ctx.lineWidth = parts.highlightWidth;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.stroke(parts.highlight);
+      ctx.stroke(framePath(parts.highlight));
     }
   }
   ctx.restore();
@@ -848,7 +849,7 @@ export function drawShapeGlow(ctx: CanvasRenderingContext2D, item: ShapeItem, pa
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
   ctx.fillStyle = withAlpha(paint.tone('glow', itemFill(item)), node.glow * item.alpha);
-  ctx.fill(shapePath(itemShape(item)));
+  ctx.fill(framePath(shapePath(itemShape(item))));
   ctx.restore();
 }
 
@@ -869,7 +870,7 @@ export function eraseGlow(ctx: CanvasRenderingContext2D, item: ShapeItem): void 
   ctx.rotate(xf.rot);
   ctx.scale(xf.scale, xf.scale);
   ctx.fillStyle = `rgba(0,0,0,${Math.min(1, Math.max(0, item.alpha)).toFixed(4)})`;
-  ctx.fill(shapePath(itemShape(item)));
+  ctx.fill(framePath(shapePath(itemShape(item))));
   ctx.restore();
 }
 
@@ -1594,7 +1595,7 @@ function fillRunLines(
     ctx.translate(line.x, line.y);
     if (!line.runs) {
       ctx.fillStyle = ink;
-      ctx.fill(p);
+      ctx.fill(framePath(p));
     } else {
       const key = `${weight}|${size}|${line.runs.map((r) => r.join(',')).join(';')}|${line.text}`;
       let parts = runPathCache.get(key);
@@ -1604,11 +1605,11 @@ function fillRunLines(
       }
       if (parts.plain) {
         ctx.fillStyle = ink;
-        ctx.fill(parts.plain);
+        ctx.fill(framePath(parts.plain));
       }
       if (parts.run) {
         ctx.fillStyle = runInk;
-        ctx.fill(parts.run);
+        ctx.fill(framePath(parts.run));
       }
     }
     ctx.restore();
@@ -1625,7 +1626,7 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: P
   ctx.scale(xf.scale, xf.scale);
   if (b.path) {
     ctx.fillStyle = paint.tone('base', item.node.colors['box']!);
-    ctx.fill(b.path);
+    ctx.fill(framePath(b.path));
   }
   const runInk = item.node.colors['runInk'];
   if (runInk) {
@@ -1639,7 +1640,7 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem, paint: P
     if (!p) continue;
     ctx.save();
     ctx.translate(line.x, line.y);
-    ctx.fill(p);
+    ctx.fill(framePath(p));
     ctx.restore();
   }
   ctx.restore();
@@ -1655,7 +1656,7 @@ export function drawLabel(ctx: CanvasRenderingContext2D, item: LabelItem, paint:
   ctx.translate(item.tip[0], item.tip[1]);
   ctx.scale(item.scale, item.scale);
   ctx.fillStyle = paint.tone('base', item.node.colors['fill']!);
-  ctx.fill(g.path);
+  ctx.fill(framePath(g.path));
   const runInk = item.node.colors['runInk'];
   if (runInk) {
     fillRunLines(ctx, g.lines, g.size, g.weight, paint.tone('base', item.node.colors['ink']!), paint.tone('base', runInk));
@@ -1669,7 +1670,7 @@ export function drawLabel(ctx: CanvasRenderingContext2D, item: LabelItem, paint:
     if (!p) continue;
     ctx.save();
     ctx.translate(line.x, line.y);
-    ctx.fill(p);
+    ctx.fill(framePath(p));
     ctx.restore();
   }
   ctx.restore();
