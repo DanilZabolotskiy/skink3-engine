@@ -1,7 +1,7 @@
 # Quick reference for scene authors
 
 - After `/**/`: defaults.
-- 1920 x 1080, origin centred, y down; parent `[x,y]`, seconds at 60 fps, clockwise degrees, 0 right.
+- 1920 x 1080, origin centred, y down; parent `[x,y]`, s at 60 fps; degrees clockwise, 0 right.
 
 ## A scene module
 
@@ -19,8 +19,7 @@ const scene = shot({
 export default scene;
 ```
 
-- Colours: palette keys; text: `strings` keys; random: `Rng`.
-- A palette has `rules` (held by `check`), `tones`, variants.
+- Colours: palette keys; text: `strings` keys. A palette has `rules` (held by `check`), `tones`, variants.
 
 ## Shot, camera, layers
 
@@ -29,17 +28,17 @@ shot({ ...scene, /**/ light: { from: 'top-left' }, vignette: 0.5, camera: { at: 
 shot({ ...scene, camera: { path: { points: loopPoints([0, -10], [84, 30]), closed: true, speed: 0.45 } } });
 shot({ ...scene, camera: { drift: { speeds: [[0, 30], [4, 30], [6, 240]] } } }); // units/s; or path.speeds
 cameraTo({ at: 2, zoom: 1.6, to: [200, 0], /**/ dur: 1.2, profile: 'ease' }); // zoom, to, or both
-zoomTo({ at: 6, to: 1.15, /**/ dur: 3, profile: 'ease' }); // zoom alone
+zoomTo({ at: 6, to: 1.15, /**/ dur: 3 }); // zoom alone
 backgroundTo({ at: 3, inner: 'deep.night', /**/ dur: 2, profile: 'ease' }); // + outer, center, radius, atmosphere, vignette
 layer({ id: 'far', depth: 1.5, nodes: [] }); // + blur, parallax, tint
 layer({ id: 'room', depth: 0, nodes: [], perspective: { aim: [0, 0, 0], distance: 1600, tilt: 0, turn: 0 } }); // or true: a space, z away, with its camera; + lens
-perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6, profile: 'ease' }); // + aim, distance (a dolly), turn, lens (a zoom)
+perspectiveTo('room', { at: 2, tilt: 50, /**/ dur: 1.6 }); // + aim, distance (a dolly), turn, lens (a zoom)
 blurTo('far', { at: 2, to: 0, /**/ dur: 1.2 }); // a focus pull
 cut({ at: 4 }); cameraTo({ at: 4, zoom: 2, dur: 0 }); // dur 0 on a cut: cameraTo, zoomTo, backgroundTo, perspectiveTo, blurTo, fadeTo
 ```
 
 - `drift.speed`: units/frame along `heading` (0.3-0.7 px). `wander`: units; `period`: s; `focus`: blur per unit of depth.
-- A `path` replaces `at`, `drift.speed`, `drift.heading`: with `speed` (units/frame) it loops a closed one (`loopPoints(center, r | [rx, ry])`), else runs once.
+- A `path` replaces `at`, `drift.speed`, `drift.heading`: a closed one with `speed` (units/frame) loops (`loopPoints(center, r | [rx, ry])`), else runs once.
 - Keys chain. `cameraTo`: `zoom` times the view, `to` its aim; path and drift wait. Under `zoomTo` they run on.
 - A `cut` restarts the push-in and springs; drift `speeds` may step there.
 - `depth` 0: in focus; positive: far (less parallax, blurred, tinted); to -0.9: near. Far first, then list order, parents first.
@@ -55,7 +54,7 @@ polygon({ id: 'hex', fill: 'mid.mist', sides: 6, r: 50, /**/ radius: 8 }); // 0.
 rect({ id: 'tray', fill: 'mid.mist', w: 240, h: 50, /**/ radius: 11 }); // 0.22 of the short side
 blob({ id: 'buddy', fill: 'mid.mist', r: 50, /**/ points: 9, wobble: 0.14, seed: 1 });
 region({ id: 'isle', fill: 'mid.mist', points: [[-200, 0], [0, -120], [200, 0], [0, 40]], /**/ smooth: 1 }); // free-form, no body; <=600 points, lit: false <=4000
-group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground; screen: { size, least, most }
+group({ id: 'face', /**/ upright: false, children: [] }); // upright: not turned by its parent; plane: 'floor' | 'wall' | 'side' | { x, y }, back, tall, fog, ground; screen: { size, least, most | keep }
 link({ id: 'wire', from: 'hex', to: 'buddy', color: 'mid.mist', /**/ pulseColor: 'mid.mist', bend: 0.12, width: 7, glow: 0 });
 stroke({ id: 'route', points: [[-300, 0], [0, -80], [300, 0]], color: 'mid.mist', /**/ width: 7, closed: false, smooth: 1, glow: 0 }); // + dash [length,gap], flow (units/s), drawn, pulseColor, least, curveSteps
 label({ id: 'note', text: 'label.dot', target: 'c', fill: 'light.cream', ink: 'deep.night', /**/ side: 'top', size: 38, maxWidth: 420, maxLines: 3 }); // + count; runInk: '2.0 · [Aug 2026]': runs in that ink
@@ -69,7 +68,7 @@ lens({ id: 'loupe', of: 'map', look: 'c', zoom: 3, r: 150, fill: 'light.cream', 
 fabric({ id: 'town', blocks: [[[0, 0], [9, 0], [9, 9]]], fills: 'mid.mist' }).node; // + squares, streets, clear, shadow, rim, detail, part
 ```
 
-- Shape options: `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: `reliefHeight`, `samplePixels`, `picture`, `backdrop`.
+- Shape options: `rimLight`, `idle: { amp, period }`, `follow`, `body`, `highlight: false`, `lift`, `soft` (groups too), `rise` (+ `side`; strokes too), `stands` (a sail). `relief`: `reliefHeight`, `samplePixels`, `picture`, `backdrop`, `smooth`, `shadows: true | { color, amount, soft }`.
 - `stroke`: `smooth: 0`: straight; `arcPoints(center, r, from, to)`: arc or ring (degrees).
 - `globe`: layer `drift` (deg/s), `soft`, `id` (`fadeTo`, `fillTo`); `light`: `from`, `lit`, `night`. Children at `[lon, lat, height?]` ride its turn, hidden behind, heading `rotation`; a `[lon, lat]` `stroke` lies on it.
 - `label`: tail at `target`'s edge on `side`; wraps, then shrinks, never cut. `text`: free-standing; a shape's child: on it; in a `parallax: 0` layer: the frame's.
@@ -80,11 +79,9 @@ fabric({ id: 'town', blocks: [[[0, 0], [9, 0], [9, 9]]], fills: 'mid.mist' }).no
 capsule({ id: 'tail', fill: 'mid.mist', length: 46, r: 8, origin: 'start', sway: 'springy' }); // swings about its first end; or 'heavy', 'light', 'viscous'
 circle({ id: 'moon', fill: 'light.cream', r: 9, follow: { f: 2.4, z: 0.26, r: 0 } }); // Hz, damping, response: its place lags; groups, labels too
 rect({ id: 'floor', fill: 'mid.mist', at: [0, 400], w: 600, h: 36, body: { kind: 'fixed' } });
-circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // from velocity on: defaults
+circle({ id: 'ball', fill: 'mid.mist', r: 30, body: { kind: 'dynamic', release: 2, velocity: [0, 0], spin: 0, density: 1, appear: 'always' } }); // waits till release (s); from velocity (units/s; spin: deg/s) on: defaults; appear: 'release': undrawn till then
 shot({ ...scene, /**/ physics: { gravity: 540, linearDamping: 0.35, angularDamping: 0.6, restitution: 0.12, friction: 0.7, prewarm: 0 } });
 ```
-
-A dynamic body waits till `release` (s); `velocity`: units/s, `spin`: deg/s; `appear: 'release'`: undrawn till then.
 
 ## Motion and timing
 
@@ -103,8 +100,9 @@ bump('c', { at: 2, /**/ amount: 0.14 }); // a size kick, 0.7 s
 squash('buddy', { at: 5, /**/ amount: -0.22, dur: 0.6, pivot: [0, 0] }); // lower and wider about pivot
 countTo('total', { at: 2, to: 1500, /**/ dur: 1, profile: 'ease' }); // count: 0 or { from, decimals, grouping: false } on a text, label: "{n}"; + ratio
 levelTo('drink', { at: 2, to: 0.8, /**/ dur: 1.5, profile: 'ease' }); // 0 empty, 1 full
-riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8, profile: 'ease' });
-hazeTo('air', { at: 2, to: 6, /**/ dur: 1.5, profile: 'ease' });
+riseTo('hex', { at: 6, to: 40, /**/ dur: 0.8 });
+sunTo('hills', { at: 2, from: 45, /**/ dur: 2 }); // + high: a relief's light
+hazeTo('air', { at: 2, to: 6, /**/ dur: 1.5 });
 drawOn('wire', { at: 1, /**/ dur: 0.6 }); // hidden before at. Stroke: + to (a share), profile, ramp
 solidTo('route', { at: 5, /**/ to: 1, dur: 0.6 }); // closes its dashes
 bendTo('wire', { at: 3, to: 0, /**/ dur: 0.8, overshoot: 0.25 }); // taut (0), or it sags
@@ -128,13 +126,13 @@ rect({ id: 'drink', fill: 'mid.mist', w: 264, h: 344, level: { at: 0.1, wave: { 
 rect({ id: 'air', fill: 'mid.mist', w: 800, h: 500, opacity: 0, haze: { amount: 3 } }); // wavers what is drawn before; + scale 40, speed 30, direction -90
 ```
 
-- An emitter needs `rate` (/s; `rateTo('fizz', { at: 2, to: 30 })`), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): number or `[min, max]`. `sizing: 'spark'` shrinks, `'grow'` grows; `fade: [birth, death]`: each one's opacity; `opacity`: all (`fadeTo`). Also `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak`.
-- `cover`: hides the glow drawn before it. `backdrop`: labels may cover it. `clipTo`: only inside that shape, faded at a `soft` edge; a coast: `clipMask`. `level` (or 0..1): fills from the bottom; `wave` ripples it.
+- An emitter needs `rate` (/s; `rateTo('fizz', { at: 2, to: 30 })`), `bursts: [{ at, count }]` or `onContact: { count, minImpulse }`. `size` (radius), `life` (s), `speed` (units/s): n or `[min, max]`. `sizing: 'spark'` shrinks, `'grow'` grows; `fade: [birth, death]`: each one's opacity; `opacity`: all (`fadeTo`). + `at`, `from`, `until`, `attach`, `turbulence`, `core`, `glow`, `streak`.
+- `cover`: hides the glow drawn before it. `backdrop`: labels may cover it. `clipTo`: only inside that shape (`['a', 'b']`: their union), faded at a `soft` edge; a coast: `clipMask`. `level` (or 0..1): fills from the bottom; `wave` ripples it.
 
 ## Sound
 
 ```ts
-circle({ id: 'marble', fill: 'mid.mist', r: 30, sound: 'marble' }); // its voice: the bank's "marble.<kind>", or "marble"
+circle({ id: 'marble', fill: 'mid.mist', r: 30, sound: 'marble' }); // its voice: bank key "marble.<kind>", or "marble"
 popIn('c', { at: 1, sound: false }); // any intent: false mutes, a key names its sound
 sfx('chime', { at: 6, /**/ gain: 1 }); // by hand; + node: panned to it
 ```
@@ -159,11 +157,11 @@ queue   render queue status
 common  --lang tag (first table) --width px (1920) --cpu --out file --cache dir
 ```
 
-`--group` shares render admission (not on macOS). `check`: palette, strings, glyphs, layout. `--crop`: units, top-left. `--alone`: each frame alone (~1 s).
+`--group`: shared admission (not macOS). `--crop`: units, top-left. `--alone`: ~1 s a frame.
 
 ## Reading the reviews
 
-- `jump`: a teleport or pop: check its keys; change place while hidden.
+- `jump`: a teleport, pop or light swing (`sunTo`): check its keys; change place while hidden.
 - `abrupt-start`, `abrupt-stop`: no ease at that end: `'ease'`, `'in'`, `'out'`, or `anticipation`, `overshoot`; speed keys: longer.
 - `mechanical`: one speed between two rests in view: `'ease'`, or enter or leave.
 - `too-fast`: over half its size per frame: slower, larger, a `streak` (1/30 s); a haze: larger `scale`; `flow`: slower; `lens`: lower `zoom`.
@@ -192,5 +190,5 @@ MOTION-REVIEW.md, PHYSICS-REVIEW.md: findings, pictures, thresholds.
 constants: STAGE_W STAGE_H FPS SIM_DT SUBSTEPS ROLES CAMERA_DEFAULTS PHYSICS_DEFAULTS SPRING_PRESETS MOVE_PROFILES DEFAULT_RAMP EASINGS MOTION_FINDING_KINDS PHYSICS_FINDING_KINDS CONTRAST_FINDING_KINDS CAMERA_SUBJECT FRAME_SUBJECT FRAME_REGIONS
 errors: SceneError IntentError PaletteError
 functions: hexToHsv mix resolveColor checkPalette moveTimes profilePeak rampProgress pathLength pathTable pathAt pathHeightAt frameToSeconds secondsToFrame Noise
-maps: water woods trees flecks parcels houses logRoad locator fabric inside distTo scatter selectByCell oval smoothLine patches fillRings
+maps: water woods trees flecks parcels houses logRoad locator inside distTo scatter selectByCell oval smoothLine patches fillRings
 ```

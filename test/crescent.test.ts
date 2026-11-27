@@ -6,7 +6,8 @@ import { DEG, vrot } from '../src/core/math.ts';
 import { bakeShot, compileShot, evaluate, flatItems, frameRaw, heightFor, layer, rect, shot, type ShotSpec } from '../src/index.ts';
 import { LIGHT_PROPORTIONS, lightVector, litParts } from '../src/look/light.ts';
 import { capsuleShape, circleShape, rectShape, regionShape, shapeExtent, type ShapeSpec } from '../src/shape/geometry.ts';
-import { CRESCENT_NUDGES, CRESCENT_TOLERANCE, crescentArea, crescentPath, crescentPaths, pathArea, shapePath, shiftPath, soundCrescent, subtractPath } from '../src/shape/path.ts';
+import { CRESCENT_NUDGES, CRESCENT_TOLERANCE, crescentArea, crescentPath, crescentPaths, pathArea, shapePath, shiftPath, soundCrescent, subtractPath, withPathDifference } from '../src/shape/path.ts';
+import { drawFrame } from '../src/render/frame.ts';
 
 // A lit shape is shaded with crescents: the shape minus the shape shifted. The path difference of the drawing
 // library is wrong at some offsets (it returns the whole shape, a part of it cut straight across, both outlines,
@@ -230,4 +231,49 @@ test('crescent: a lit card drawn at an offset where the difference is wrong look
   const turn = differ(before, after);
   assert.ok(turn < 80, `two cards a tenth of a degree apart differ on ${turn} pixels`);
   assert.ok(differ(before, here) < 80 && differ(here, after) < 80, `the frame differs from the one before on ${differ(before, here)} pixels and from the one after on ${differ(here, after)}`);
+});
+
+test('crescent: a path difference that throws is a wrong one: a nudge stands in, or the crescent is empty, and the frame is drawn', async () => {
+  const failed = (): never => {
+    throw new Error('path operation failed');
+  };
+  const base = shapePath(CARD);
+  const [ux, uy] = LIGHT;
+  const shifts = shiftsOf(CARD);
+  const plain = crescentPaths(base, ux, uy, shifts);
+  // The first difference of each shift, straight along the light, throws; the nudged ones do not. Each crescent is a
+  // nudged one, of the area it must have.
+  const along = (moved: Path2D): boolean => {
+    const dx = moved.bounds.left - base.bounds.left;
+    const dy = moved.bounds.top - base.bounds.top;
+    return Math.abs(dx * uy - dy * ux) < 1e-6 * Math.hypot(dx, dy);
+  };
+  let thrown = 0;
+  const firstThrows = withPathDifference((a, b) => (along(b) ? (thrown++, failed()) : a.difference(b)), () => crescentPaths(base, ux, uy, shifts));
+  assert.equal(thrown, shifts.length, 'the first difference of every shift threw');
+  shifts.forEach((s, i) => {
+    const want = crescentArea(base, ux * s, uy * s);
+    assert.ok(Math.abs(pathArea(firstThrows[i]!) - want) <= CRESCENT_TOLERANCE * want, `${PARTS[i]}: ${pathArea(firstThrows[i]!)} against ${want}`);
+  });
+  // Every difference throws: every crescent is empty, and nothing is thrown out of the lit parts.
+  const allThrow = withPathDifference(failed, () => crescentPaths(base, ux, uy, shifts));
+  for (const part of allThrow) assert.equal(pathArea(part), 0);
+  assert.equal(pathArea(withPathDifference(failed, () => crescentPath(base, 0, 0))), 0);
+  // What it refuses to swallow: any other error is thrown on.
+  assert.throws(() => withPathDifference(() => { throw new TypeError('not a path'); }, () => crescentPaths(base, ux, uy, shifts)), /not a path/);
+  // Unchanged without a throw: the same crescents as the library's own difference gives.
+  const again = crescentPaths(base, ux, uy, shifts);
+  plain.forEach((part, i) => assert.equal(pathArea(again[i]!), pathArea(part)));
+
+  // A lit shape whose differences all throw is drawn without its shading, and the frame is made.
+  const spec = shot({
+    id: 'tiny', seconds: 0.1, seed: 3, palette, strings: { en: {} },
+    background: { inner: 'deep.night', outer: 'deep.night' }, atmosphere: 'mid.mist', vignette: 0, light: { from: 'top-left' },
+    camera: { drift: { speed: 0, wander: 0 }, pushIn: { from: 1, to: 1 } },
+    layers: [layer({ id: 'stage', depth: 0, nodes: [rect({ id: 'card', w: 240, h: 120, radius: 12, fill: 'light.cream', rotation: 7 })] })],
+  });
+  const c = compileShot(spec);
+  const bake = await bakeShot(c);
+  const drawn = withPathDifference(failed, () => drawFrame(c, bake, 0, { width: 480, lang: 'en', gpu: false }));
+  drawn.dispose();
 });

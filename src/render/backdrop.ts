@@ -28,14 +28,14 @@ export function glowView(c: CompiledShot, source: Backdrop): CompiledShot {
   for (const i of needed) {
     const n = c.nodes[i]!;
     // New entries are visited in turn, including the parents and references of a sibling used as a mask.
-    for (const index of [n.parent, n.plane, n.globe?.index ?? -1, n.clipIndex, n.lookAtIndex,
+    for (const index of [n.parent, n.plane, n.globe?.index ?? -1, n.clipIndex, ...n.clipAlso, n.lookAtIndex,
       n.targetIndex, n.fromIndex, n.toIndex, n.attachIndex]) {
       if (index >= 0) needed.add(index);
     }
     if (n.clipIndex >= 0) {
       const mask = c.nodes[n.clipIndex]!.node;
       // Skipping an intervening item can combine neighbouring clips; soft masks composite those differently.
-      if (mask.type === 'shape' && (mask.soft || mask.clipMask)) ordinaryOrder = false;
+      if ((mask.type === 'shape' && (mask.soft || mask.clipMask)) || n.clipAlso.length > 0) ordinaryOrder = false;
     }
     for (const ground of c.grounds?.get(i) ?? []) needed.add(ground);
     // A sorted or shadow-casting group's draw order may depend on the geometry of its unlit children.

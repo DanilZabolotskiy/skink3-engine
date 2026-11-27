@@ -25,10 +25,10 @@ import { atmosphereTone, hexToLab, mix } from '../look/color.ts';
 import { pathAt, pathTable } from '../motion/paths.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CompiledShot } from '../scene/compile.ts';
-import { evaluate, itemColor, itemFill, itemPath, itemShape, stretchPoint, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
+import { evaluate, itemColor, itemFill, itemPath, itemShape, stretchPoint, type ClipShape, type FrameState, type Item, type LeafItem } from '../scene/evaluate.ts';
 import { planePoint } from '../scene/space.ts';
 import { STAGE_H, STAGE_W, type ContrastSpec, type IntendedSpec } from '../scene/types.ts';
-import { containsPoint, transformOutline } from '../shape/geometry.ts';
+import { containsPoint, transformOutline, unionOutline } from '../shape/geometry.ts';
 import { languagesOf } from '../text/strings.ts';
 
 /** Frames between two samples of the review: ten a second. */
@@ -136,7 +136,9 @@ function leavesOf(state: FrameState): Leaf[] {
         // What lies in a plane of a perspective layer: through the picture the camera has of that plane.
         else if (item.kind === 'plane') walk(item.items, clips, (p) => place(planePoint(item.map, p)));
         else if (item.kind === 'clip') {
-          const outline = transformOutline(itemShape(item), (p) => place(xfApply(item.xf, p)));
+          const placed = (s: ClipShape): Vec2[] => transformOutline(itemShape(s), (p) => place(xfApply(s.xf, p)));
+          // Clipped to several shapes (clipTo: a list): inside their union.
+          const outline = item.also ? unionOutline([placed(item), ...item.also.map(placed)]) : placed(item);
           walk(item.items, item.level ? [...clips, outline, item.level.map((p) => place(p as Vec2))] : [...clips, outline], place);
         } else {
           // A content with a level is drawn below its surface only.

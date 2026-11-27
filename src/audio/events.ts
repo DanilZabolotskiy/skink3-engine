@@ -308,7 +308,7 @@ export function sceneEvents(c: CompiledShot, bake: Bake, opts: EventsOptions = {
       continue;
     }
     // The keys of the camera, of its zoom and of the background are no event, and neither are the running of a counter, the bending of a link, a change of the width of a line, a change of the height of a body, a change of a haze, a change of the rate of an emitter, a change of a fill or of the colour of a line, a change of an outline, a drive, a key of the camera of a perspective layer and a pull of a layer's focus.
-    if (key.kind === 'cameraTo' || key.kind === 'zoomTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo' || key.kind === 'widthTo' || key.kind === 'riseTo' || key.kind === 'hazeTo' || key.kind === 'rateTo' || key.kind === 'fillTo' || key.kind === 'colorTo' || key.kind === 'reshape' || key.kind === 'drive' || key.kind === 'perspectiveTo' || key.kind === 'blurTo') continue;
+    if (key.kind === 'cameraTo' || key.kind === 'zoomTo' || key.kind === 'backgroundTo' || key.kind === 'countTo' || key.kind === 'bendTo' || key.kind === 'widthTo' || key.kind === 'riseTo' || key.kind === 'sunTo' || key.kind === 'hazeTo' || key.kind === 'rateTo' || key.kind === 'fillTo' || key.kind === 'colorTo' || key.kind === 'reshape' || key.kind === 'drive' || key.kind === 'perspectiveTo' || key.kind === 'blurTo') continue;
     // A hard cut is the editor's, not a thing's: it makes no event, and neither does a fade of no time on its frame,
     // which is the cut itself.
     if (key.kind === 'cut' || (key.kind === 'fadeTo' && key.dur === 0)) continue;

@@ -33,7 +33,7 @@ export function displayPlan(c: CompiledShot, width: number): Plan {
     }
     const targets = new Set<number>();
     for (const n of c.nodes)
-      for (const i of [n.clipIndex, n.targetIndex, n.attachIndex, n.fromIndex, n.toIndex, n.lookAtIndex]) {
+      for (const i of [n.clipIndex, ...n.clipAlso, n.targetIndex, n.attachIndex, n.fromIndex, n.toIndex, n.lookAtIndex]) {
         if (i >= 0) targets.add(i);
       }
     for (const id of [...(c.spec.contrast?.nodes ?? []), ...(c.spec.intended ?? []).flatMap((item) => item.nodes)]) {

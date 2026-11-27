@@ -565,6 +565,7 @@ emitter({ id: 'snow', at: [0, -200], area: [600, 10], rate: 40, life: 6, size: 5
 - Clipped to a shape with a `level`, a node is drawn only in the filled part of it: fizz in a drink.
 - Clipped to a shape with `soft`, a node fades out across the edge of that shape instead of being cut there (see A soft edge).
 - **A long outline: `clipMask`.** Skia cuts a clip out of the canvas by an operation on paths, and on an outline of several hundred bends (a coast) that operation may fail, and the clip is then dropped without a word. Give the shape that clips `clipMask: true`, and what is clipped to it is drawn into a picture of its own and kept inside the outline by a mask of it, as a clip to a soft shape is, with a sharp edge: it holds for the 4000 points of a flat region, in a plane of a perspective layer too, and a `soft` group clipped to it keeps its blur inside it. It costs a picture the size of the frame for each such clip. Give it to every shape with more than a few hundred points that something is clipped to; without it a clip is made as it always was.
+- **A union of shapes: `clipTo: [ids]`.** A list of 1 to 64 ids of shapes of the same layer clips to the union of their outlines: the node is drawn inside any of them. An outline too long for one shape (more than the 4000 points of a flat `fillRings`, a coast of a whole country) is cut into tiles of fewer points, each its own shape, and clipped to as one: `clipTo: ['coast-1', 'coast-2', 'coast-3']`. A union is always kept inside by a mask, as `clipMask` keeps a clip, with all its outlines filled at once, so two tiles that meet along a cut leave no seam. Its shapes may move apart; what lies between them is outside. Its edge is sharp: a shape with `soft` or a `level` in a union is refused. A list of one is a clip to that shape, as written without the list. The reviews take a node clipped to a union as there inside any of its shapes. Each such clip costs a picture the size of the frame.
 - A node cannot be clipped to itself or to something inside it. Labels and eyes take no `clipTo`; put an eye in a group and clip that.
 
 #### Levels
@@ -742,6 +743,8 @@ relief({ id: 'hills', w: 2400, h: 1800, heights: { cols: 400, rows: 300, values:
 | `amount` | `0.7` | 0..1: how far a slope turns toward them. A slope that takes no light at all turns `amount` of the way to `dark`; one that faces the light, to `bright` |
 | `tints` | none | `[[height, colour], ...]`, from the lowest: the ground takes the colour of its height, between the two tints around it, and is shaded over that. Left out, only the shading is drawn, as translucent tones over what lies under the field |
 | `feather` | none | units of the rect: the field fades out smoothly over this distance toward its edges, into what lies under it: a far edge into the haze, a finer field into a coarser one under it with no seam (blend their heights at the edge too, so the shading meets). Left out, it ends sharp at its edges |
+| `smooth` | none | cells of the grid, 0 to 16: its heights are smoothed once, as it is built, by a bell this many cells wide, so a coarse grid seen close shows no steps of light between its cells. The shading, the tints, the shadows, a `ground` and `reliefHeight` all read the smoothed heights. Left out (or 0), the heights are those given |
+| `shadows` | none | `true` or `{ color?, amount?, soft? }`: the field casts shadows on itself from its light (see A relief that casts shadows on itself). Left out, a slope is lit by its own facing alone, as before |
 | `picture` | none | `1`, `2` or `4`: the shading is made once into a picture of that many pixels to a cell of the grid, and every frame draws that one image through the field's transform (see A relief drawn from a picture). Left out, it is worked out at every pixel of every frame |
 
 It also takes `at`, `depth`, `rotation`, `scale`, `opacity`, `clipTo` and `backdrop`: `backdrop: true` lets labels lie over it without a covers-node warning, as over any backdrop (see Checks); it changes nothing in the picture.
@@ -751,6 +754,33 @@ It also takes `at`, `depth`, `rotation`, `scale`, `opacity`, `clipTo` and `backd
 - **`reliefHeight(node)`** gives a function `(p) => height` for a relief node as it is built: the height of its ground at a place of its parent (the plane), its heights times `vertical`, times its scale, read along the same curves it is drawn with; past its edges, that of the nearest edge. It is the height a group with `ground` stands a thing at, for a scene that needs the number.
 - The shading is worked out once per field and per direction of the light; each frame then reads it. A field that covers the whole frame costs about 0.3 s a frame at 1080p and 1 s at 4K, on one machine.
 - Under `tints`, a grid whose water lies below the lowest land, `[[-10, 'mid.ocean'], [0, 'mid.ocean'], [1, 'mid.jade'], ...]`, draws its own coast along the curve where the heights cross between them; a coast from a vector outline is crisper (`clipTo`).
+
+##### A relief that casts shadows on itself
+
+Without shadows a slope is lit by how it faces the light alone, so a valley behind a ridge under a low sun is as bright as the plain before it. With `shadows` each point of the grid looks toward the light over the ground in its way: where the ground there stands higher than the light, the point lies in its shadow.
+
+```ts
+// A ridge across a plain, lit low from the left: the plain behind it lies in its shadow, cool and dark.
+relief({ id: 'hills', w: 2400, h: 1400, heights: DEM, vertical: 1, sun: { from: 180, high: 25 }, dark: 'deep.night', bright: 'light.cream', tints: TINTS, shadows: { color: 'deep.night', amount: 0.6, soft: 3 } }),
+```
+
+- **In shadow** a point is shaded as a slope turned at least `amount` (0..1, 0.6) of the way from the light, and toward `color` (a palette colour; the `dark` of the field unless given) in place of `dark`; the field's own `amount` scales it, as it scales every slope. `soft` (0.25 to 30 degrees, 3) is how much of the light's height the edge of a shadow spreads over: a sharp edge at a fraction of a degree, a wide soft one at several.
+- **Where it reaches.** A shadow is as long as the ground stands over the light: a ridge throws a long one under a sun low over it and none under a sun high over it. The walk toward the light goes on past the edges of the grid at the height of its edge, so a shadow does not stop where the grid does.
+- **Its cost.** The shadows are worked out once per field and per direction of the light, as the shading is: about a second for a grid of 400 000 heights on one machine, then each frame reads them. With `picture` they are made into the picture.
+- Left out, the field is drawn as it always was.
+
+##### A light that moves over a relief: `sunTo`
+
+`sunTo(id, { at, from?, high?, dur?, profile?, ramp? })` moves the light of a relief: from where it comes (`from`, degrees in the plane of the field, as `sun.from`) and how high it stands (`high`, 1 to 89), from the light it has at `at` to the one given, over `dur` (2 s), on `profile` (`'ease'`; also `'steady'`, `'in'`, `'out'`, with `ramp` 0.3). Give `from`, `high` or both; what is left out stays. Keys chain from the light reached at their moment. The shading moves with it, and the shadows of a field with `shadows` swing round and lengthen as the light goes down:
+
+```ts
+sunTo('hills', { at: 1, from: 120, high: 12, dur: 6 }),   // the afternoon: the light comes round and sinks, the shadows grow
+```
+
+- It targets a relief without a `picture` (one picture is shaded under one light; a key on it is refused). Another node is refused.
+- A light that turns works out the shadows once for each whole degree of its direction it passes through, and blends between the two around it: each degree costs what the shadows of a still light cost once, so a turn of 30 degrees over a grid of 400 000 heights adds about half a minute to a render, not a second a frame. The shading itself is worked out at every frame, as for any relief without a picture.
+- A frame of a moving light is the same picture whether it is drawn alone or after the frames before it.
+- The motion review judges the light on the channel `light`, the degrees it turns a frame: a light that swings several degrees within a frame or two flashes the whole field and is a `jump`; one that turns is life, so a still map under a moving sun is no `dead-area`. `sunTo` makes no sound event.
 
 ##### A relief drawn from a picture
 
@@ -810,7 +840,7 @@ Its `scale` may be 0.002 to 500, where every other node takes 0.01 to 100: a gro
 
 `sort`, `cast` and `detail` are for the bodies in the group, the shapes and strokes with a `rise`: the order they are drawn in, their shadows, and how small ones are drawn (see Bodies in a group: shadows, depth order, detail).
 
-`screen: { size, least?, most? }` makes the group a symbol that keeps a size on screen (see A symbol that keeps its size on screen).
+`screen: { size, least?, most? }` or `screen: { size, keep }` makes the group a symbol that keeps a size on screen (see A symbol that keeps its size on screen).
 
 `upright: true` makes the group keep its own rotation in the layer's space instead of turning with its parent. It still follows the parent's position and size. Use it for a face on something that rolls or tumbles, such as a rigid body: the eyes stay level while the body turns under them.
 
@@ -828,6 +858,7 @@ group({ id: 'ship', at: harbour, screen: { size: 30, least: 24, most: 90 }, chil
 ```
 
 - `size` is how large what the group holds is, in its own units (0.01 to 1 000 000); `least` and `most` (0.5 to 2000, units of the frame) are the smallest and the largest it is drawn. Give one of them or both.
+- `keep` (0.5 to 2000, units of the frame, without `least` and `most`) is the one size it is drawn at, exactly, at every frame: a marker, a pin or a city's dot that stays the same through a zoom of the map, a perspective far or near, and a scale of its parents. `screen: { size: 20, keep: 30 }`: what is 20 units long in the group is 30 units of the frame on screen.
 - At every frame the size it would be drawn at (its size through its parents, the perspective at its place and the zoom of the camera of its layer) is held between `least` and `most` by smooth limits: it eases into its hold through a zoom and never stops shrinking or growing at once. Between them it is drawn at its own size, within a few thousandths; at a limit a little larger than `least`, a little smaller than `most`.
 - It is held about its own place: what it holds grows and shrinks round its `at`, which stays on its place on the map.
 - Its own keys scale it on top: `popIn` brings it in from nothing, `scaleTo` and `bump` change it as ever.
@@ -1246,6 +1277,7 @@ A key says what should happen to a node and when. The engine supplies the curve.
 | `levelTo(id, { at, to, ... })` | a shape with a `level` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the level to `to` (0 = empty, 1 = full); it is there exactly at `at + dur`. See Levels |
 | `riseTo(id, { at, to, ... })` | a shape or a stroke with a `rise` | `dur` (0.8), `profile` (`'ease'`), `ramp` (0.3) | raises or lowers the body to the height `to`, in units: it grows out of the ground or sinks back; keys chain. See A height: bodies that stand on the ground |
 | `hazeTo(id, { at, to, ... })` | a shape with a `haze` | `dur` (1.5), `profile` (`'ease'`), `ramp` (0.3) | changes how far the haze moves the picture to `to`, in units; its ripples drift on; keys chain. See A heat haze |
+| `sunTo(id, { at, from?, high?, ... })` | a relief without a `picture` | `dur` (2), `profile` (`'ease'`), `ramp` (0.3) | moves the light of the relief to come from `from` and stand `high` over the ground (give one or both); its shading and its shadows move with it; keys chain. See A light that moves over a relief: `sunTo` |
 | `rateTo(id, { at, to, ... })` | emitter | `dur` (1), `profile` (`'ease'`), `ramp` (0.3) | changes how many particles a second the emitter sends out to `to`; the particles already out live on; keys chain. See A rate that changes |
 | `squash(id, { at, ... })` | placed | `amount` (-0.22), `dur` (0.6), `pivot` (`[0, 0]`) | a quick squash (negative) or stretch (positive) that rings out; the area stays. See Moves |
 | `popIn(id, { at, ... })` | placed, label | `dur` (0.55), `overshoot` (0.18) | grows from nothing past its size and settles. **The node is hidden before `at`** |
@@ -2030,7 +2062,7 @@ Nobody has to watch the video to find out whether the motion is smooth. `skink3 
 
 | Finding | What it is |
 |---|---|
-| `jump` | a teleport or a pop: position, rotation, size, opacity, level, a fill, or the width or colour of a line out of line with the frames around it |
+| `jump` | a teleport or a pop: position, rotation, size, opacity, level, a fill, the width or colour of a line, or the light of a relief, out of line with the frames around it |
 | `abrupt-start`, `abrupt-stop` | a move with no ease at one end |
 | `mechanical` | a move between two rests at constant speed |
 | `too-fast` | travel of half the node's own size per frame or more, sustained: it strobes at 60 fps |
@@ -2066,6 +2098,8 @@ Things to know when you write a scene:
 - A hard cut (`cut`) is a seam: each side is judged as a shot of its own, and nothing that changes across it is a finding (see A hard cut inside a shot).
 - A node moved through a group that draws nothing of its own is judged on the group: its speed against the size of what the group holds. A peak of fewer than six frames above the strobing limit is not reported; look at `skink3 graph` for a fast move that matters.
 - Dashes that flow along a stroke (`flow`) are judged on the channel `flow`: running half of their period (a dash and a gap) or more in a frame, they strobe (`too-fast`). While they run, the stroke is life where it lies.
+- A light keyed on a relief (`sunTo`) is judged on the channel `light`, the degrees it turns in a frame: 6 or more in one frame flash the field and throw its shadows about (`jump`). While it turns 0.01 degrees a frame or more, the relief is life (see A light that moves over a relief: `sunTo`).
+- A node clipped to several shapes (`clipTo: [ids]`) is judged where it is inside any of them; wholly outside them all it is not judged.
 - A symbol that keeps its size on screen (`screen`) is judged at the size it is drawn; its growing and shrinking with the zoom is the camera's. The picture in a lens is judged on the channel `lens` of the lens: sliding half the width of the lens or more in a frame (the node it follows moving fast, times its `zoom`) it strobes (`too-fast`).
 
 The full guide, with how to read a trail and a graph, every threshold, and what the review cannot tell: [MOTION-REVIEW.md](MOTION-REVIEW.md).

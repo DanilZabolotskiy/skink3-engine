@@ -81,9 +81,32 @@ function rememberRaster(entry: RasterEntry, raster: ReliefRaster): void {
   rasterBytes += size;
 }
 
+/** The canvases of the frame being drawn, which keep the relief pictures drawn into it (`keepReliefPictures`). */
+let frameCanvases: Canvas[] | null = null;
+
+/**
+ * Draws with every relief picture made meanwhile kept among `canvases`, the canvases of the frame being drawn, so that
+ * it is freed with them once the frame is read back. The library turns a canvas drawn into another into pixels only
+ * when the frame is read back, and drops those pixels when that canvas is freed: freed sooner, before they exist, they
+ * stay in the library's store of such pixels for seconds. A run of frames then fills that store, and the library draws
+ * every canvas of the later frames another way, by a level or two at their edges: a frame of a render would not be its
+ * still. Outside a frame a picture is freed once it is drawn.
+ */
+export function keepReliefPictures<T>(canvases: Canvas[], draw: () => T): T {
+  const outer = frameCanvases;
+  frameCanvases = canvases;
+  try {
+    return draw();
+  } finally {
+    frameCanvases = outer;
+  }
+}
+
 /** Composites the raster through the supplied context, including its current clip and blend state. */
 function paintRaster(raw: CanvasRenderingContext2D, m: DOMMatrix, x: number, y: number, w: number, h: number, raster: ReliefRaster): void {
   const picture = new Canvas(raster.image.width, raster.image.height);
+  const kept = frameCanvases;
+  kept?.push(picture);
   try {
     picture.getContext('2d').putImageData(raster.image, 0, 0);
     raw.save();
@@ -101,7 +124,7 @@ function paintRaster(raw: CanvasRenderingContext2D, m: DOMMatrix, x: number, y: 
     }
     raw.restore();
   } finally {
-    picture.dispose();
+    if (!kept) picture.dispose();
   }
 }
 
@@ -139,6 +162,167 @@ function shadingOf(spec: ReliefSpec, w: number, h: number, from: number, high: n
   const made = { key, shade };
   shadings.set(spec, made);
   return made;
+}
+
+/** The horizons of a field toward a few directions of its light, the latest used last (shadows). */
+const horizons = new WeakMap<ReliefSpec, Map<string, Float32Array>>();
+
+/** How many directions of the light the horizons of one field are kept for: a light that turns uses two at a time. */
+const HORIZONS_KEPT = 6;
+
+/**
+ * The horizon of each point of a field toward its light: the height of the highest ground between the point and the
+ * light, as an angle over the point's own level, in radians, held between `floor` and `ceil` (below floor every
+ * point is lit, above ceil every point is dark, so the walk stops there). Each point walks toward the light in steps
+ * of one cell of the grid along the longer of the way's two directions, reading the ground between the grid's
+ * points (past its edge, the ground at its edge), until no ground ahead can stand higher than the highest it has seen,
+ * or it has gone as many steps as the grid has points across and down. `from` is the
+ * direction the light comes from in the field's own space, in radians.
+ */
+function horizonOf(spec: ReliefSpec, w: number, h: number, from: number, floor: number, ceil: number): Float32Array {
+  const key = `${w},${h},${from},${floor},${ceil}`;
+  let kept = horizons.get(spec);
+  if (!kept) horizons.set(spec, (kept = new Map()));
+  const hit = kept.get(key);
+  if (hit) {
+    kept.delete(key);
+    kept.set(key, hit);
+    return hit;
+  }
+  const { cols, rows, heights, vertical } = spec;
+  const dx = w / (cols - 1);
+  const dy = h / (rows - 1);
+  // Toward the light, in points of the grid per unit of the field; a step is one cell along the longer direction.
+  const ux = Math.cos(from) / dx;
+  const uy = Math.sin(from) / dy;
+  const stepLength = 1 / Math.max(Math.abs(ux), Math.abs(uy));
+  const cx = ux * stepLength;
+  const cy = uy * stepLength;
+  let top = -Infinity;
+  for (const v of heights) top = Math.max(top, v);
+  const tanFloor = Math.tan(floor);
+  const tanCeil = Math.tan(ceil);
+  // The longest walk: across the whole grid and as far again past its edge.
+  const far = cols + rows;
+  // The top of each edge of the grid: the highest ground past it.
+  let left = -Infinity;
+  let right = -Infinity;
+  let upper = -Infinity;
+  let lower = -Infinity;
+  for (let r = 0; r < rows; r++) {
+    left = Math.max(left, heights[r * cols]!);
+    right = Math.max(right, heights[r * cols + cols - 1]!);
+  }
+  for (let c = 0; c < cols; c++) {
+    upper = Math.max(upper, heights[c]!);
+    lower = Math.max(lower, heights[(rows - 1) * cols + c]!);
+  }
+  const out = new Float32Array(cols * rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const z0 = heights[r * cols + c]!;
+      // Heights over the point, in units of the field, against the way walked: the tangent of the angle it is seen at.
+      let best = tanFloor;
+      for (let n = 1; n <= far; n++) {
+        const d = n * stepLength;
+        // Past the edge of the grid the ground goes on as it is at the edge, so a shadow does not end in steps where
+        // the walks of a row of points leave the grid one by one; there no ground stands higher than that edge's top.
+        let gx = c + n * cx;
+        let gy = r + n * cy;
+        let most = top;
+        let out = 0;
+        if (gx < 0) {
+          gx = 0;
+          out++;
+          if (left < most) most = left;
+        } else if (gx > cols - 1) {
+          gx = cols - 1;
+          out++;
+          if (right < most) most = right;
+        }
+        if (gy < 0) {
+          gy = 0;
+          out++;
+          if (upper < most) most = upper;
+        } else if (gy > rows - 1) {
+          gy = rows - 1;
+          out++;
+          if (lower < most) most = lower;
+        }
+        if ((most - z0) * vertical <= best * d) break;
+        const rise = ((nearHeight(heights, cols, rows, gx, gy) - z0) * vertical) / d;
+        if (rise > best) {
+          best = rise;
+          if (best >= tanCeil) break;
+        }
+        // Past a corner the ground is the corner's height, seen lower at every step further.
+        if (out === 2) break;
+      }
+      out[r * cols + c] = Math.min(ceil, Math.atan(best));
+    }
+  }
+  kept.set(key, out);
+  while (kept.size > HORIZONS_KEPT) kept.delete(kept.keys().next().value!);
+  return out;
+}
+
+/** The light each point of a field takes past its shadows, made once per field, size and light. */
+const lightings = new WeakMap<ReliefSpec, { readonly key: string; readonly lit: Float32Array }>();
+
+/**
+ * The share of its light each point of the grid of a field takes past the shadows the field casts on itself, 0 (in
+ * shadow) .. 1 (in the open), or null for a field without shadows. `from` and `high` are the light in the field's own
+ * space, in radians. A light that is keyed (`sun`, sunTo) reads the horizons at the two whole degrees of direction
+ * either side of it, between them in a straight line, and held between the lowest and the highest it stands over the
+ * shot: so each frame of a turning light is drawn the same however the frames are drawn, and few horizons are made.
+ */
+function lightOf(spec: ReliefSpec, w: number, h: number, from: number, high: number, sun: ShapeItem['sun']): Float32Array | null {
+  const shadows = spec.shadows;
+  if (!shadows) return null;
+  const key = `${w},${h},${from},${high},${sun ? `${sun.least},${sun.most}` : ''}`;
+  const hit = lightings.get(spec);
+  if (hit && hit.key === key) return hit.lit;
+  const D = Math.PI / 180;
+  const soft = shadows.soft * D;
+  const n = spec.cols * spec.rows;
+  let horizon: Float32Array;
+  if (!sun) {
+    horizon = horizonOf(spec, w, h, from, Math.max(0, high - soft / 2), high + soft / 2);
+  } else {
+    const floor = Math.max(0, sun.least * D - soft / 2);
+    const ceil = sun.most * D + soft / 2;
+    const degrees = from / D;
+    const below = Math.floor(degrees);
+    const t = degrees - below;
+    const turn = (deg: number): number => (((deg % 360) + 360) % 360) * D;
+    const a = horizonOf(spec, w, h, turn(below), floor, ceil);
+    if (t === 0) horizon = a;
+    else {
+      const b = horizonOf(spec, w, h, turn(below + 1), floor, ceil);
+      horizon = new Float32Array(n);
+      for (let i = 0; i < n; i++) horizon[i] = a[i]! + (b[i]! - a[i]!) * t;
+    }
+  }
+  const lit = new Float32Array(n);
+  for (let i = 0; i < n; i++) lit[i] = Math.max(0, Math.min(1, (high - horizon[i]!) / soft + 0.5));
+  lightings.set(spec, { key, lit });
+  return lit;
+}
+
+/**
+ * A shade in shadow: the shade `s` of a slope (-amount .. amount) as it is where it takes `l` of its light (0..1). The
+ * lit side takes none of the light it misses, and a point in shadow turns at least `deep` of the way toward the dark.
+ */
+function shadowed(s: number, l: number, deep: number): number {
+  return l >= 1 ? s : s * l + Math.min(s, -deep) * (1 - l);
+}
+
+/** The tone a shade turns toward in shadow: the dark tone turned `k` (0..1) of the way toward the shadows' colour, written into `dim`. */
+function dimmed(dark: Rgb, shadow: Rgb, k: number, dim: [number, number, number]): Rgb {
+  dim[0] = dark[0] + (shadow[0] - dark[0]) * k;
+  dim[1] = dark[1] + (shadow[1] - dark[1]) * k;
+  dim[2] = dark[2] + (shadow[2] - dark[2]) * k;
+  return dim;
 }
 
 /** The highest a raised ground is drawn, as a share of the camera's height over the plane: as for a body's rise. */
@@ -391,13 +575,18 @@ const pictures = new WeakMap<ReliefSpec, { readonly key: string; readonly image:
  * or between them: its shade and its height read off the grid along the same curves the field is drawn with pixel by
  * pixel, tinted, shaded and feathered as there.
  */
-function pictureOf(spec: ReliefSpec, fw: number, fh: number, from: number, darkHex: string, brightHex: string, tintHexes: readonly string[]): ImageData {
-  const key = [fw, fh, from, darkHex, brightHex, ...tintHexes].join(',');
+function pictureOf(spec: ReliefSpec, fw: number, fh: number, from: number, darkHex: string, brightHex: string, tintHexes: readonly string[], shadowHex: string | null): ImageData {
+  const key = [fw, fh, from, darkHex, brightHex, ...tintHexes, shadowHex ?? ''].join(',');
   const hit = pictures.get(spec);
   if (hit && hit.key === key) return hit.image;
   const k = spec.picture!;
   const { cols, rows, heights, amount } = spec;
-  const { shade } = shadingOf(spec, fw, fh, from, (spec.high * Math.PI) / 180);
+  const high = (spec.high * Math.PI) / 180;
+  const { shade } = shadingOf(spec, fw, fh, from, high);
+  const lit = lightOf(spec, fw, fh, from, high, undefined);
+  const deep = spec.shadows?.amount ?? 0;
+  const shadow = shadowHex === null ? null : rgbOf(shadowHex);
+  const dim: [number, number, number] = [0, 0, 0];
   const dark = rgbOf(darkHex);
   const bright = rgbOf(brightHex);
   const stops = spec.tints?.map((t, n) => ({ at: t[0], rgb: rgbOf(tintHexes[n]!) })) ?? null;
@@ -420,21 +609,29 @@ function pictureOf(spec: ReliefSpec, fw: number, fh: number, from: number, darkH
       weights(gx - c0, wx);
       let s = 0;
       let z = 0;
+      let l = 0;
       for (let j = 0; j < 4; j++) {
         const r = Math.max(0, Math.min(rows - 1, r0 - 1 + j)) * cols;
         let rs = 0;
         let rz = 0;
+        let rl = 0;
         for (let n = 0; n < 4; n++) {
           const at = r + Math.max(0, Math.min(cols - 1, c0 - 1 + n));
           rs += wx[n]! * shade[at]!;
           if (stops) rz += wx[n]! * heights[at]!;
+          if (lit) rl += wx[n]! * lit[at]!;
         }
         s += wy[j]! * rs;
         z += wy[j]! * rz;
+        l += wy[j]! * rl;
       }
       s = Math.max(-1, Math.min(1, s)) * amount;
       const o = (py * w + px) * 4;
-      const to = s < 0 ? dark : bright;
+      if (lit && shadow && l < 1) {
+        l = Math.max(0, l);
+        s = shadowed(s, l, deep);
+      }
+      const to = s < 0 ? (lit && shadow && l < 1 ? dimmed(dark, shadow, 1 - l, dim) : dark) : bright;
       const t = Math.abs(s);
       if (stops) {
         tintAt(stops, z, tint);
@@ -495,10 +692,11 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const darkHex = tone(colors['relief.dark']!);
   const brightHex = tone(colors['relief.bright']!);
   const tintHexes = spec.tints?.map((_, k) => tone(colors[`relief.tint${k}`]!)) ?? [];
+  const shadowHex = spec.shadows ? tone(colors['relief.shadow']!) : null;
   if (spec.picture) {
     // Shaded once into a picture of the field, drawn as one image through its transform.
     const from = (spec.from * Math.PI) / 180 - xf.rot;
-    const image = pictureOf(spec, fw, fh, from, darkHex, brightHex, tintHexes);
+    const image = pictureOf(spec, fw, fh, from, darkHex, brightHex, tintHexes, shadowHex);
     // The pixels of the picture stand on the points of the grid: it reaches half a pixel past the field, which it is cut to.
     const px = fw / (image.width - 1);
     const py = fh / (image.height - 1);
@@ -513,7 +711,8 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
     raw.restore();
     return;
   }
-  const key = [width, height, a, b, c, d, e, f, g, hh, i, xf.rot, ...(raise ?? []), darkHex, brightHex, ...tintHexes];
+  const sun = item.sun;
+  const key = [width, height, a, b, c, d, e, f, g, hh, i, xf.rot, ...(raise ?? []), darkHex, brightHex, ...tintHexes, ...(shadowHex === null ? [] : [shadowHex]), ...(sun ? [sun.from, sun.high] : [])];
   const entry = rasterEntry(item.node, key);
   if (entry.raster) {
     recentRasters.delete(entry);
@@ -596,8 +795,13 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
   const ii = (a * d - c * b) / det;
 
   // The light in the field's own space: it comes from where the scene says on the map, the field turned with it.
-  const from = (spec.from * Math.PI) / 180 - xf.rot;
-  const { shade } = shadingOf(spec, fw, fh, from, (spec.high * Math.PI) / 180);
+  const from = ((sun?.from ?? spec.from) * Math.PI) / 180 - xf.rot;
+  const high = ((sun?.high ?? spec.high) * Math.PI) / 180;
+  const { shade } = shadingOf(spec, fw, fh, from, high);
+  const lit = lightOf(spec, fw, fh, from, high, sun);
+  const deep = spec.shadows?.amount ?? 0;
+  const shadow = shadowHex === null ? null : rgbOf(shadowHex);
+  const dim: [number, number, number] = [0, 0, 0];
   const dark = rgbOf(darkHex);
   const bright = rgbOf(brightHex);
   const stops = spec.tints?.map((t, k) => ({ at: t[0], rgb: rgbOf(tintHexes[k]!) })) ?? null;
@@ -666,24 +870,33 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
       weights(gy - r0, wy);
       let s = 0;
       let z = 0;
+      let l = 0;
       for (let j = 0; j < 4; j++) {
         const r = Math.max(0, Math.min(rows - 1, r0 - 1 + j)) * cols;
         let rs = 0;
         let rz = 0;
+        let rl = 0;
         for (let k = 0; k < 4; k++) {
           const at = r + Math.max(0, Math.min(cols - 1, c0 - 1 + k));
           rs += wx[k]! * shade[at]!;
           if (stops) rz += wx[k]! * heights[at]!;
+          if (lit) rl += wx[k]! * lit[at]!;
         }
         s += wy[j]! * rs;
         z += wy[j]! * rz;
+        l += wy[j]! * rl;
       }
       s = Math.max(-1, Math.min(1, s)) * amount;
       const o = (py * bw + px) * 4;
+      // In the shadow of the ground between it and the light: it takes less of the light, and turns toward the shadows' colour.
+      if (lit && shadow && l < 1) {
+        l = Math.max(0, l);
+        s = shadowed(s, l, deep);
+      }
+      const to = s < 0 ? (lit && shadow && l < 1 ? dimmed(dark, shadow, 1 - l, dim) : dark) : bright;
       if (stops) {
         // The tint of its height, turned toward the dark or the lit tone by its shade.
         tintAt(stops, z, tint);
-        const to = s < 0 ? dark : bright;
         const t = Math.abs(s);
         data[o] = tint[0]! + (to[0] - tint[0]!) * t;
         data[o + 1] = tint[1]! + (to[1] - tint[1]!) * t;
@@ -691,7 +904,6 @@ export function drawRelief(ctx: CanvasRenderingContext2D, item: ShapeItem, tone:
         data[o + 3] = 255 * shown;
       } else {
         // The shading alone: the dark or the lit tone, as strong as the shade, over what lies under it.
-        const to = s < 0 ? dark : bright;
         data[o] = to[0];
         data[o + 1] = to[1];
         data[o + 2] = to[2];

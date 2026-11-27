@@ -175,6 +175,10 @@ export async function renderGraph(series: MotionSeries, opts: GraphOptions): Pro
       if (s.fill && changes(s.fill, from, to, 0.001)) {
         panels.push({ title: 'change of its fill per frame, share of the range of a channel', lines: [{ name: 'fill', data: s.fill }], fromZero: true, height: 120, peak: false });
       }
+      // A relief whose light is keyed: how fast its light turns.
+      if (s.light && changes(s.light, from, to, 0.001)) {
+        panels.push({ title: 'turn of its light per frame, degrees', lines: [{ name: 'light', data: s.light }], fromZero: true, height: 120, peak: false });
+      }
     } else if (n.emitterSlot >= 0 && series.emitters[n.emitterSlot]) {
       const e = series.emitters[n.emitterSlot]!;
       what = `${n.id} (emitter)`;

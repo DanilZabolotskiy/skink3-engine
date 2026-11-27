@@ -34,6 +34,9 @@
 // largest change of a channel of its colour in one frame: a colour has no
 // place and no speed to start or stop with.
 //
+// A relief whose light is keyed (sunTo) is judged for a jump only, on the
+// angle its light turns in one frame: its slopes and its shadows flash.
+//
 // A layer of a globe whose opacity or fill is keyed (fadeTo, fillTo on its
 // id) is judged as a shape's opacity and fill are, for a jump, while its globe
 // is seen and some of the layer faces the viewer.
@@ -91,7 +94,7 @@ import { reach, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { atSeam, IN_FRAME, visibleAt, type MotionSeries, type PlacedSeries } from './series.ts';
 import { T } from './thresholds.ts';
 
-export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'particles' | 'haze' | 'pulse' | 'flow' | 'lens' | 'spring' | 'hold' | 'focus';
+export type Channel = 'position' | 'rotation' | 'scale' | 'opacity' | 'level' | 'outline' | 'width' | 'shadow' | 'fill' | 'light' | 'particles' | 'haze' | 'pulse' | 'flow' | 'lens' | 'spring' | 'hold' | 'focus';
 
 export interface Finding {
   readonly kind: MotionFindingKind;
@@ -723,6 +726,18 @@ export function detectMotion(series: MotionSeries): Finding[] {
         const step = s.fill[f]!;
         if (step < T.jumpFill) continue;
         mine.push(colourJump(s.id, s.type === 'stroke', f, step));
+      }
+    }
+    // Light: a relief whose light is keyed flashes when its light swings too far in one frame.
+    if (s.light) {
+      for (let f = 1; f < F; f++) {
+        if (!st.seen[f] || !st.inFrame[f]) continue;
+        const step = s.light[f]!;
+        if (step < T.jumpLight) continue;
+        mine.push(
+          finding('jump', s.id, 'light', f - 1, f, step, T.jumpLight, 'degrees of the light in one frame',
+            `light: its direction turned ${step.toFixed(1)} degrees between frames ${f - 1} and ${f}, and its slopes and shadows flash`),
+        );
       }
     }
 

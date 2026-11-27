@@ -17,6 +17,7 @@ import {
   sampleHeight,
   sampleLevel,
   sampleRise,
+  sampleSun,
   sampleLid,
   sampleOpacity,
   samplePathTurn,
@@ -544,13 +545,13 @@ export function computeWorld(c: CompiledShot, frame: number, poses: PoseSource, 
     } else out[n.index] = xf;
     if (node.type === 'group' && node.screen) {
       // A symbol that keeps a size on screen: its size as its parents, the perspective at its place and the zoom of
-      // the camera draw it (its own keys left out, they scale it on top), held between least and most.
+      // the camera draw it (its own keys left out, they scale it on top), held between least and most, or at keep.
       zooms ??= c.layers.map((l) => layerView(cameraAt(c.spec.camera, c.cameraNoise, frame, c.frames, c.cameraTrack), l.parallax).zoom);
       const keyed = n.scale ? sampleScale(n.scale, t) : 1;
       const seen = (out[n.index]!.scale * zooms[n.layer]!) / keyed;
       if (seen > 0 && Number.isFinite(seen)) {
         const size = node.screen.size * seen;
-        const held = screenHeld(size, node.screen.least, node.screen.most);
+        const held = node.screen.keep ?? screenHeld(size, node.screen.least, node.screen.most);
         if (held !== size) {
           const k = held / size;
           heldBy?.set(n.index, k);
@@ -644,6 +645,11 @@ export interface ShapeItem {
    * the camera is, in the relief's own units. It is drawn raised. Left out: it is drawn flat.
    */
   readonly raise?: Vec3;
+  /**
+   * A relief whose light is keyed (sunTo): where the light comes from and how high it stands at this frame, in degrees,
+   * and the lowest and the highest it stands over the shot. Left out: the light of its node.
+   */
+  readonly sun?: { readonly from: number; readonly high: number; readonly least: number; readonly most: number };
 }
 
 export interface EyeItem {
@@ -842,7 +848,19 @@ export interface ClipItem {
   readonly shape?: ShapeSpec;
   /** When the shape is soft: how far the edge of the clip is blurred, in the units of the layer, so the items fade out across it. Left out: a sharp edge. */
   readonly soft?: number;
+  /**
+   * Clipped to several shapes (clipTo: a list): the shapes after the first, each where it is at this frame. The items
+   * are drawn inside the union of all of them, by one mask of their outlines. Left out: one shape.
+   */
+  readonly also?: readonly ClipShape[];
   readonly items: readonly Item[];
+}
+
+/** A shape of a union clip, where it is at its frame: its node, its place, and its outline when that is keyed. */
+export interface ClipShape {
+  readonly node: CNode;
+  readonly xf: Xf;
+  readonly shape?: ShapeSpec;
 }
 
 /**
@@ -884,6 +902,12 @@ export function itemShape(item: { readonly node: CNode; readonly shape?: ShapeSp
   if (item.shape) return item.shape;
   if (item.node.node.type !== 'shape') throw new Error(`"${item.node.id}" is not a shape`);
   return item.node.node.shape;
+}
+
+/** Whether a clip already open is to the same shapes after its first as a node clipped to `others` (node indices). */
+function sameUnion(open: readonly ClipShape[] | undefined, others: readonly number[], c: CompiledShot): boolean {
+  if (!open) return others.length === 0;
+  return open.length === others.length && open.every((s, k) => s.node === c.nodes[others[k]!]);
 }
 
 /** The path a stroke is drawn along at its frame. */
@@ -1926,6 +1950,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
   };
   // A shape without a fillTo is the item it always was.
   const filled = (n: CNode): { fill?: string } => (n.fill ? { fill: sampleFill(n.fill, t) } : {});
+  const sunlit = (n: CNode): { sun?: ShapeItem['sun'] } => (n.sun ? { sun: { ...sampleSun(n.sun, t), least: n.sun.least, most: n.sun.most } } : {});
   // So is a line without a colorTo.
   const coloured = (n: CNode): { color?: string } => (n.fill ? { color: sampleFill(n.fill, t) } : {});
   // Where an item is drawn: in its plane for a node that lies in one, else in its layer.
@@ -2070,8 +2095,13 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
         // What is clipped to a soft shape fades out across its edge, as the shape does.
         const softness = clipNode.node.type === 'shape' && clipNode.node.soft ? { soft: clipNode.node.soft * world[n.clipIndex]!.scale } : {};
         let inner: Item[];
-        if (last && last.kind === 'clip' && last.node === clipNode) {
+        // Clipped to several shapes: the others where they are at this frame.
+        const also = n.clipAlso.length > 0 ? { also: n.clipAlso.map((k): ClipShape => ({ node: c.nodes[k]!, xf: placeOf(k), ...reshaped(c.nodes[k]!) })) } : {};
+        if (last && last.kind === 'clip' && last.node === clipNode && sameUnion(last.also, n.clipAlso, c)) {
           inner = last.items as Item[];
+        } else if (n.clipAlso.length > 0) {
+          inner = [];
+          items.push({ kind: 'clip', node: clipNode, xf: placeOf(n.clipIndex), ...reshaped(clipNode), ...also, items: inner });
         } else if (clipNode.level) {
           // Clipped to a content: only its filled part holds anything.
           const g = levelGeometry(clipNode, placeOf(n.clipIndex), t);
@@ -2156,7 +2186,7 @@ export function evaluate(c: CompiledShot, bake: Bake, frame: number, lang: strin
             }
           }
           // A body of a group that says what detail its bodies are worth is plain while it is small: its top alone, where its top is.
-          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(looks?.has(index) ? { lens: looks.get(index)! } : {}), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...(node.globe ? { globeAt: t, ...globeLayersAt(n, t) } : {}) });
+          items.push({ kind: 'shape', node: n, xf, alpha: a, ...reshaped(n), ...filled(n), ...(looks?.has(index) ? { lens: looks.get(index)! } : {}), ...(worth?.plain ? {} : standing(index)), ...(worth ? { detail: worth } : {}), ...upon(n), ...raised(n), ...sunlit(n), ...(node.globe ? { globeAt: t, ...globeLayersAt(n, t) } : {}) });
           break;
         case 'eye': {
           if (xf.scale <= HIDDEN) break;

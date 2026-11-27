@@ -411,6 +411,36 @@ export function soundCrescent(path: Path2D, part: Path2D, dx: number, dy: number
 }
 
 /**
+ * `path` minus `moved`, or null when the library's path operation gives up on
+ * the pair and throws ("path operation failed"), as it does for a few outlines
+ * at a few offsets: a lit outline driven frame by frame meets one sooner or
+ * later. To a crescent such a throw is a wrong result like any other; any
+ * other error is thrown on.
+ */
+function crescentDifference(path: Path2D, moved: Path2D): Path2D | null {
+  try {
+    return pathDifference(path, moved);
+  } catch (error) {
+    if (error instanceof Error && /path operation failed/i.test(error.message)) return null;
+    throw error;
+  }
+}
+
+/** The library's difference, through one door, so that a test can stand in for it (`withPathDifference`). */
+let pathDifference = (a: Path2D, b: Path2D): Path2D => a.difference(b);
+
+/** For tests: runs `body` with `difference` in place of the library's path difference of the crescents. */
+export function withPathDifference<T>(difference: (a: Path2D, b: Path2D) => Path2D, body: () => T): T {
+  const before = pathDifference;
+  pathDifference = difference;
+  try {
+    return body();
+  } finally {
+    pathDifference = before;
+  }
+}
+
+/**
  * The crescent for a shift at which the first difference did not have the
  * area that was worked out: the difference is taken again with the shift
  * turned by the nudges, and the first one that has the area it must have is
@@ -424,21 +454,29 @@ export function soundCrescent(path: Path2D, part: Path2D, dx: number, dy: number
  * nothing, and the nearest neighbour is returned in its place. Without any
  * nudge there is nothing to hold it against, and the crescent is empty: a
  * part that is missing for a frame, never a wrong one.
+ *
+ * A difference that throws (`crescentDifference`) is a wrong one too: a nudge
+ * that throws is passed over, and a first one that threw (`first` null) gives
+ * way to the nearest nudge that did not; none that did not, and the crescent
+ * is empty.
  */
-function repairedCrescent(path: Path2D, first: Path2D, dx: number, dy: number, nudges: readonly number[]): Path2D {
+function repairedCrescent(path: Path2D, first: Path2D | null, dx: number, dy: number, nudges: readonly number[]): Path2D {
   const tried: { part: Path2D; area: number }[] = [];
   for (const deg of nudges) {
     const cos = Math.cos(deg * DEG);
     const sin = Math.sin(deg * DEG);
     const nx = dx * cos - dy * sin;
     const ny = dx * sin + dy * cos;
-    const part = path.difference(shiftPath(path, nx, ny));
+    const part = crescentDifference(path, shiftPath(path, nx, ny));
+    if (!part) continue;
     const want = crescentArea(path, nx, ny);
     const area = pathArea(part);
     if (want > 0 && near(area, want)) return part;
     tried.push({ part, area });
   }
   if (tried.length === 0) return new Path2D();
+  // A first difference that threw has no area to hold against them: the nearest that did not throw stands in.
+  if (!first) return tried[0]!.part;
   // The nudges come nearest first: the first two are the neighbours on either side.
   const beside = tried.slice(0, 2).map((t) => t.area);
   const area = pathArea(first);
@@ -463,14 +501,14 @@ export function crescentPaths(path: Path2D, ux: number, uy: number, shifts: read
   const dw = cutAcross(path, ux, uy);
   const want = shifts.map((s) => (dw > 0 && s !== 0 ? areaOnLines(s, dw) : 0));
   return shifts.map((s, i) => {
-    const first = path.difference(shiftPath(path, ux * s, uy * s));
-    return near(pathArea(first), want[i]!) ? first : repairedCrescent(path, first, ux * s, uy * s, nudges);
+    const first = crescentDifference(path, shiftPath(path, ux * s, uy * s));
+    return first && near(pathArea(first), want[i]!) ? first : repairedCrescent(path, first, ux * s, uy * s, nudges);
   });
 }
 
 /** One crescent: `path` minus `path` moved by (dx, dy), checked as in `crescentPaths`. */
 export function crescentPath(path: Path2D, dx: number, dy: number, nudges: readonly number[] = CRESCENT_NUDGES): Path2D {
   const s = Math.hypot(dx, dy);
-  if (!(s > 0)) return path.difference(path);
+  if (!(s > 0)) return crescentDifference(path, path) ?? new Path2D();
   return crescentPaths(path, dx / s, dy / s, [s], nudges)[0]!;
 }

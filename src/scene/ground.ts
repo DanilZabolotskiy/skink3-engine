@@ -26,6 +26,41 @@ export interface GroundField {
   readonly cell: number;
 }
 
+/** The most cells a relief's heights may be smoothed by (`smooth`, the deviation of the bell, in cells of its grid). */
+export const RELIEF_SMOOTH_MAX = 16;
+
+/**
+ * Heights smoothed by a bell (a Gaussian) of `cells` cells of the grid (its standard deviation), across and then down,
+ * the edge points standing for the ground beyond the edge. What is finer than a cell or two, the steps of a coarse grid
+ * seen close, goes; a range many cells across keeps its form and nearly its height. 0: the heights as they are.
+ */
+export function smoothHeights(values: Float32Array, cols: number, rows: number, cells: number): Float32Array {
+  if (!(cells > 0)) return values;
+  const reach = Math.ceil(3 * cells);
+  const bell = new Float64Array(2 * reach + 1);
+  let sum = 0;
+  for (let k = -reach; k <= reach; k++) sum += bell[k + reach] = Math.exp(-(k * k) / (2 * cells * cells));
+  for (let k = 0; k < bell.length; k++) bell[k]! /= sum;
+  const across = new Float32Array(values.length);
+  for (let r = 0; r < rows; r++) {
+    const row = r * cols;
+    for (let c = 0; c < cols; c++) {
+      let v = 0;
+      for (let k = -reach; k <= reach; k++) v += bell[k + reach]! * values[row + Math.max(0, Math.min(cols - 1, c + k))]!;
+      across[row + c] = v;
+    }
+  }
+  const out = new Float32Array(values.length);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let v = 0;
+      for (let k = -reach; k <= reach; k++) v += bell[k + reach]! * across[Math.max(0, Math.min(rows - 1, r + k)) * cols + c]!;
+      out[r * cols + c] = v;
+    }
+  }
+  return out;
+}
+
 /** Catmull-Rom weights of the four points around a place t (0..1) between the second and the third. */
 export function curveWeights(t: number, out: Float64Array): void {
   const t2 = t * t;

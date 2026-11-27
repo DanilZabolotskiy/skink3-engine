@@ -14,7 +14,7 @@ import { PULSE_LENGTH } from '../motion/curves.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE } from '../physics/cache.ts';
 import { pathAt, pathTable, SAMPLES, type PathTable } from '../motion/paths.ts';
 import type { CNode } from '../scene/compile.ts';
-import { itemColor, itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
+import { itemColor, itemFill, itemPath, itemShape, itemWidth, type CastItem, type ClipItem, type ClipShape, type EyeItem, type Foot, type LabelItem, type LinkItem, type ParticlesItem, type ShapeItem, type StrokeItem, type TextItem } from '../scene/evaluate.ts';
 import type { EmitterNode, EyeNode, LinkNode, OpeningsSpec, RoofSpec, ShapeNode, StrokeNode } from '../scene/types.ts';
 import { cornerOutline, isRegion, shapeExtent, type ShapeSpec } from '../shape/geometry.ts';
 import { between, highest, openingColumns, openingRows, roofFaces, seenRuns, SHADES, shadeOf, sideRing, upright, viewOf, wallOpenings, type OpeningColumn } from '../shape/solid.ts';
@@ -88,7 +88,7 @@ export function makePaint(light: Vec2, atmosphere: string, tint: number, hues: T
 }
 
 /** The outline of a shape as a path in the space of its layer: the shape it has at the frame of the item. */
-export function placedPath(item: ShapeItem | ClipItem): Path2D {
+export function placedPath(item: ShapeItem | ClipItem | ClipShape): Path2D {
   const { xf } = item;
   const cos = Math.cos(xf.rot) * xf.scale;
   const sin = Math.sin(xf.rot) * xf.scale;
@@ -718,8 +718,19 @@ export function fillClipShape(ctx: CanvasRenderingContext2D, item: ClipItem): vo
     below.closePath();
     ctx.clip(below);
   }
-  ctx.fill(placedPath(item));
+  ctx.fill(clipPath(item));
   ctx.restore();
+}
+
+/**
+ * The outline a clip keeps things inside, placed: for a clip to several shapes (clipTo: a list), one path of all their
+ * outlines, filled once, so that where two of them meet along a cut (a land cut into tiles) no seam shows.
+ */
+function clipPath(item: ClipItem): Path2D {
+  const own = placedPath(item);
+  if (!item.also) return own;
+  for (const s of item.also) own.addPath(placedPath(s));
+  return own;
 }
 
 /** A shape with its automatic light. A content with a level is drawn below its surface only; a body that stands up, over its side. */

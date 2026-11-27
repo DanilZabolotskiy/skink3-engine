@@ -34,6 +34,7 @@ import type {
   PopOutKey,
   PulseKey,
   RiseToKey,
+  SunToKey,
   ScaleToKey,
   SolidToKey,
   SquashKey,
@@ -799,6 +800,42 @@ export function buildRiseTrack(base: number, keys: readonly Pick<RiseToKey, 'at'
     segs.push({ at: k.at, dur: k.dur, from: sampleLevel({ base, segs }, k.at), to: k.to, profile: k.profile, ramp: k.ramp });
   }
   return { base, segs };
+}
+
+/**
+ * The light of a relief over time (sunTo): where it comes from and how high it stands, in degrees, and the lowest and
+ * the highest it stands over the shot.
+ */
+export interface SunTrack {
+  readonly from: LevelTrack;
+  readonly high: LevelTrack;
+  readonly least: number;
+  readonly most: number;
+}
+
+/** The track of the light of a relief from the light it was given and its keys; each key chains from the light reached at its moment. */
+export function buildSunTrack(from: number, high: number, keys: readonly Pick<SunToKey, 'at' | 'dur' | 'from' | 'high' | 'profile' | 'ramp'>[]): SunTrack {
+  const of = (pick: 'from' | 'high') =>
+    keys.filter((k) => k[pick] !== undefined).map((k) => ({ at: k.at, dur: k.dur, to: k[pick]!, profile: k.profile, ramp: k.ramp }));
+  const highs = buildRiseTrack(high, of('high'));
+  const all = [high, ...highs.segs.map((g) => g.to)];
+  return { from: buildRiseTrack(from, of('from')), high: highs, least: Math.min(...all), most: Math.max(...all) };
+}
+
+/** The light of a relief at time t: where it comes from and how high it stands, in degrees. */
+export function sampleSun(track: SunTrack, t: number): { from: number; high: number } {
+  return { from: sampleLevel(track.from, t), high: Math.max(1, Math.min(89, sampleLevel(track.high, t))) };
+}
+
+/** How far the light of a relief turns between times a and b: the angle between its two directions, in degrees. */
+export function sunStep(track: SunTrack, a: number, b: number): number {
+  const p = sampleSun(track, a);
+  const q = sampleSun(track, b);
+  const D = Math.PI / 180;
+  const u = [Math.cos(p.from * D) * Math.cos(p.high * D), Math.sin(p.from * D) * Math.cos(p.high * D), Math.sin(p.high * D)];
+  const v = [Math.cos(q.from * D) * Math.cos(q.high * D), Math.sin(q.from * D) * Math.cos(q.high * D), Math.sin(q.high * D)];
+  const dot = u[0]! * v[0]! + u[1]! * v[1]! + u[2]! * v[2]!;
+  return Math.acos(Math.max(-1, Math.min(1, dot))) / D;
 }
 
 /** How much of a stroke is drawn, and how far its dashes are closed, over time. */

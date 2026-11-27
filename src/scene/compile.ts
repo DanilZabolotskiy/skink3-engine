@@ -41,6 +41,7 @@ import type {
   PulseKey,
   ReshapeKey,
   RiseToKey,
+  SunToKey,
   ScaleToKey,
   SolidToKey,
   SquashKey,
@@ -59,6 +60,7 @@ import {
   buildOpacityTrack,
   buildPosTrack,
   buildRiseTrack,
+  buildSunTrack,
   buildRotTrack,
   buildScaleTrack,
   buildStretchTrack,
@@ -73,6 +75,7 @@ import {
   type OpacityTrack,
   type PosTrack,
   type RiseTrack,
+  type SunTrack,
   type RotTrack,
   type ScaleTrack,
   type StretchTrack,
@@ -127,6 +130,8 @@ export interface CNode {
   readonly width: WidthTrack | null;
   /** Shapes and strokes with a rise: the height of the body over time; null for a node that lies flat. */
   readonly rise: RiseTrack | null;
+  /** Reliefs whose light is keyed (sunTo): where it comes from and how high it stands, over time; null for every other node. */
+  readonly sun: SunTrack | null;
   /**
    * Shapes with a fillTo and lines (strokes, links) with a colorTo: the colour they are drawn in over time, a shape's
    * fill or a line's colour; null for a node that keeps the colour it was given.
@@ -138,6 +143,8 @@ export interface CNode {
   readonly rate?: RiseTrack;
   /** Index of the shape this node is clipped to, or -1. */
   readonly clipIndex: number;
+  /** A node clipped to several shapes (clipTo: a list): the shapes after the first, by node index; empty for one shape or none. */
+  readonly clipAlso: readonly number[];
   /** Slot in the bake, or -1. */
   readonly bodySlot: number;
   readonly springSlot: number;
@@ -404,6 +411,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
   const bends = new Map<number, BendToKey[]>();
   const widths = new Map<number, WidthToKey[]>();
   const rises = new Map<number, RiseToKey[]>();
+  const suns = new Map<number, SunToKey[]>();
   const hazes = new Map<number, HazeToKey[]>();
   const rates = new Map<number, RateToKey[]>();
   const fills = new Map<number, FillToKey[]>();
@@ -640,6 +648,11 @@ export function compileShot(spec: ShotSpec): CompiledShot {
         }
         push(rises, index, key);
         break;
+      case 'sunTo':
+        if (node.type !== 'shape' || !node.relief) fail(`${where}: sunTo cannot target ${node.type} "${node.id}"; it moves the light of a relief`);
+        if (node.relief.picture !== undefined) fail(`${where}: sunTo("${node.id}"): a relief with a picture is shaded once, under one light; leave picture out, or the sunTo`);
+        push(suns, index, key);
+        break;
       case 'rateTo':
         need(node.type === 'emitter', 'emitters');
         push(rates, index, key);
@@ -750,15 +763,23 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       fail(`${where}: rigid body "${node.id}" is in the perspective layer "${spec.layers[d.layer]!.id}"; the physics bake is flat: put the bodies in a flat layer`);
     }
 
+    let clipAlso: number[] = [];
     if (node.type !== 'label' && node.type !== 'eye' && node.clipTo) {
-      const index = idIndex.get(node.clipTo);
-      if (index === undefined) fail(`${where}: ${node.type} "${node.id}" clipTo refers to "${node.clipTo}", which does not exist (nodes: ${known()})`);
-      const other = drafts[index]!;
-      if (other.node.type !== 'shape') fail(`${where}: ${node.type} "${node.id}" clipTo refers to ${other.node.type} "${node.clipTo}"; it must be a shape`);
-      if (other.layer !== d.layer) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${node.clipTo}", must be in the same layer`);
-      if (index >= d.index && index <= d.subtreeEnd) fail(`${where}: ${node.type} "${node.id}" cannot be clipped to itself or to something inside it ("${node.clipTo}")`);
-      if (planeOf[index] !== planeOf[d.index]) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${node.clipTo}", must lie in the same plane`);
-      clipIndex = index;
+      const clipped = (id: string): number => {
+        const index = idIndex.get(id);
+        if (index === undefined) fail(`${where}: ${node.type} "${node.id}" clipTo refers to "${id}", which does not exist (nodes: ${known()})`);
+        const other = drafts[index]!;
+        if (other.node.type !== 'shape') fail(`${where}: ${node.type} "${node.id}" clipTo refers to ${other.node.type} "${id}"; it must be a shape`);
+        if (other.layer !== d.layer) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${id}", must be in the same layer`);
+        if (index >= d.index && index <= d.subtreeEnd) fail(`${where}: ${node.type} "${node.id}" cannot be clipped to itself or to something inside it ("${id}")`);
+        if (planeOf[index] !== planeOf[d.index]) fail(`${where}: ${node.type} "${node.id}" and the shape it is clipped to, "${id}", must lie in the same plane`);
+        // The union of several shapes is filled as one mask of their outlines: a content's level or a soft edge is one shape's.
+        if (node.clipAlso && other.node.level) fail(`${where}: ${node.type} "${node.id}" is clipped to several shapes, and "${id}" is a content with a level: a union is drawn by the outlines alone; clip to the content by itself`);
+        if (node.clipAlso && other.node.soft) fail(`${where}: ${node.type} "${node.id}" is clipped to several shapes, and "${id}" is soft: a union is drawn with a sharp edge; clip to the soft shape by itself`);
+        return index;
+      };
+      clipIndex = clipped(node.clipTo);
+      clipAlso = (node.clipAlso ?? []).map(clipped);
     }
 
     switch (node.type) {
@@ -784,6 +805,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
           colors['relief.dark'] = col(node, 'relief.dark', node.relief.dark);
           colors['relief.bright'] = col(node, 'relief.bright', node.relief.bright);
           node.relief.tints?.forEach((t, k) => (colors[`relief.tint${k}`] = col(node, `relief.tints[${k}]`, t[1])));
+          if (node.relief.shadows) colors['relief.shadow'] = col(node, 'relief.shadows.color', node.relief.shadows.color);
         }
         if (node.body) {
           if (d.parent >= 0) fail(`${where}: rigid body "${node.id}" must be listed directly in a layer's nodes`);
@@ -1085,6 +1107,8 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       width: (node.type === 'link' || node.type === 'stroke') && widths.has(d.index) ? buildWidthTrack(node.width, widths.get(d.index)!) : null,
       // A node without a rise has no track: it lies flat, as it always did.
       rise: (node.type === 'shape' || node.type === 'stroke') && node.rise !== undefined ? buildRiseTrack(node.rise, rises.get(d.index) ?? []) : null,
+      // A relief without a sunTo has no track: its light stands where it was given.
+      sun: node.type === 'shape' && node.relief && suns.has(d.index) ? buildSunTrack(node.relief.from, node.relief.high, suns.get(d.index)!) : null,
       // A shape without a fillTo, and a line without a colorTo, have no track: each keeps the colour it was given.
       fill:
         node.type === 'shape' && fills.has(d.index)
@@ -1103,6 +1127,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       // An emitter without a rateTo has no track: it sends out the rate it was given.
       ...(node.type === 'emitter' && rates.has(d.index) ? { rate: buildRiseTrack(node.rate, rates.get(d.index)!) } : {}),
       clipIndex,
+      clipAlso,
       bodySlot,
       springSlot,
       emitterSlot,
@@ -1176,7 +1201,7 @@ export function compileShot(spec: ShotSpec): CompiledShot {
       }
       if (captured && n.node.type === 'shape' && n.node.lens) fail(`${why}: "${n.id}" is a lens, which draws the frame again at every frame: list it outside the sampled group`);
       if (captured && n.node.type === 'stroke' && n.node.flow) fail(`${why}: "${n.id}" has dashes that flow, which a sampled picture would blend: draw the flowing line outside the sampled group`);
-      const refs = [n.clipIndex, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
+      const refs = [n.clipIndex, ...n.clipAlso, n.fromIndex, n.toIndex, n.targetIndex, n.lookAtIndex, n.attachIndex];
       if (refs.some(i => i >= 0 && inside(i) !== captured)) fail(`${why}: "${n.id}" has a reference across the sampled group boundary`);
     }
     // A hard cut is never blended over: the frames on both sides of it are pictures of their own.

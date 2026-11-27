@@ -527,6 +527,11 @@ function compound(rings: readonly (readonly Vec2[])[]): CompoundOutline {
   return Object.assign(rings.flat(), { rings });
 }
 
+/** Outlines filled as one, a union of shapes (clipTo: a list): all their rings, the winding of which is summed, as a compound fill's. */
+export function unionOutline(outlines: readonly (readonly Vec2[])[]): Vec2[] {
+  return compound(outlines.flatMap((o) => (o as Partial<CompoundOutline>).rings ?? [o]));
+}
+
 export function transformOutline(spec: ShapeSpec, transform: (p: Vec2) => Vec2): Vec2[] {
   if (spec.kind === 'polygon' && spec.rings) return compound(spec.rings.map(ring => ring.map(transform)));
   return outlineOf(spec).map(transform);

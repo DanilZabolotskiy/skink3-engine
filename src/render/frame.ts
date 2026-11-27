@@ -10,9 +10,9 @@ import { withAlpha } from '../look/color.ts';
 import { GLOW } from '../look/light.ts';
 import type { Bake } from '../physics/cache.ts';
 import type { CNode, CompiledShot } from '../scene/compile.ts';
-import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem, type StrokeItem } from '../scene/evaluate.ts';
+import { evaluate, flatItems, itemFill, itemPath, itemShape, itemWidth, type ClipItem, type ClipShape, type FrameState, type GroupItem, type HazeItem, type Item, type LayerState, type LeafItem, type PlaneItem, type ShapeItem, type StretchItem, type StrokeItem } from '../scene/evaluate.ts';
 import { STAGE_H, STAGE_W, type GroupNode, type LinkNode, type ShapeNode, type StrokeNode } from '../scene/types.ts';
-import { containsPoint, transformOutline, outlineOf, shapeExtent } from '../shape/geometry.ts';
+import { containsPoint, transformOutline, outlineOf, shapeExtent, unionOutline } from '../shape/geometry.ts';
 import {
   drawCast,
   drawEye,
@@ -38,6 +38,7 @@ import { drawFootprints } from './footprints.ts';
 import { beginFrame, framePath } from './fresh.ts';
 import { displayPlan } from './detail.ts';
 import { applyHaze } from './haze.ts';
+import { keepReliefPictures } from './relief.ts';
 import { glowView, sampledFrame } from './backdrop.ts';
 import { applyPlane, fogPlane, planeCanvas as planeCanvasOf, planeContext, seesPlane } from './plane.ts';
 import { intoPlane, planePoint, type PlaneMap } from '../scene/space.ts';
@@ -143,7 +144,8 @@ interface LayerTarget {
  */
 export function maskedClip(item: ClipItem): boolean {
   const node = item.node.node;
-  return node.type === 'shape' && node.clipMask === true;
+  // A clip to several shapes (clipTo: a list) is always kept by one mask of their outlines.
+  return (node.type === 'shape' && node.clipMask === true) || item.also !== undefined;
 }
 
 /** Large projected outlines require an expensive intersection at every native clip; paint their alpha once instead. */
@@ -546,8 +548,14 @@ function drawGlow(
   }
 }
 
-function outlineInLayer(item: ShapeItem | ClipItem): Vec2[] {
+function outlineInLayer(item: ShapeItem | ClipItem | ClipShape): Vec2[] {
   return transformOutline(itemShape(item), (p) => xfApply(item.xf, p));
+}
+
+/** The outline a clip keeps things inside, in the layer: for a clip to several shapes, their union. */
+function clipOutline(item: ClipItem): Vec2[] {
+  const own = outlineInLayer(item);
+  return item.also ? unionOutline([own, ...item.also.map(outlineInLayer)]) : own;
 }
 
 /**
@@ -566,7 +574,7 @@ function seenShares(items: readonly Item[]): Map<LeafItem, number> {
       if (item.kind === 'group' || item.kind === 'stretch') walk(item.items, clips);
       // What lies in a plane of a perspective layer is taken as seen: its place under a cover is not worked out.
       else if (item.kind === 'plane') continue;
-      else if (item.kind === 'clip') walk(item.items, item.level ? [...clips, outlineInLayer(item), item.level as Vec2[]] : [...clips, outlineInLayer(item)]);
+      else if (item.kind === 'clip') walk(item.items, item.level ? [...clips, clipOutline(item), item.level as Vec2[]] : [...clips, clipOutline(item)]);
       else {
         order++;
         if (item.kind !== 'shape') continue;
@@ -1097,10 +1105,15 @@ export interface DrawnFrame {
 
 /** Draws a display list. */
 export function drawState(c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>, retained?: ReadonlyMap<number, ImageData>, whole?: FrameState): DrawnFrame {
+  const scratch: Scratch = { canvases: [] };
+  // The pictures of reliefs drawn into it are freed with its canvases, after the readback.
+  return keepReliefPictures(scratch.canvases, () => drawStateWith(scratch, c, state, opts, backdrops, retained, whole));
+}
+
+function drawStateWith(scratch: Scratch, c: CompiledShot, state: FrameState, opts: RenderOptions, backdrops?: ReadonlyMap<number, ImageData>, retained?: ReadonlyMap<number, ImageData>, whole?: FrameState): DrawnFrame {
   const width = opts.width;
   const height = heightFor(width);
   const k = width / STAGE_W;
-  const scratch: Scratch = { canvases: [] };
   // A path kept from the frames before is drawn as a copy of this frame's own (fresh.ts).
   beginFrame();
   const out = newCanvas(scratch, width, height, opts.gpu);
@@ -1306,12 +1319,14 @@ function captureRange(c: CompiledShot, state: FrameState, r: HeldRange, opts: Re
     if (p) {
       applyPlane(ctx, p);
       if (seesPlane(ctx))
-        drawItems(
-          planeContext(ctx),
-          p.items.filter((x) => x.node.index >= r.first && x.node.index <= r.last),
-          makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones),
-          target,
-          [p],
+        keepReliefPictures(target.scratch.canvases, () =>
+          drawItems(
+            planeContext(ctx),
+            p.items.filter((x) => x.node.index >= r.first && x.node.index <= r.last),
+            makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones),
+            target,
+            [p],
+          ),
         );
     }
     return new ImageData(canvas.toBufferSync('raw', { colorType: 'rgba', msaa: opts.gpu ? GPU_MSAA : false }), canvas.width, canvas.height);
@@ -1330,7 +1345,7 @@ function captureBackdrop(c: CompiledShot, state: FrameState, group: CNode, opts:
     gpu: opts.gpu, pad: blurPx > 0.05 ? Math.ceil(blurPx * 3) : 0 };
   try {
     const { canvas, ctx } = layerCanvas(target);
-    drawItems(ctx, items, makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones), target);
+    keepReliefPictures(target.scratch.canvases, () => drawItems(ctx, items, makePaint(c.light, state.background?.atmosphere ?? c.atmosphere, layer.layer.tint, c.tones), target));
     const raw = canvas.toBufferSync('raw', { colorType: 'rgba', msaa: opts.gpu ? GPU_MSAA : false });
     return new ImageData(raw, canvas.width, canvas.height);
   } finally {

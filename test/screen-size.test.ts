@@ -39,6 +39,25 @@ test('screen: what it refuses', () => {
   assert.throws(() => boat({ size: 0, least: 10 }), /screen\.size must be a number in 0\.01\.\.1000000/);
   assert.throws(() => boat({ size: 20, least: 10, far: 2 } as never), /unknown option "far"/);
   assert.throws(() => group({ id: 'floor', plane: 'floor', screen: { size: 20, least: 10 } }), /a group that lies in a plane is the map; give screen to a group inside it/);
+  // keep is one size: never with least or most, and within the range of a size on screen.
+  assert.throws(() => boat({ size: 20, keep: 30, least: 10 }), /screen\.keep is the one size it is drawn at: give it without least and most/);
+  assert.throws(() => boat({ size: 20, keep: 30, most: 40 }), /screen\.keep is the one size it is drawn at/);
+  assert.throws(() => boat({ size: 20, keep: 0 }), /screen\.keep must be a number in 0\.5\.\.2000/);
+});
+
+test('screen keep: one size on screen, exactly, through a zoom in and out and far in a perspective layer; its keys scale it on top', async () => {
+  const kept = boat({ size: 20, keep: 30 });
+  for (const zoom of [0.25, 1, 4]) {
+    const got = await onScreen(make(kept, zoom === 1 ? [] : [zoomTo({ at: 0.5, to: zoom, dur: 1 })]), 200);
+    assert.ok(Math.abs(got - 30) < 1e-6, `at a zoom of ${zoom}: ${got}`);
+  }
+  assert.ok(Math.abs((await onScreen(make(boat({ size: 20, keep: 18 }, [0, -2600]), [], { persp: true }), 0)) - 18) < 1e-6);
+  const spec = make(boat({ size: 20, keep: 30 }), [popIn('boat', { at: 1 })]);
+  assert.equal(await onScreen(spec, 30), 0);
+  assert.ok(Math.abs((await onScreen(spec, 180)) - 30) < 1e-6);
+  // Through a steady zoom it is the camera that changes, not the symbol: the motion review finds nothing on it.
+  const c = compileShot(make(boat({ size: 20, keep: 30 }), [zoomTo({ at: 0.5, to: 0.2, dur: 2, profile: 'steady' })]));
+  assert.deepEqual(reviewMotion(c, await bakeShot(c)).report.findings.filter((f) => f.subject === 'boat'), []);
 });
 
 test('screen: opt-in: a group without it is drawn at the size its parents and the camera give it', async () => {
@@ -83,6 +102,9 @@ test('screen: the motion review judges a symbol at the size it is drawn, and its
   assert.deepEqual(await findings(sail({ size: 20, least: 40 })), []);
   // The planted defect: held at 12 px, it still runs more than half of that a frame.
   assert.deepEqual(await findings(sail({ size: 20, least: 12 })), ['too-fast boat position']);
+  // Kept at one size, the same: at 40 px sound, at 12 px (the planted defect) too fast for its size.
+  assert.deepEqual(await findings(sail({ size: 20, keep: 40 })), []);
+  assert.deepEqual(await findings(sail({ size: 20, keep: 12 })), ['too-fast boat position']);
   // Through a steady zoom out its size is held: that change is the camera's, not a scale of its own.
   assert.deepEqual(await findings(make(boat({ size: 20, least: 12 }), [zoomTo({ at: 0.5, to: 0.2, dur: 2, profile: 'steady' })])), []);
 });

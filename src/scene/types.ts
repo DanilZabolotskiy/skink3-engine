@@ -135,6 +135,8 @@ export interface ShapeNode extends NodeBase {
   readonly stands?: boolean;
   /** Id of a shape of the same layer: this node and what is in it are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
   /** What is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip (which may drop a long one). */
   readonly clipMask?: boolean;
   /** A magnifier inset (lens): the shape shows an enlarged part of another layer inside its outline, its fill the ring round it. */
@@ -254,6 +256,20 @@ export interface ReliefSpec {
   readonly tints?: readonly (readonly [number, ColorRef])[];
   /** Units of the rect: the field fades out over this distance toward its edges. Left out: it ends sharp at its edges. */
   readonly feather?: number;
+  /**
+   * Shadows the field casts on itself (shadows): at each point of the grid, the share of its light that passes over
+   * the ground between it and the light, with an edge `soft` degrees of the light's height wide. In shadow a slope
+   * takes no light and turns `amount` of the way toward its colour, relief.shadow in `colors`. Left out: each slope
+   * is shaded by how it faces the light alone, and a ridge casts nothing.
+   */
+  readonly shadows?: ReliefShadows;
+}
+
+/** The shadows of a relief on itself: their colour, how far a shaded point turns toward it (0..1), and their edge in degrees. */
+export interface ReliefShadows {
+  readonly color: ColorRef;
+  readonly amount: number;
+  readonly soft: number;
 }
 
 /**
@@ -398,13 +414,18 @@ export interface GroupNode extends NodeBase {
    * with its parent: a face on a body that rolls stays level.
    */
   readonly upright: boolean;
-  /** A symbol that keeps a size on screen: how large it is in its own units, and the least and most it is drawn, in units of the frame. */
-  readonly screen?: { readonly size: number; readonly least?: number; readonly most?: number };
+  /**
+   * A symbol that keeps a size on screen: how large it is in its own units, and the least and most it is drawn, in units
+   * of the frame; or, with `keep`, the one size it is drawn at, whatever the zoom.
+   */
+  readonly screen?: { readonly size: number; readonly least?: number; readonly most?: number; readonly keep?: number };
   readonly children: readonly SceneNode[];
   readonly follow: SpringSpec | null;
   readonly idle: IdleSpec | null;
   /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
   /**
    * A group listed in a perspective layer that lies in a plane of its space: the two axes of the plane, through the
    * group's place. Everything in the group is drawn on that plane, as on a page or a map seen through the camera.
@@ -493,6 +514,8 @@ export interface LinkNode {
   readonly glow: number;
   /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
   /**
    * Key of the node's voice in the bank of sounds: what its intents and its
    * contacts sound like. It never changes the picture or the bake.
@@ -533,6 +556,8 @@ export interface StrokeNode extends NodeBase {
   readonly pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
   /**
    * A stroke of a perspective layer given by points of its space, around the node's place: `path` is then the line
    * they make seen straight on, and the camera of the layer gives the one that is drawn.
@@ -590,6 +615,8 @@ export interface TextNode extends NodeBase {
   readonly opacity: number;
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
 }
 
 export type LabelSide = 'top' | 'bottom' | 'left' | 'right';
@@ -739,6 +766,8 @@ export interface EmitterNode {
   readonly fade?: Vec2;
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
   readonly clipTo?: string | null;
+  /** With clipTo a list: the ids of the shapes after the first, the union of all of which it is drawn inside. Left out: one shape. */
+  readonly clipAlso?: readonly string[];
   /**
    * Seconds: every particle is drawn as a streak along its way, as long as the way it travels in that time (and no
    * longer than the way it has come since it was born): rain, sparks, a stream. Left out: round particles.

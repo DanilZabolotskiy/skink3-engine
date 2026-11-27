@@ -15,7 +15,7 @@ import { DEG, xfApply, type Vec2, type Vec3, type Xf } from '../core/math.ts';
 import { FPS } from '../core/time.ts';
 import { pulseSpan, speedDistance } from '../motion/curves.ts';
 import { pathTable, type PathSpec } from '../motion/paths.ts';
-import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleOpacity, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth } from '../motion/tracks.ts';
+import { sampleAxis, sampleBend, sampleCount, sampleDrawn, sampleLevel, sampleLid, sampleOpacity, sampleReveal, sampleRise, sampleRot, sampleScale, sampleSolid, sampleStrokePulses, sampleWidth, sunStep } from '../motion/tracks.ts';
 import { PARTICLE_STRIDE, PARTICLE_TAIL_STRIDE, PARTICLE_VELOCITY_STRIDE, type Bake } from '../physics/cache.ts';
 import { backgroundStep } from '../scene/background.ts';
 import { fillStep } from '../scene/fill.ts';
@@ -133,6 +133,11 @@ export interface PlacedSeries {
    * the frame before to each frame, as the largest change of a channel, a share of its full range; null for other nodes.
    */
   readonly fill: Float32Array | null;
+  /**
+   * Reliefs whose light is keyed (sunTo): how far the light turns from the frame before to each frame, the angle
+   * between its two directions in degrees; null for other nodes.
+   */
+  readonly light: Float32Array | null;
   /** Radius, in the node's own units, of a circle around its origin that holds it and everything in it. */
   readonly radius: number;
   /** Radius at which a turn of the node shows: 0 when turning it changes nothing (a plain disc). */
@@ -381,16 +386,17 @@ function markHidden(c: CompiledShot, world: readonly Xf[], alpha: Float64Array, 
       for (let k = 0; k < 8; k++) points.push([xf.x + Math.cos((k * Math.PI) / 4) * node.r * xf.scale, xf.y + Math.sin((k * Math.PI) / 4) * node.r * xf.scale]);
     }
     // The shapes this node is clipped to: its own and those of everything it is in.
-    const clips: number[] = [];
-    for (let k = i; k >= 0; k = c.nodes[k]!.parent) if (c.nodes[k]!.clipIndex >= 0) clips.push(c.nodes[k]!.clipIndex);
+    // A node clipped to several shapes (clipTo: a list) is there inside any of them.
+    const clips: number[][] = [];
+    for (let k = i; k >= 0; k = c.nodes[k]!.parent) if (c.nodes[k]!.clipIndex >= 0) clips.push([c.nodes[k]!.clipIndex, ...c.nodes[k]!.clipAlso]);
     // A layer that orders what it draws has no fixed "after": there a cover hides nothing from the review.
     const later = c.layers[n.layer]!.ordered ? [] : covers.filter((ci) => ci > n.subtreeEnd && c.nodes[ci]!.layer === n.layer);
     if (clips.length === 0 && later.length === 0) continue;
     let seen = false;
     for (const p of points) {
       let hidden = false;
-      for (const ci of clips) {
-        if (!containsPoint(polyOf(ci).poly, p[0], p[1])) {
+      for (const union of clips) {
+        if (!union.some((ci) => containsPoint(polyOf(ci).poly, p[0], p[1]))) {
           hidden = true;
           break;
         }
@@ -536,6 +542,8 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       // A body whose height is keyed: its top moves, and what rides on it.
       (n.rise !== null && n.rise.segs.length > 0) ||
       n.fill !== null ||
+      // A relief whose light moves: its slopes and its shadows change.
+      n.sun !== null ||
       // A globe that turns.
       (node.type === 'shape' && node.globe !== undefined && globeSpins(node.globe)) ||
       // A drive, a hinge that turns, and the camera of a perspective layer: where the node is drawn changes with each.
@@ -581,6 +589,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       width: n.width ? f32() : null,
       shadow: n.rise !== null && n.rise.segs.length > 0 && castLength(c, n) > 0 ? f32() : null,
       fill: n.fill ? f32() : null,
+      light: n.sun ? f32() : null,
       radius: radius[n.index]!,
       turnRadius: turnRadius[n.index]!,
     };
@@ -873,6 +882,7 @@ export function sampleMotion(c: CompiledShot, bake: Bake, opts: SampleOptions = 
       }
       if (s.width && n.width) s.width[f] = sampleWidth(n.width, t) * xf.scale;
       if (s.fill && n.fill && f > 0) s.fill[f] = fillStep(n.fill, (f - 1) / FPS, t);
+      if (s.light && n.sun && f > 0) s.light[f] = sunStep(n.sun, (f - 1) / FPS, t);
 
       if (drawn[i]) {
         const sx = xf.x * zoom + view.tx[f]!;

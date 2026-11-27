@@ -29,6 +29,7 @@ const known = new Set([
   'fillTo',
   'colorTo',
   'riseTo',
+  'sunTo',
   'widthTo',
   'solidTo',
   'drawOn',
@@ -87,7 +88,7 @@ function plan(c: CompiledShot, lo: number, hi: number): HeldRange[] {
   }
   const refs = new Set<number>();
   for (const n of c.nodes)
-    for (const i of [n.clipIndex, n.targetIndex, n.fromIndex, n.toIndex, n.attachIndex, n.lookAtIndex]) if (i >= 0) refs.add(i);
+    for (const i of [n.clipIndex, ...n.clipAlso, n.targetIndex, n.fromIndex, n.toIndex, n.attachIndex, n.lookAtIndex]) if (i >= 0) refs.add(i);
   const active = (n: CNode) =>
     moving.has(n.index) ||
     n.driven ||

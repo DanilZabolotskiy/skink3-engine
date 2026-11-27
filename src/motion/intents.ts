@@ -205,6 +205,20 @@ export interface RiseToKey extends Voiced {
   readonly ramp: number;
 }
 
+/** Move the light of a relief: where it comes from and how high it stands, over time. */
+export interface SunToKey extends Voiced {
+  readonly kind: 'sunTo';
+  readonly target: string;
+  readonly at: number;
+  /** The new direction the light comes from, in degrees in the plane of the relief; left out: it keeps its direction. */
+  readonly from?: number;
+  /** The new height of the light over the ground, in degrees (1..89); left out: it keeps its height. */
+  readonly high?: number;
+  readonly dur: number;
+  readonly profile: Exclude<MoveProfile, 'settle'>;
+  readonly ramp: number;
+}
+
 /** Change how far the heat haze of a shape moves the picture behind it, over time. */
 export interface HazeToKey extends Voiced {
   readonly kind: 'hazeTo';
@@ -532,6 +546,7 @@ export type Key =
   | BendToKey
   | WidthToKey
   | RiseToKey
+  | SunToKey
   | HazeToKey
   | RateToKey
   | FillToKey
@@ -1237,6 +1252,34 @@ export function riseTo(
     at: num(w, 'at', opts.at, MIN_T, MAX_T),
     to: num(w, 'to', opts.to, 0, RISE_MAX),
     dur: num(w, 'dur', opts.dur ?? 0.8, 0.05, 3600),
+    profile,
+    ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
+  };
+}
+
+/**
+ * Move the light of a relief: `from` is the new direction it comes from, in degrees in the plane of the relief (0 from
+ * its right, -90 from its top), `high` its new height over the ground, in degrees (1..89); give either or both. The
+ * shading of the slopes, and the shadows the relief casts on itself (shadows), follow the light, as the day goes over
+ * a valley. `from` turns the short way or the long way as the numbers say: from -135 to 225 is a full turn. The light
+ * arrives exactly at `at + dur`. Several keys chain from the light reached at that moment.
+ */
+export function sunTo(
+  id: string,
+  opts: { at: number; from?: number; high?: number; dur?: number; profile?: Exclude<MoveProfile, 'settle'>; ramp?: number },
+): SunToKey {
+  const w = `sunTo("${id}")`;
+  only(w, opts, ['at', 'from', 'high', 'dur', 'profile', 'ramp']);
+  if (opts.from === undefined && opts.high === undefined) throw new IntentError(`${w}: give from, high or both: where the light comes from and how high it stands`);
+  const profile = profileOf(w, opts.profile, RAMPED, 'ease');
+  if (opts.ramp !== undefined && profile === 'steady') throw new IntentError(`${w}: ramp applies to the profiles ease, in and out`);
+  return {
+    kind: 'sunTo',
+    target: target(w, id),
+    at: num(w, 'at', opts.at, MIN_T, MAX_T),
+    ...(opts.from === undefined ? {} : { from: num(w, 'from', opts.from, -3600, 3600) }),
+    ...(opts.high === undefined ? {} : { high: num(w, 'high', opts.high, 1, 89) }),
+    dur: num(w, 'dur', opts.dur ?? 2, 0.05, 3600),
     profile,
     ramp: num(w, 'ramp', opts.ramp ?? DEFAULT_RAMP, 0.02, 0.5),
   };

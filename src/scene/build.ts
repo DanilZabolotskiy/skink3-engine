@@ -28,6 +28,7 @@ import {
 import { TEXT_ALIGNS, type TextAlign } from '../text/block.ts';
 import { isStringKey, type StringTables } from '../text/strings.ts';
 import { compileShot } from './compile.ts';
+import { RELIEF_SMOOTH_MAX, smoothHeights } from './ground.ts';
 import { flatten as seenStraightOn, PLANES, type PerspSpec, type PlaneAxes } from './space.ts';
 import { CAST_MAX_LENGTH, DETAIL_MAX, EYE_MAX_REACH, FINDING_KINDS_ALL, HAZE_MAX, LINK_MAX_WIDTH, OPENING_SHAPES, RISE_MAX, ROOF_CONTRAST_MAX, ROOF_KINDS, STREAK_MAX } from './types.ts';
 import type {
@@ -56,6 +57,7 @@ import type {
   FindingKind,
   OpeningsSpec,
   PhysicsSpec,
+  ReliefShadows,
   RoofKind,
   RoofSpec,
   SceneNode,
@@ -84,6 +86,23 @@ function idOf(where: string, value: unknown): string {
     fail(where, `id must be a string of letters, digits, "_", "." or "-", starting with a letter; got ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+/** The most shapes a clip may name (clipTo: a list): their union is drawn into one mask. */
+export const CLIP_MAX_SHAPES = 64;
+
+/**
+ * clipTo: the id of one shape, or a list of the ids of shapes whose union clips. A list is written as clipTo (its
+ * first) and clipAlso (the rest), so a node clipped to one shape is the data it always was.
+ */
+function clipOf(where: string, value: unknown): { clipTo?: string; clipAlso?: string[] } {
+  if (value === undefined) return {};
+  if (!Array.isArray(value)) return { clipTo: idOf(where, value) };
+  if (value.length === 0 || value.length > CLIP_MAX_SHAPES) fail(where, `clipTo: a list of 1 to ${CLIP_MAX_SHAPES} ids of shapes, the union of which it is drawn inside; got ${value.length}`);
+  const ids = value.map((v) => idOf(where, v));
+  const twice = ids.find((id, k) => ids.indexOf(id) !== k);
+  if (twice !== undefined) fail(where, `clipTo names the shape "${twice}" twice`);
+  return ids.length === 1 ? { clipTo: ids[0]! } : { clipTo: ids[0]!, clipAlso: ids.slice(1) };
 }
 
 export function num(where: string, name: string, value: unknown, min: number, max: number): number {
@@ -277,7 +296,7 @@ export interface ShapeOptions {
    */
   stands?: boolean;
   /** Id of a shape of the same layer: this shape and its children are drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /**
    * What is clipped to this shape is kept inside it by a mask of its outline, not by Skia's clip: Skia cuts a clip out
    * of the canvas by an operation on paths, which may fail on an outline of several hundred bends (a coast) and drop the
@@ -510,10 +529,11 @@ function level(where: string, value: ShapeOptions['level']): LevelSpec {
 }
 
 /** Options that are written into a node only when they are given, so that a node without them is the data it always was. */
-function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string; level?: ShapeOptions['level']; stands?: boolean; rise?: unknown; clipMask?: boolean }): {
+function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?: string | readonly string[]; level?: ShapeOptions['level']; stands?: boolean; rise?: unknown; clipMask?: boolean }): {
   cover?: boolean;
   backdrop?: boolean;
   clipTo?: string;
+  clipAlso?: string[];
   level?: LevelSpec;
   stands?: boolean;
   clipMask?: boolean;
@@ -524,7 +544,7 @@ function extras(where: string, o: { cover?: boolean; backdrop?: boolean; clipTo?
     ...(o.clipMask ? { clipMask: flag(where, 'clipMask', o.clipMask) } : {}),
     ...(o.cover === undefined ? {} : { cover: flag(where, 'cover', o.cover) }),
     ...(o.backdrop === undefined ? {} : { backdrop: flag(where, 'backdrop', o.backdrop) }),
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...(o.level === undefined ? {} : { level: level(where, o.level) }),
   };
 }
@@ -699,9 +719,9 @@ export function region(o: ShapeOptions & { points: readonly Vec2[] | readonly Ve
 }
 
 /** Disconnected contours painted as one flat shape. Opposite winding cuts a hole in a surrounding contour. */
-export function fillRings(o: { id: string; rings: readonly (readonly Vec2[])[]; fill: ColorRef; at?: Vec2; opacity?: number; backdrop?: boolean; clipTo?: string }): ShapeNode {
+export function fillRings(o: { id: string; rings: readonly (readonly Vec2[])[]; fill: ColorRef; at?: Vec2; opacity?: number; backdrop?: boolean; clipTo?: string | readonly string[]; clipMask?: boolean }): ShapeNode {
   const where = `fillRings("${o?.id}")`;
-  checkKeys(where, o, ['id', 'rings', 'fill', 'at', 'opacity', 'backdrop', 'clipTo']);
+  checkKeys(where, o, ['id', 'rings', 'fill', 'at', 'opacity', 'backdrop', 'clipTo', 'clipMask']);
   if (!Array.isArray(o.rings) || !o.rings.length) fail(where, 'rings must contain at least one contour');
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
   let total = 0;
@@ -754,6 +774,13 @@ export const RELIEF_PICTURE_MAX = 8192;
  *   at any camera. Detail finer than the picture is not there. Not for the ground of a plane (it is drawn raised).
  * - backdrop: true: labels may lie over it without a covers-node warning, as over any backdrop shape (the ground of
  *   a map). Default false.
+ * - smooth: cells of the grid: its heights smoothed once by a bell this many cells wide (0 to 16), so a coarse grid
+ *   seen close shows no steps. Left out: the heights as given.
+ * - shadows: true or { color?, amount?, soft? }: the field casts shadows on itself from its light, as a ridge does
+ *   from a low sun across the valley behind it. Each point of the grid looks toward the light over the ground in its
+ *   way; where the ground stands higher than the light, the point is in shadow: it takes no light, and turns amount
+ *   (0..1, default 0.6) of the way toward color (default the dark tone). soft: degrees of the light's height over
+ *   which a shadow's edge goes from lit to dark (0.25 to 30, default 3). Left out: no shadows, as before.
  */
 export function relief(o: {
   id: string;
@@ -762,7 +789,7 @@ export function relief(o: {
   rotation?: number;
   scale?: number;
   opacity?: number;
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   w: number;
   h: number;
   heights: { cols: number; rows: number; values: ArrayLike<number> };
@@ -778,9 +805,13 @@ export function relief(o: {
   tints?: readonly (readonly [number, ColorRef])[];
   feather?: number;
   backdrop?: boolean;
+  /** Cells of the grid: its heights smoothed by a bell this many cells wide (0 to 16), so a coarse grid seen close shows no steps. */
+  smooth?: number;
+  /** The field casts shadows on itself from its light: true, or their colour, amount and soft edge in degrees. */
+  shadows?: true | { color?: ColorRef; amount?: number; soft?: number };
 }): ShapeNode {
   const where = `relief("${o?.id}")`;
-  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'samplePixels', 'picture', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop']);
+  checkKeys(where, o, ['id', 'at', 'depth', 'rotation', 'scale', 'opacity', 'clipTo', 'w', 'h', 'heights', 'samplePixels', 'picture', 'vertical', 'sun', 'dark', 'bright', 'amount', 'tints', 'feather', 'backdrop', 'smooth', 'shadows']);
   if (o.samplePixels !== undefined && o.samplePixels !== 1 && o.samplePixels !== 2 && o.samplePixels !== 4) fail(where, 'samplePixels must be 1, 2 or 4');
   if (o.picture !== undefined && o.picture !== 1 && o.picture !== 2 && o.picture !== 4) fail(where, 'picture must be 1, 2 or 4: the pixels of its picture to a cell of the grid');
   if (o.picture !== undefined && o.samplePixels !== undefined) fail(where, 'a relief with a picture is not shaded pixel by pixel: leave samplePixels out');
@@ -794,8 +825,10 @@ export function relief(o: {
   if (o.picture !== undefined && Math.max(cols - 1, rows - 1) * o.picture + 1 > RELIEF_PICTURE_MAX) {
     fail(where, `its picture would be ${(cols - 1) * o.picture + 1} by ${(rows - 1) * o.picture + 1} pixels; a picture is at most ${RELIEF_PICTURE_MAX} a side: a smaller picture, or a coarser grid`);
   }
-  const heights = Float32Array.from(g.values);
-  for (let i = 0; i < heights.length; i++) if (!Number.isFinite(heights[i])) fail(where, `heights.values[${i}] is not a finite number`);
+  const given = Float32Array.from(g.values);
+  for (let i = 0; i < given.length; i++) if (!Number.isFinite(given[i])) fail(where, `heights.values[${i}] is not a finite number`);
+  // Smoothed once here, so that the shading, the tints and what stands on the ground all read the same heights.
+  const heights = o.smooth === undefined ? given : smoothHeights(given, cols, rows, num(where, 'smooth', o.smooth, 0, RELIEF_SMOOTH_MAX));
   if (o.sun !== undefined) checkKeys(`${where} sun`, o.sun, ['from', 'high']);
   let tints: [number, ColorRef][] | undefined;
   if (o.tints !== undefined) {
@@ -823,7 +856,23 @@ export function relief(o: {
       bright: color(where, 'bright', o.bright),
       ...(tints ? { tints } : {}),
       ...(o.feather === undefined ? {} : { feather: num(where, 'feather', o.feather, 0, 1e6) }),
+      ...(o.shadows === undefined ? {} : { shadows: reliefShadows(where, o.shadows, o.dark) }),
     },
+  };
+}
+
+/** The most degrees of the light's height a relief's shadow edge spreads over (shadows.soft), and the least. */
+export const RELIEF_SHADOW_SOFT: readonly [number, number] = [0.25, 30];
+
+function reliefShadows(where: string, o: unknown, dark: ColorRef): ReliefShadows {
+  if (o === true) return { color: color(where, 'dark', dark), amount: 0.6, soft: 3 };
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) fail(where, 'shadows must be true or { color?, amount?, soft? }');
+  const s = o as { color?: ColorRef; amount?: number; soft?: number };
+  checkKeys(`${where} shadows`, s, ['color', 'amount', 'soft']);
+  return {
+    color: color(where, 'shadows.color', s.color ?? dark),
+    amount: s.amount === undefined ? 0.6 : num(where, 'shadows.amount', s.amount, 0, 1),
+    soft: s.soft === undefined ? 3 : num(where, 'shadows.soft', s.soft, RELIEF_SHADOW_SOFT[0], RELIEF_SHADOW_SOFT[1]),
   };
 }
 
@@ -1037,7 +1086,7 @@ export function group(o: {
   follow?: SpringSpec;
   idle?: IdleSpec;
   /** Id of a shape of the same layer: the group is drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /**
    * Listed in a perspective layer: the group lies in a plane of its space, through its place, and everything in it is
    * drawn on that plane. 'floor': the ground seen from above; 'wall': it faces the viewer; 'side': it runs away from
@@ -1095,9 +1144,10 @@ export function group(o: {
    * A symbol of a map that keeps a size on screen: size is how large what the group holds is, in its own units; least
    * and most (units of the frame, 0.5 to 2000) are the smallest and the largest it is drawn on screen, whatever the
    * zoom of the camera, the perspective at its place and the scale of its parents. Within them it is drawn at its own
-   * size; its own keys (popIn, scaleTo, bump) still scale it on top.
+   * size; its own keys (popIn, scaleTo, bump) still scale it on top. keep (0.5 to 2000, without least and most) is the
+   * one size it is drawn at on screen, exactly, at every zoom.
    */
-  screen?: { size: number; least?: number; most?: number };
+  screen?: { size: number; least?: number; most?: number; keep?: number };
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): GroupNode {
@@ -1111,7 +1161,7 @@ export function group(o: {
   if (o.ground !== undefined && o.plane === undefined) fail(where, 'ground is for a group that lies in a plane of a perspective layer: give plane');
   return {
     ...fogOf(where, o.fog),
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...order(where, o.depth),
     // Written only when it is given: a group without a plane is the data it always was.
     ...(o.plane === undefined ? {} : { plane: planeAxes(where, o.plane), ...(o.back === undefined ? {} : { back: flag(where, 'back', o.back) }), ...(o.tall ? { tall: flag(where, 'tall', o.tall) } : {}), ...(o.ground === undefined ? {} : { ground: groundOf(where, o.ground) }) }),
@@ -1138,16 +1188,21 @@ export function group(o: {
 }
 
 /** The size a group keeps on screen (screen), checked; nothing when it is not given. */
-function screenOf(where: string, o: unknown, plane: boolean): { screen?: { size: number; least?: number; most?: number } } {
+function screenOf(where: string, o: unknown, plane: boolean): { screen?: { size: number; least?: number; most?: number; keep?: number } } {
   if (o === undefined) return {};
-  if (o === null || typeof o !== 'object') fail(where, 'screen must be { size, least?, most? }');
-  checkKeys(`${where} screen`, o, ['size', 'least', 'most']);
+  if (o === null || typeof o !== 'object') fail(where, 'screen must be { size, least?, most? } or { size, keep }');
+  checkKeys(`${where} screen`, o, ['size', 'least', 'most', 'keep']);
   if (plane) fail(where, 'screen is for a symbol on a map: a group that lies in a plane is the map; give screen to a group inside it');
-  const v = o as { size?: unknown; least?: unknown; most?: unknown };
+  const v = o as { size?: unknown; least?: unknown; most?: unknown; keep?: unknown };
   const size = num(where, 'screen.size', v.size, 0.01, 1e6);
   const least = v.least === undefined ? undefined : num(where, 'screen.least', v.least, 0.5, 2000);
   const most = v.most === undefined ? undefined : num(where, 'screen.most', v.most, 0.5, 2000);
-  if (least === undefined && most === undefined) fail(where, 'screen needs least, most or both: the size it keeps on screen, in units of the frame');
+  const keep = v.keep === undefined ? undefined : num(where, 'screen.keep', v.keep, 0.5, 2000);
+  if (keep !== undefined) {
+    if (least !== undefined || most !== undefined) fail(where, 'screen.keep is the one size it is drawn at: give it without least and most');
+    return { screen: { size, keep } };
+  }
+  if (least === undefined && most === undefined) fail(where, 'screen needs least, most or both, or keep: the size it keeps on screen, in units of the frame');
   if (least !== undefined && most !== undefined && !(least <= most)) fail(where, `screen.least (${least}) is above screen.most (${most})`);
   return { screen: { size, ...(least === undefined ? {} : { least }), ...(most === undefined ? {} : { most }) } };
 }
@@ -1171,7 +1226,7 @@ export function link(o: {
   /** 0..1: the line itself glows (a halo around it); default 0. */
   glow?: number;
   /** Id of a shape of the same layer: the link is drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /** Key of the node's voice in the bank of sounds: what its intents and its contacts sound like. */
   sound?: string;
 }): LinkNode {
@@ -1179,7 +1234,7 @@ export function link(o: {
   checkKeys(where, o, ['id', 'from', 'to', 'color', 'pulseColor', 'bend', 'width', 'gap', 'opacity', 'glow', 'clipTo', 'sound']);
   const c = color(where, 'color', o.color);
   return {
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...voice(where, o.sound),
     type: 'link',
     id: idOf(where, o.id),
@@ -1236,7 +1291,7 @@ export function stroke(o: {
   /** Colour of the lights that pulse() sends along the stroke; default: the stroke's own colour. */
   pulseColor?: ColorRef;
   /** Id of a shape of the same layer: the stroke is drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /**
    * Units of the frame, 0.5 to 200: the line is never thinner on screen than this, however far the camera has pulled
    * back and however small its parents are drawn: a river or a road stays a line through a deep zoom.
@@ -1288,7 +1343,7 @@ export function stroke(o: {
     ...(flow === undefined ? {} : { flow }),
     ...risen(where, o, 'stroke'),
     ...openingsOf(where, o, 'stroke'),
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...(o.drawn === undefined ? {} : { drawn: num(where, 'drawn', o.drawn, 0, 1) }),
     // Written only when it is given: a stroke without it is the data it always was.
     ...(o.pulseColor === undefined ? {} : { pulseColor: color(where, 'pulseColor', o.pulseColor) }),
@@ -1422,7 +1477,7 @@ export function text(o: {
    */
   count?: number | { from: number; decimals?: number; grouping?: boolean };
   /** Id of a shape of the same layer: the text is drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /** Key of the node's voice in the bank of sounds. */
   sound?: string;
 }): TextNode {
@@ -1436,7 +1491,7 @@ export function text(o: {
   const size = o.size === undefined ? 38 : num(where, 'size', o.size, 8, 600);
   const count = countOf(where, o.count, o.runInk);
   return {
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...(count === undefined ? {} : { count }),
     ...order(where, o.depth),
     ...voice(where, o.sound),
@@ -1578,7 +1633,7 @@ export function emitter(o: {
   /** [birth, death], each 0..1: every particle's own opacity over its life, evenly from the first to the second. */
   fade?: Vec2;
   /** Id of a shape of the same layer: the particles are drawn only inside that shape's outline. */
-  clipTo?: string;
+  clipTo?: string | readonly string[];
   /** Seconds, up to 1: each particle is drawn as a streak as long as the way it travels in that time: rain, sparks. */
   streak?: number;
   /** Key of the emitter's voice in the bank of sounds: what its bursts sound like. */
@@ -1636,7 +1691,7 @@ export function emitter(o: {
     // An emitter without an opacity or a fade of its own is the data it always was.
     ...(o.opacity === undefined ? {} : { opacity: num(where, 'opacity', o.opacity, 0, 1) }),
     ...(fade === undefined ? {} : { fade }),
-    ...(o.clipTo === undefined ? {} : { clipTo: idOf(where, o.clipTo) }),
+    ...clipOf(where, o.clipTo),
     ...(o.streak === undefined ? {} : { streak: num(where, 'streak', o.streak, 0.001, STREAK_MAX) }),
     ...voice(where, o.sound),
     type: 'emitter',

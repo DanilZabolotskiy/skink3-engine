@@ -57,6 +57,11 @@ export const THRESHOLDS = {
     unit: 'share of the range of a channel in one frame',
     why: 'A fill that changes a channel by a third of its range in one frame pops, as a fade does: an eased fillTo has to be shorter than 5 frames to do that.',
   },
+  jumpLight: {
+    value: 6,
+    unit: 'degrees of the light in one frame',
+    why: 'A light that turns 6 degrees in one frame (a full sweep of a sky in half a second) flashes across the slopes and throws their shadows about: an eased sunTo of 90 degrees has to be shorter than about a third of a second to do that.',
+  },
 
   // --- Abrupt start and stop ---------------------------------------------------
   restPx: {
@@ -196,6 +201,11 @@ export const THRESHOLDS = {
     value: 0.0005,
     unit: 'share of the range per frame',
     why: 'Taken from the background: a fill that turns by an eighth of the range of a channel in four seconds still reads as change; slower than that it is a hold.',
+  },
+  aliveLight: {
+    value: 0.01,
+    unit: 'degrees of the light per frame',
+    why: 'A light that turns 2.4 degrees in four seconds still moves the shadows of the slopes visibly; slower than that the relief holds.',
   },
   aliveBackground: {
     value: 0.0005,
