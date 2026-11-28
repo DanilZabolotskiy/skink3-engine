@@ -52,11 +52,10 @@ export interface RenderOptions {
   readonly gpu: boolean;
   /**
    * Draw the frame as a still of it alone draws it, whatever this process drew before it (`frameRaw` and `framePng`;
-   * off by default). Every path the engine keeps from frame to frame is drawn as a copy of each frame's own (fresh.ts),
-   * so a frame is that frame anyway, but for a path of ten segments or fewer, which the drawing library keeps by its
-   * points for about a second and draws again with what it worked out, also at another scale: drawn soon after a frame
-   * of a much different zoom, such a path may differ by a few pixels of its edge. With `alone` a frame drawn after
-   * another first lets the GPU rest from it for `GPU_FORGETS_MS`, so every frame after the first is slower by that much.
+   * off by default). Every path the engine keeps from frame to frame is drawn as a copy of each frame's own, and a
+   * small curved path that is not convex as a copy of each frame's own past ten segments (fresh.ts), so a frame is that
+   * frame anyway. With `alone` a frame drawn after another also first lets the GPU rest from it for `GPU_FORGETS_MS`, so
+   * every frame after the first is slower by that much.
    */
   readonly alone?: boolean;
 }

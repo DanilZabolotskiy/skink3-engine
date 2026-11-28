@@ -1,11 +1,12 @@
 // Frames drawn together, drawn alone: a frame is the same frame whatever the process drew before it, in a still of
 // several frames, in a sheet, in a chunk of a render and alone. On the GPU it was not: the drawing library keeps what it
-// works out for a path object, and the engine kept some paths from frame to frame (the outline of a shape, the light of
-// a turned shape), so a frame drawn after frames of another zoom or another place came out otherwise; now a kept path
-// is drawn as a copy of each frame's own (src/render/fresh.ts). Two shots plant it: curved edges under a zoom that
-// changes, and turned lit cards in a blurred layer under a drifting camera. The old drawing is planted back by
-// SKINK3_TEST_KEEP_PATHS, to show that the test still finds the frames it would change. `alone` (`--alone`) still lets
-// the GPU rest before each frame; it changes nothing more.
+// works out for a path object, and for a path of ten segments or fewer by its points, and the engine kept some paths
+// from frame to frame (the outline of a shape, the light of a turned shape), so a frame drawn after frames of another
+// zoom or another place came out otherwise; now a kept path is drawn as a copy of each frame's own, and a small curved
+// path that is not convex as a copy of each frame's own past ten segments (src/render/fresh.ts). Three shots plant it:
+// curved edges under a zoom that changes, turned lit cards in a blurred layer under a drifting camera, and small lit
+// shapes under a push-in. The old drawing is planted back by SKINK3_TEST_KEEP_PATHS, to show that the test still finds
+// the frames it would change. `alone` (`--alone`) still lets the GPU rest before each frame; it changes nothing more.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,17 +15,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { Canvas, loadImage, Path2D } from 'skia-canvas';
+import { Canvas, DOMMatrix, loadImage, Path2D } from 'skia-canvas';
 import { bakeShot, compileShot, frameRaw, rendererInfo } from '../src/index.ts';
 import { ffmpegAvailable } from '../src/render/encode.ts';
 import { GPU_FORGETS_MS } from '../src/render/frame.ts';
-import { beginFrame, framePath } from '../src/render/fresh.ts';
+import { beginFrame, framePath, KEPT_BY_POINTS } from '../src/render/fresh.ts';
 import zoomEdges from './fixtures/zoom-edges.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'bin', 'skink3.mjs');
 const SCENE = join(ROOT, 'test', 'fixtures', 'zoom-edges.ts');
 const TURNED = join(ROOT, 'test', 'fixtures', 'lit-turned.ts');
+const SMALL = join(ROOT, 'test', 'fixtures', 'small-lit.ts');
 const noGpu = rendererInfo(true).renderer === 'GPU' ? false : 'no GPU';
 
 /** The paths the engine keeps drawn as themselves again, as before the fix: the dependence planted back. */
@@ -97,6 +99,25 @@ test(
 );
 
 test(
+  'still: small lit shapes under a push-in: a frame after a frame of another zoom is its still alone; planted back, it is not',
+  { skip: noGpu },
+  withDir('alone-small', (dir) => {
+    // The crescents of their light are paths of ten segments or fewer, which the library keeps by their points.
+    const frames = [0, 120, 239];
+    const alone = new Map<number, string>();
+    for (const f of frames) alone.set(f, hashes(dir, ['--frame', String(f)], SMALL).get(f)!);
+    for (const order of ['0,120,239', '239,120,0']) {
+      const together = hashes(dir, ['--frame', order], SMALL);
+      for (const f of frames) assert.equal(together.get(f), alone.get(f), `frame ${f} drawn in the order ${order} is frame ${f} alone`);
+    }
+    // The lines of no length change no pixel: a frame alone is the frame it was.
+    for (const f of frames) assert.equal(hashes(dir, ['--frame', String(f)], SMALL, PLANTED).get(f), alone.get(f), `frame ${f} alone, drawn as before`);
+    const planted = [...hashes(dir, ['--frame', '0,120,239'], SMALL, PLANTED), ...hashes(dir, ['--frame', '239,120,0'], SMALL, PLANTED)];
+    assert.ok(planted.some(([f, h]) => h !== alone.get(f)), 'planted: a frame drawn after a frame of another zoom differs from its still');
+  }),
+);
+
+test(
   'sheet: a frame twice in one sheet is the same tile twice, with or without --alone; planted back, after a frame of another zoom, it is not',
   { skip: noGpu },
   withDir('alone-sheet', async (dir) => {
@@ -163,6 +184,47 @@ test('framePath: a kept path is itself in the first frame it is drawn in, and in
   const made = new Path2D();
   made.rect(0, 0, 10, 10);
   assert.equal(framePath(made), made);
+});
+
+test('framePath: a small curved path that is not convex is, in each frame, one copy of that frame past ten segments, of the same geometry', () => {
+  // A crescent of a capsule: the capsule minus itself shifted, ten segments.
+  const crescent = (): Path2D => {
+    const capsule = new Path2D();
+    capsule.arc(60, 0, 18, -Math.PI / 2, Math.PI / 2);
+    capsule.arc(-60, 0, 18, Math.PI / 2, (3 * Math.PI) / 2);
+    capsule.closePath();
+    const shifted = new Path2D();
+    shifted.addPath(capsule, new DOMMatrix([1, 0, 0, 1, 4.1, -5.3]));
+    return capsule.difference(shifted);
+  };
+  const kept = crescent();
+  assert.ok(kept.edges.length <= KEPT_BY_POINTS, `the crescent has ${kept.edges.length} segments`);
+  beginFrame();
+  const copy = framePath(kept);
+  assert.notEqual(copy, kept, 'drawn for the first time: a copy');
+  assert.ok(copy.edges.length > KEPT_BY_POINTS, 'past ten segments');
+  // Where a segment ends: its last two numbers, but for a conic, whose last number is its weight.
+  const end = (e: readonly unknown[]): string => JSON.stringify(e[0] === 'conicCurveTo' ? e.slice(3, 5) : e.slice(-2));
+  const drawn = copy.edges.filter((e, i, all) => !(e[0] === 'lineTo' && i > 0 && end(e) === end(all[i - 1]!)));
+  assert.deepEqual(drawn, kept.edges, 'of the same geometry: its segments, and lines of no length');
+  assert.equal(framePath(kept), copy, 'again in that frame: the same copy');
+  assert.equal(framePath(crescent()), copy, 'a path of the same points in that frame: the same copy');
+  beginFrame();
+  const next = framePath(kept);
+  assert.ok(next !== copy && next !== kept, 'in the next frame: a copy of its own');
+  // A convex one and one of straight lines only are drawn as a kept path is.
+  const disc = new Path2D();
+  disc.arc(0, 0, 20, 0, Math.PI * 2);
+  disc.closePath();
+  assert.equal(framePath(disc), disc, 'a small convex path: itself in the first frame');
+  const zigzag = new Path2D();
+  zigzag.moveTo(0, 0);
+  zigzag.lineTo(10, 10);
+  zigzag.lineTo(20, 0);
+  zigzag.lineTo(20, 20);
+  zigzag.lineTo(0, 20);
+  zigzag.closePath();
+  assert.equal(framePath(zigzag), zigzag, 'a small path of straight lines: itself in the first frame');
 });
 
 test('alone: on the GPU a frame waits until the GPU has rested from the frames before; on the CPU nothing waits', async () => {
